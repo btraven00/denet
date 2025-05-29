@@ -67,10 +67,14 @@ impl ProcessMonitor {
         let child = Command::new(&cmd[0]).args(&cmd[1..]).spawn()?;
         let pid = child.id() as usize;
 
+        let mut sys = System::new_all();
+        // Initialize the system with process information
+        sys.refresh_all();
+        
         Ok(Self {
             child: Some(child),
             pid,
-            sys: System::new_all(),
+            sys,
             base_interval,
             max_interval,
             start_time: Instant::now(),
@@ -94,6 +98,9 @@ impl ProcessMonitor {
             ));
         }
 
+        // Initialize the system with process information
+        sys.refresh_all();
+
         Ok(Self {
             child: None,
             pid,
@@ -113,20 +120,23 @@ impl ProcessMonitor {
     }
 
     pub fn sample_metrics(&mut self) -> Option<Metrics> {
-        // Refresh the specific process first
-        self.sys.refresh_process(self.pid.into());
+        // For accurate CPU calculation, refresh all processes first
+        // This gives sysinfo the data it needs to calculate CPU percentages
+        self.sys.refresh_processes();
         
-        // If that doesn't work, try refreshing all processes
-        if self.sys.process(self.pid.into()).is_none() {
-            self.sys.refresh_processes();
-        }
+        // Wait a small moment for the system to settle
+        std::thread::sleep(Duration::from_millis(50));
+        
+        // Refresh again to get the CPU calculation
+        self.sys.refresh_process(self.pid.into());
 
         if let Some(proc) = self.sys.process(self.pid.into()) {
             // sysinfo returns memory in bytes, so we need to convert to KB
             let mem_rss_kb = proc.memory() / 1024;
+            let cpu_usage = proc.cpu_usage();
             
             Some(Metrics {
-                cpu_usage: proc.cpu_usage(),
+                cpu_usage,
                 mem_rss_kb,
                 read_bytes: proc.disk_usage().total_read_bytes,
                 write_bytes: proc.disk_usage().total_written_bytes,
