@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::process::{Command, Child};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{ProcessExt, System, SystemExt};
 use std::fs;
 use std::io::Read;
@@ -29,6 +29,7 @@ pub(crate) fn get_thread_count(pid: usize) -> usize {
 
 #[derive(Serialize, Debug, Clone)]
 pub struct Metrics {
+    pub ts_ms: u64,
     pub cpu_usage: f32,
     pub mem_rss_kb: u64,
     pub disk_read_bytes: u64,
@@ -41,6 +42,7 @@ pub struct Metrics {
 
 #[derive(Serialize, Debug, Clone)]
 pub struct ProcessTreeMetrics {
+    pub ts_ms: u64,
     pub parent: Option<Metrics>,
     pub children: Vec<ChildProcessMetrics>,
     pub aggregated: Option<AggregatedMetrics>,
@@ -55,6 +57,7 @@ pub struct ChildProcessMetrics {
 
 #[derive(Serialize, Debug, Clone)]
 pub struct AggregatedMetrics {
+    pub ts_ms: u64,
     pub cpu_usage: f32,
     pub mem_rss_kb: u64,
     pub disk_read_bytes: u64,
@@ -225,7 +228,13 @@ impl ProcessMonitor {
                 }
             };
             
+            let ts_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_millis() as u64;
+
             Some(Metrics {
+                ts_ms,
                 cpu_usage,
                 mem_rss_kb,
                 disk_read_bytes,
@@ -290,6 +299,11 @@ impl ProcessMonitor {
 
     // Sample metrics including child processes
     pub fn sample_tree_metrics(&mut self) -> ProcessTreeMetrics {
+        let tree_ts_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis() as u64;
+            
         // Get parent metrics
         let parent_metrics = self.sample_metrics();
         
@@ -309,7 +323,13 @@ impl ProcessMonitor {
                 let net_rx = 0; // TODO: Implement for children
                 let net_tx = 0;
                 
+                let child_ts_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_millis() as u64;
+                    
                 let metrics = Metrics {
+                    ts_ms: child_ts_ms,
                     cpu_usage: proc.cpu_usage(),
                     mem_rss_kb: proc.memory() / 1024,
                     disk_read_bytes: disk_read,
@@ -331,6 +351,7 @@ impl ProcessMonitor {
         // Create aggregated metrics
         let aggregated = if let Some(ref parent) = parent_metrics {
             let mut agg = AggregatedMetrics {
+                ts_ms: tree_ts_ms,
                 cpu_usage: parent.cpu_usage,
                 mem_rss_kb: parent.mem_rss_kb,
                 disk_read_bytes: parent.disk_read_bytes,
@@ -360,6 +381,7 @@ impl ProcessMonitor {
         };
         
         ProcessTreeMetrics {
+            ts_ms: tree_ts_ms,
             parent: parent_metrics,
             children: child_metrics,
             aggregated,
@@ -790,6 +812,53 @@ mod tests {
             // CPU might have floating point precision issues, use approximate equality
             assert!((agg.cpu_usage - expected_cpu).abs() < 0.01, 
                    "CPU aggregation should approximately sum parent + children");
+        }
+    }
+
+    #[test]
+    fn test_timestamp_functionality() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        use std::thread;
+
+        let cmd = vec!["sleep".to_string(), "2".to_string()];
+        let mut monitor = create_test_monitor(cmd).unwrap();
+        
+        thread::sleep(Duration::from_millis(100));
+        
+        // Collect multiple samples
+        let sample1 = monitor.sample_metrics().unwrap();
+        thread::sleep(Duration::from_millis(50));
+        let sample2 = monitor.sample_metrics().unwrap();
+        
+        // Verify timestamps are reasonable (within last minute)
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+            
+        assert!(sample1.ts_ms <= now_ms, "Sample1 timestamp should not be in future");
+        assert!(sample2.ts_ms <= now_ms, "Sample2 timestamp should not be in future");
+        assert!(now_ms - sample1.ts_ms < 60000, "Sample1 timestamp should be recent");
+        assert!(now_ms - sample2.ts_ms < 60000, "Sample2 timestamp should be recent");
+        
+        // Verify timestamps are monotonic
+        assert!(sample2.ts_ms >= sample1.ts_ms, "Timestamps should be monotonic");
+        
+        // Test tree metrics timestamps (allow small timing differences)
+        let tree_metrics = monitor.sample_tree_metrics();
+        let now_ms2 = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+            
+        assert!(tree_metrics.ts_ms <= now_ms2 + 1000, "Tree timestamp should be reasonable");
+        
+        if let Some(parent) = tree_metrics.parent {
+            assert!(parent.ts_ms <= now_ms2 + 1000, "Parent timestamp should be reasonable");
+        }
+        
+        if let Some(agg) = tree_metrics.aggregated {
+            assert!(agg.ts_ms <= now_ms2 + 1000, "Aggregated timestamp should be reasonable");
         }
     }
 }

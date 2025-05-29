@@ -86,9 +86,14 @@ for i in range(5):
                 parsed = True
             
             # Verify the JSON has the expected fields
+            self.assertIn("ts_ms", data)
             self.assertIn("cpu_usage", data)
             self.assertIn("mem_rss_kb", data)
             self.assertIn("thread_count", data)
+            
+            # Verify timestamp is reasonable (within last minute)
+            now_ms = int(time.time() * 1000)
+            self.assertLess(abs(now_ms - data["ts_ms"]), 60000, "Timestamp should be recent")
             
             self.assertTrue(parsed, "At least one line should be valid JSON metrics")
             
@@ -96,6 +101,35 @@ for i in range(5):
             # Clean up
             if test_script.exists():
                 test_script.unlink()
+
+    def test_timestamp_functionality(self):
+        """Test that timestamps are included and monotonic"""
+        monitor = pmet.PyProcessMonitor(["sleep", "2"], 100, 1000)
+        
+        # Collect multiple samples
+        samples = []
+        for _ in range(3):
+            result = monitor.sample_once()
+            if result:
+                data = json.loads(result)
+                samples.append(data)
+            time.sleep(0.1)
+        
+        self.assertGreater(len(samples), 0, "Should collect at least one sample")
+        
+        for sample in samples:
+            # Verify timestamp field exists
+            self.assertIn("ts_ms", sample)
+            
+            # Verify timestamp is reasonable (within last minute)
+            now_ms = int(time.time() * 1000)
+            self.assertLess(abs(now_ms - sample["ts_ms"]), 60000, "Timestamp should be recent")
+        
+        # Verify timestamps are monotonic if we have multiple samples
+        if len(samples) >= 2:
+            for i in range(1, len(samples)):
+                self.assertGreaterEqual(samples[i]["ts_ms"], samples[i-1]["ts_ms"], 
+                                      "Timestamps should be monotonic")
 
 if __name__ == "__main__":
     unittest.main()

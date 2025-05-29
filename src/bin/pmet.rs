@@ -341,6 +341,7 @@ fn format_aggregated_metrics(metrics: &pmet::process_monitor::AggregatedMetrics)
 
 fn convert_aggregated_to_metrics(agg: &pmet::process_monitor::AggregatedMetrics) -> pmet::process_monitor::Metrics {
     pmet::process_monitor::Metrics {
+        ts_ms: agg.ts_ms,
         cpu_usage: agg.cpu_usage,
         mem_rss_kb: agg.mem_rss_kb,
         disk_read_bytes: agg.disk_read_bytes,

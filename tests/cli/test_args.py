@@ -70,8 +70,10 @@ class TestCliArgs(unittest.TestCase):
             if line and not line.startswith("Monitoring") and not line.startswith("Press") and not line.startswith("Collected"):
                 try:
                     data = json.loads(line)
-                    self.assertIn("cpu_usage", data)
-                    self.assertIn("mem_rss_kb", data)
+                    # CLI outputs tree metrics with aggregated data
+                    self.assertIn("aggregated", data)
+                    self.assertIn("cpu_usage", data["aggregated"])
+                    self.assertIn("mem_rss_kb", data["aggregated"])
                     json_found = True
                     break
                 except json.JSONDecodeError:
@@ -105,7 +107,9 @@ class TestCliArgs(unittest.TestCase):
                 if line and not line.startswith("Monitoring") and not line.startswith("Press") and not line.startswith("Collected"):
                     try:
                         data = json.loads(line)
-                        self.assertIn("cpu_usage", data)
+                        # CLI outputs tree metrics with aggregated data
+                        self.assertIn("aggregated", data)
+                        self.assertIn("cpu_usage", data["aggregated"])
                         json_found = True
                         break
                     except json.JSONDecodeError:
