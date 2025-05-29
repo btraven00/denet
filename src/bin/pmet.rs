@@ -43,6 +43,10 @@ struct Args {
     #[clap(long)]
     since_process_start: bool,
     
+    /// Exclude child processes from monitoring (monitor only the main process)
+    #[clap(long)]
+    exclude_children: bool,
+    
     #[command(subcommand)]
     command: Commands,
 }
@@ -164,48 +168,99 @@ fn main() -> io::Result<()> {
                 break;
             }
         }
-        if let Some(metrics) = monitor.sample_metrics() {
-            metrics_count += 1;
             
-            // Store metrics for final summary if we're writing to a file
-            if args.out.is_some() {
-                results.push(metrics.clone());
-            }
-            
-            // Format and display metrics
-            if args.json {
-                let json = serde_json::to_string(&metrics).unwrap();
-                if let Some(file) = &mut out_file {
-                    writeln!(file, "{}", json)?;
-                } else if args.update_in_place {
-                    // Clear line and print new content with spinner and elapsed time
-                    let spinner = progress_chars[progress_index % progress_chars.len()];
-                    let elapsed = start_time.elapsed().as_secs();
-                    print!("\r{}\r{} [{}s] {}", " ".repeat(terminal_width.saturating_sub(1)), spinner.to_string().cyan(), elapsed.to_string().bright_black(), json);
-                    io::stdout().flush()?;
-                    needs_newline_on_exit = true;
-                    progress_index += 1;
-                } else {
-                    println!("{}", json);
+        if args.exclude_children {
+            // Monitor only the main process
+            if let Some(metrics) = monitor.sample_metrics() {
+                metrics_count += 1;
+                    
+                // Store metrics for final summary if we're writing to a file
+                if args.out.is_some() {
+                    results.push(metrics.clone());
                 }
-            } else {
-                let formatted = format_metrics(&metrics);
-                if let Some(file) = &mut out_file {
-                    writeln!(file, "{}", formatted)?;
-                } else if args.update_in_place {
-                    // Clear line and print new content with spinner and elapsed time
-                    let spinner = progress_chars[progress_index % progress_chars.len()];
-                    let elapsed = start_time.elapsed().as_secs();
-                    print!("\r{}\r{} [{}s] {}", " ".repeat(terminal_width.saturating_sub(1)), spinner.to_string().cyan(), elapsed.to_string().bright_black(), formatted);
-                    io::stdout().flush()?;
-                    needs_newline_on_exit = true;
-                    progress_index += 1;
+                    
+                // Format and display metrics
+                if args.json {
+                    let json = serde_json::to_string(&metrics).unwrap();
+                    if let Some(file) = &mut out_file {
+                        writeln!(file, "{}", json)?;
+                    } else if args.update_in_place {
+                        // Clear line and print new content with spinner and elapsed time
+                        let spinner = progress_chars[progress_index % progress_chars.len()];
+                        let elapsed = start_time.elapsed().as_secs();
+                        print!("\r{}\r{} [{}s] {}", " ".repeat(terminal_width.saturating_sub(1)), spinner.to_string().cyan(), elapsed.to_string().bright_black(), json);
+                        io::stdout().flush()?;
+                        needs_newline_on_exit = true;
+                        progress_index += 1;
+                    } else {
+                        println!("{}", json);
+                    }
                 } else {
-                    println!("{}", formatted);
+                    let formatted = format_metrics(&metrics);
+                    if let Some(file) = &mut out_file {
+                        writeln!(file, "{}", formatted)?;
+                    } else if args.update_in_place {
+                        // Clear line and print new content with spinner and elapsed time
+                        let spinner = progress_chars[progress_index % progress_chars.len()];
+                        let elapsed = start_time.elapsed().as_secs();
+                        print!("\r{}\r{} [{}s] {}", " ".repeat(terminal_width.saturating_sub(1)), spinner.to_string().cyan(), elapsed.to_string().bright_black(), formatted);
+                        io::stdout().flush()?;
+                        needs_newline_on_exit = true;
+                        progress_index += 1;
+                    } else {
+                        println!("{}", formatted);
+                    }
+                }
+            }
+        } else {
+            // Monitor process tree (default behavior)
+            let tree_metrics = monitor.sample_tree_metrics();
+            if let Some(agg_metrics) = tree_metrics.aggregated.as_ref() {
+                metrics_count += 1;
+                    
+                // Store aggregated metrics for final summary if we're writing to a file
+                if args.out.is_some() {
+                    // Convert aggregated metrics to regular metrics for storage compatibility
+                    let storage_metrics = convert_aggregated_to_metrics(agg_metrics);
+                    results.push(storage_metrics);
+                }
+                    
+                // Format and display metrics
+                if args.json {
+                    let json = serde_json::to_string(&tree_metrics).unwrap();
+                    if let Some(file) = &mut out_file {
+                        writeln!(file, "{}", json)?;
+                    } else if args.update_in_place {
+                        // For in-place updates, show just aggregated metrics
+                        let agg_json = serde_json::to_string(&agg_metrics).unwrap();
+                        let spinner = progress_chars[progress_index % progress_chars.len()];
+                        let elapsed = start_time.elapsed().as_secs();
+                        print!("\r{}\r{} [{}s] {}", " ".repeat(terminal_width.saturating_sub(1)), spinner.to_string().cyan(), elapsed.to_string().bright_black(), agg_json);
+                        io::stdout().flush()?;
+                        needs_newline_on_exit = true;
+                        progress_index += 1;
+                    } else {
+                        println!("{}", json);
+                    }
+                } else {
+                    let formatted = format_aggregated_metrics(agg_metrics);
+                    if let Some(file) = &mut out_file {
+                        writeln!(file, "{}", formatted)?;
+                    } else if args.update_in_place {
+                        // Clear line and print new content with spinner and elapsed time
+                        let spinner = progress_chars[progress_index % progress_chars.len()];
+                        let elapsed = start_time.elapsed().as_secs();
+                        print!("\r{}\r{} [{}s] {}", " ".repeat(terminal_width.saturating_sub(1)), spinner.to_string().cyan(), elapsed.to_string().bright_black(), formatted);
+                        io::stdout().flush()?;
+                        needs_newline_on_exit = true;
+                        progress_index += 1;
+                    } else {
+                        println!("{}", formatted);
+                    }
                 }
             }
         }
-        
+            
         // Sleep for the adaptive interval
         std::thread::sleep(monitor.adaptive_interval());
     }
@@ -254,6 +309,47 @@ fn format_metrics(metrics: &Metrics) -> String {
         format_bytes(metrics.net_tx_bytes).green(),
         metrics.uptime_secs,
     )
+}
+
+fn format_aggregated_metrics(metrics: &pmet::process_monitor::AggregatedMetrics) -> String {
+    let cpu_color = match metrics.cpu_usage {
+        c if c < 10.0 => "green",
+        c if c < 50.0 => "yellow", 
+        _ => "red",
+    };
+    
+    let mem_mb = metrics.mem_rss_kb as f64 / 1024.0;
+    let mem_color = match mem_mb {
+        m if m < 100.0 => "green",
+        m if m < 500.0 => "yellow",
+        _ => "red",
+    };
+    
+    format!(
+        "Tree ({} procs): CPU: {} | Memory: {} | Threads: {} | Disk: {} read, {} written | Net: {} rx, {} tx | Uptime: {}s",
+        metrics.process_count,
+        format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
+        format!("{:.1} MB", mem_mb).color(mem_color),
+        metrics.thread_count,
+        format_bytes(metrics.disk_read_bytes).cyan(),
+        format_bytes(metrics.disk_write_bytes).cyan(),
+        format_bytes(metrics.net_rx_bytes).green(),
+        format_bytes(metrics.net_tx_bytes).green(),
+        metrics.uptime_secs,
+    )
+}
+
+fn convert_aggregated_to_metrics(agg: &pmet::process_monitor::AggregatedMetrics) -> pmet::process_monitor::Metrics {
+    pmet::process_monitor::Metrics {
+        cpu_usage: agg.cpu_usage,
+        mem_rss_kb: agg.mem_rss_kb,
+        disk_read_bytes: agg.disk_read_bytes,
+        disk_write_bytes: agg.disk_write_bytes,
+        net_rx_bytes: agg.net_rx_bytes,
+        net_tx_bytes: agg.net_tx_bytes,
+        thread_count: agg.thread_count,
+        uptime_secs: agg.uptime_secs,
+    }
 }
 
 fn format_bytes(bytes: u64) -> String {

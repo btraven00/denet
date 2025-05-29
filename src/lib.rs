@@ -1,15 +1,12 @@
 // Split into modules to separate PyO3 dependencies from pure Rust code
 pub mod process_monitor;
 
-// Re-export the ProcessMonitor for use in tests and binaries
-#[cfg(test)]
-pub use process_monitor::ProcessMonitor;
+// Re-export the ProcessMonitor and related types for use in tests and binaries
+pub use process_monitor::{ProcessMonitor, Metrics, AggregatedMetrics, ProcessTreeMetrics, ChildProcessMetrics};
 
 // Import what we need for the Python module
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
-#[cfg(feature = "python")]
-use process_monitor::ProcessMonitor;
 
 #[cfg(feature = "python")]
 #[pyclass]
