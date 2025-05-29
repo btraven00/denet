@@ -159,6 +159,18 @@ fn main() -> io::Result<()> {
         None
     };
     
+    // Emit metadata first (only for JSON output)
+    if args.json {
+        if let Some(metadata) = monitor.get_metadata() {
+            let metadata_json = serde_json::to_string(&metadata).unwrap();
+            if let Some(file) = &mut out_file {
+                writeln!(file, "{}", metadata_json)?;
+            } else {
+                println!("{}", metadata_json);
+            }
+        }
+    }
+    
     // Monitoring loop
     while monitor.is_running() && running.load(Ordering::SeqCst) {
         // Check timeout
@@ -344,6 +356,7 @@ fn convert_aggregated_to_metrics(agg: &pmet::process_monitor::AggregatedMetrics)
         ts_ms: agg.ts_ms,
         cpu_usage: agg.cpu_usage,
         mem_rss_kb: agg.mem_rss_kb,
+        mem_vms_kb: agg.mem_vms_kb,
         disk_read_bytes: agg.disk_read_bytes,
         disk_write_bytes: agg.disk_write_bytes,
         net_rx_bytes: agg.net_rx_bytes,

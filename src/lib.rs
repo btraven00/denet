@@ -2,7 +2,7 @@
 pub mod process_monitor;
 
 // Re-export the ProcessMonitor and related types for use in tests and binaries
-pub use process_monitor::{ProcessMonitor, Metrics, AggregatedMetrics, ProcessTreeMetrics, ChildProcessMetrics};
+pub use process_monitor::{ProcessMonitor, Metrics, ProcessMetadata, AggregatedMetrics, ProcessTreeMetrics, ChildProcessMetrics};
 
 // Import what we need for the Python module
 #[cfg(feature = "python")]
@@ -72,6 +72,12 @@ impl PyProcessMonitor {
     
     fn get_pid(&self) -> PyResult<usize> {
         Ok(self.inner.get_pid())
+    }
+    
+    fn get_metadata(&mut self) -> PyResult<Option<String>> {
+        Ok(self.inner.get_metadata().map(|metadata| {
+            serde_json::to_string(&metadata).unwrap_or_default()
+        }))
     }
 }
 

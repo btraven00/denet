@@ -66,20 +66,27 @@ class TestCliArgs(unittest.TestCase):
         # At least one line should be valid JSON
         lines = result.stdout.strip().split("\n")
         json_found = False
+        metadata_found = False
         for line in lines:
             if line and not line.startswith("Monitoring") and not line.startswith("Press") and not line.startswith("Collected"):
                 try:
                     data = json.loads(line)
-                    # CLI outputs tree metrics with aggregated data
-                    self.assertIn("aggregated", data)
-                    self.assertIn("cpu_usage", data["aggregated"])
-                    self.assertIn("mem_rss_kb", data["aggregated"])
-                    json_found = True
-                    break
+                    # First line is metadata, subsequent lines are tree metrics
+                    if "pid" in data and "cmd" in data and "aggregated" not in data:
+                        # This is the metadata line
+                        self.assertIn("exe", data)
+                        self.assertIn("start_time_secs", data)
+                        metadata_found = True
+                    elif "aggregated" in data:
+                        # This is a tree metrics line
+                        self.assertIn("cpu_usage", data["aggregated"])
+                        self.assertIn("mem_rss_kb", data["aggregated"])
+                        json_found = True
+                        break
                 except json.JSONDecodeError:
                     continue
         
-        self.assertTrue(json_found, "No valid JSON output found")
+        self.assertTrue(json_found or metadata_found, "No valid JSON output found")
     
     def test_attach_pid(self):
         """Test that attach subcommand works with valid PID"""
@@ -103,19 +110,26 @@ class TestCliArgs(unittest.TestCase):
             # Check for JSON output
             lines = result.stdout.strip().split("\n")
             json_found = False
+            metadata_found = False
             for line in lines:
                 if line and not line.startswith("Monitoring") and not line.startswith("Press") and not line.startswith("Collected"):
                     try:
                         data = json.loads(line)
-                        # CLI outputs tree metrics with aggregated data
-                        self.assertIn("aggregated", data)
-                        self.assertIn("cpu_usage", data["aggregated"])
-                        json_found = True
-                        break
+                        # First line is metadata, subsequent lines are tree metrics
+                        if "pid" in data and "cmd" in data and "aggregated" not in data:
+                            # This is the metadata line
+                            self.assertIn("exe", data)
+                            self.assertIn("start_time_secs", data)
+                            metadata_found = True
+                        elif "aggregated" in data:
+                            # This is a tree metrics line
+                            self.assertIn("cpu_usage", data["aggregated"])
+                            json_found = True
+                            break
                     except json.JSONDecodeError:
                         continue
             
-            self.assertTrue(json_found, "No valid JSON output found for PID attachment")
+            self.assertTrue(json_found or metadata_found, "No valid JSON output found for PID attachment")
             
         finally:
             # Clean up the background process

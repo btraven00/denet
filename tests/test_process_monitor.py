@@ -89,11 +89,19 @@ for i in range(5):
             self.assertIn("ts_ms", data)
             self.assertIn("cpu_usage", data)
             self.assertIn("mem_rss_kb", data)
+            self.assertIn("mem_vms_kb", data)
             self.assertIn("thread_count", data)
             
             # Verify timestamp is reasonable (within last minute)
             now_ms = int(time.time() * 1000)
             self.assertLess(abs(now_ms - data["ts_ms"]), 60000, "Timestamp should be recent")
+            
+            # Verify memory metrics are reasonable
+            self.assertGreater(data["mem_rss_kb"], 0, "RSS memory should be positive")
+            self.assertGreaterEqual(data["mem_vms_kb"], data["mem_rss_kb"], "Virtual memory should be >= RSS")
+            
+            # Test start time via metadata (not in regular samples)
+            # This is now available via get_metadata() method
             
             self.assertTrue(parsed, "At least one line should be valid JSON metrics")
             
@@ -121,9 +129,15 @@ for i in range(5):
             # Verify timestamp field exists
             self.assertIn("ts_ms", sample)
             
+            # Verify enhanced metrics exist
+            self.assertIn("mem_vms_kb", sample)
+            
             # Verify timestamp is reasonable (within last minute)
             now_ms = int(time.time() * 1000)
             self.assertLess(abs(now_ms - sample["ts_ms"]), 60000, "Timestamp should be recent")
+            
+            # Verify enhanced metrics are reasonable
+            self.assertGreaterEqual(sample["mem_vms_kb"], sample["mem_rss_kb"], "VMS should be >= RSS")
         
         # Verify timestamps are monotonic if we have multiple samples
         if len(samples) >= 2:

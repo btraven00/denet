@@ -28,10 +28,19 @@ pub(crate) fn get_thread_count(pid: usize) -> usize {
 }
 
 #[derive(Serialize, Debug, Clone)]
+pub struct ProcessMetadata {
+    pub pid: usize,
+    pub cmd: Vec<String>,
+    pub exe: String,
+    pub start_time_secs: u64,
+}
+
+#[derive(Serialize, Debug, Clone)]
 pub struct Metrics {
     pub ts_ms: u64,
     pub cpu_usage: f32,
     pub mem_rss_kb: u64,
+    pub mem_vms_kb: u64,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
     pub net_rx_bytes: u64,
@@ -60,6 +69,7 @@ pub struct AggregatedMetrics {
     pub ts_ms: u64,
     pub cpu_usage: f32,
     pub mem_rss_kb: u64,
+    pub mem_vms_kb: u64,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
     pub net_rx_bytes: u64,
@@ -191,6 +201,7 @@ impl ProcessMonitor {
         if let Some(proc) = self.sys.process(self.pid.into()) {
             // sysinfo returns memory in bytes, so we need to convert to KB
             let mem_rss_kb = proc.memory() / 1024;
+            let mem_vms_kb = proc.virtual_memory() / 1024;
             let cpu_usage = proc.cpu_usage();
             
             let current_disk_read = proc.disk_usage().total_read_bytes;
@@ -237,6 +248,7 @@ impl ProcessMonitor {
                 ts_ms,
                 cpu_usage,
                 mem_rss_kb,
+                mem_vms_kb,
                 disk_read_bytes,
                 disk_write_bytes,
                 net_rx_bytes,
@@ -273,6 +285,22 @@ impl ProcessMonitor {
     // Get the process ID
     pub fn get_pid(&self) -> usize {
         self.pid
+    }
+
+    // Get process metadata (static information)
+    pub fn get_metadata(&mut self) -> Option<ProcessMetadata> {
+        self.sys.refresh_process(self.pid.into());
+        
+        if let Some(proc) = self.sys.process(self.pid.into()) {
+            Some(ProcessMetadata {
+                pid: self.pid,
+                cmd: proc.cmd().to_vec(),
+                exe: proc.exe().to_string_lossy().to_string(),
+                start_time_secs: proc.start_time(),
+            })
+        } else {
+            None
+        }
     }
 
     // Get all child processes recursively
@@ -332,6 +360,7 @@ impl ProcessMonitor {
                     ts_ms: child_ts_ms,
                     cpu_usage: proc.cpu_usage(),
                     mem_rss_kb: proc.memory() / 1024,
+                    mem_vms_kb: proc.virtual_memory() / 1024,
                     disk_read_bytes: disk_read,
                     disk_write_bytes: disk_write,
                     net_rx_bytes: net_rx,
@@ -354,6 +383,7 @@ impl ProcessMonitor {
                 ts_ms: tree_ts_ms,
                 cpu_usage: parent.cpu_usage,
                 mem_rss_kb: parent.mem_rss_kb,
+                mem_vms_kb: parent.mem_vms_kb,
                 disk_read_bytes: parent.disk_read_bytes,
                 disk_write_bytes: parent.disk_write_bytes,
                 net_rx_bytes: parent.net_rx_bytes,
@@ -367,6 +397,7 @@ impl ProcessMonitor {
             for child in &child_metrics {
                 agg.cpu_usage += child.metrics.cpu_usage;
                 agg.mem_rss_kb += child.metrics.mem_rss_kb;
+                agg.mem_vms_kb += child.metrics.mem_vms_kb;
                 agg.disk_read_bytes += child.metrics.disk_read_bytes;
                 agg.disk_write_bytes += child.metrics.disk_write_bytes;
                 agg.net_rx_bytes += child.metrics.net_rx_bytes;
@@ -860,5 +891,80 @@ mod tests {
         if let Some(agg) = tree_metrics.aggregated {
             assert!(agg.ts_ms <= now_ms2 + 1000, "Aggregated timestamp should be reasonable");
         }
+    }
+
+    #[test]
+    fn test_enhanced_memory_metrics() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        use std::thread;
+
+        let cmd = vec!["sleep".to_string(), "2".to_string()];
+        let mut monitor = create_test_monitor(cmd).unwrap();
+        
+        thread::sleep(Duration::from_millis(100));
+        
+        let metrics = monitor.sample_metrics().unwrap();
+        
+        // Test that new memory fields exist and are reasonable
+        assert!(metrics.mem_rss_kb > 0, "RSS memory should be positive");
+        assert!(metrics.mem_vms_kb >= metrics.mem_rss_kb, "Virtual memory should be >= RSS");
+        
+
+        
+        // Test metadata separately
+        let metadata = monitor.get_metadata().unwrap();
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+            
+        assert!(metadata.start_time_secs <= now_secs, "Start time should not be in future");
+        assert!(now_secs - metadata.start_time_secs < 60, "Start time should be recent");
+        
+        // Test tree metrics also have enhanced fields
+        let tree_metrics = monitor.sample_tree_metrics();
+        
+        if let Some(parent) = tree_metrics.parent {
+            assert!(parent.mem_vms_kb >= parent.mem_rss_kb, "Parent VMS should be >= RSS");
+        }
+        
+        if let Some(agg) = tree_metrics.aggregated {
+            assert!(agg.mem_vms_kb >= agg.mem_rss_kb, "Aggregated VMS should be >= RSS");
+        }
+    }
+
+    #[test]
+    fn test_process_metadata() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        use std::thread;
+
+        let cmd = vec!["sleep".to_string(), "2".to_string()];
+        let mut monitor = create_test_monitor(cmd).unwrap();
+        
+        thread::sleep(Duration::from_millis(100));
+        
+        // Test metadata collection
+        let metadata = monitor.get_metadata().unwrap();
+        
+        // Verify metadata fields
+        assert_eq!(metadata.pid, monitor.get_pid(), "Metadata PID should match monitor PID");
+        assert!(!metadata.cmd.is_empty(), "Command line should not be empty");
+        assert!(metadata.cmd.contains(&"sleep".to_string()), "Command should contain 'sleep'");
+        assert!(!metadata.exe.is_empty(), "Executable path should not be empty");
+        
+        // Test start time is reasonable
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+            
+        assert!(metadata.start_time_secs <= now_secs, "Start time should not be in future");
+        assert!(now_secs - metadata.start_time_secs < 60, "Start time should be recent");
+        
+        // Test tree metrics work without embedded metadata
+        let tree_metrics = monitor.sample_tree_metrics();
+        
+        // Tree metrics should not include redundant metadata
+        assert!(tree_metrics.parent.is_some(), "Tree should have parent metrics");
     }
 }

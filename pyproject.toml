@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.8.6,<2.0"]
+requires = ["maturin>=1.8.3,<2.0"]
 build-backend = "maturin"
 
 [tool.pixi.project]
@@ -19,6 +19,7 @@ develop = { cmd = "./scripts/build_and_install.sh" }
 test = { cmd = "python -m pytest tests/" }
 test-rust = { cmd = "cargo test --no-default-features" }
 test-all = { cmd = "cargo test --no-default-features && ./scripts/build_and_install.sh && python -m pytest tests/" }
+test-ci = { cmd = "cargo test --no-default-features && ./scripts/build_and_install.sh && python -m pytest tests/" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
