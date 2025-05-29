@@ -11,6 +11,8 @@ PMET is a high-performance process monitoring tool that provides detailed metric
 - I/O bytes read/written tracking
 - Thread count monitoring
 - Recursive child process tracking
+- Command-line interface with colorized output
+- JSON output option for data processing
 
 ## Requirements
 
@@ -21,10 +23,32 @@ PMET is a high-performance process monitoring tool that provides detailed metric
 ## Installation
 
 ```bash
-pip install pmet
+pip install pmet  # Python package
+cargo install pmet  # Rust binary
 ```
 
 ## Usage
+
+### Command-Line Interface
+
+```bash
+# Basic monitoring with colored output
+pmet sleep 5
+
+# Output as JSON
+pmet --json sleep 5 > metrics.json
+
+# Write output to a file
+pmet --out metrics.log sleep 5
+
+# Custom sampling interval (in milliseconds)
+pmet --interval 500 sleep 5
+
+# Specify max sampling interval for adaptive mode
+pmet --max-interval 2000 sleep 5
+```
+
+### Python API
 
 ```python
 import pmet
@@ -102,8 +126,11 @@ The project includes scripts to help with development:
 pmet/
 ├── src/              # Rust source code (primary development focus)
 │   ├── lib.rs        # Python binding interface
+│   ├── bin/          # CLI executables
+│   │   └── pmet.rs   # Command-line interface implementation
 │   └── process_monitor.rs  # Core implementation with Rust tests
 ├── tests/            # Python binding tests
+│   └── cli/          # Command-line interface tests
 ├── ci/               # Continuous Integration scripts
 ├── scripts/          # Helper scripts for development
 ├── Cargo.toml        # Rust dependencies and configuration

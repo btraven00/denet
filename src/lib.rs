@@ -1,7 +1,7 @@
 // Split into modules to separate PyO3 dependencies from pure Rust code
-mod process_monitor;
+pub mod process_monitor;
 
-// Re-export the ProcessMonitor for use in tests
+// Re-export the ProcessMonitor for use in tests and binaries
 #[cfg(test)]
 pub use process_monitor::ProcessMonitor;
 
