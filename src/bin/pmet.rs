@@ -212,10 +212,11 @@ fn main() -> io::Result<()> {
                     if let Some(file) = &mut out_file {
                         writeln!(file, "{}", formatted)?;
                     } else if args.update_in_place {
-                        // Clear line and print new content with spinner and elapsed time
+                        // Use compact format for in-place updates
+                        let formatted_compact = format_metrics_compact(&metrics);
                         let spinner = progress_chars[progress_index % progress_chars.len()];
                         let elapsed = start_time.elapsed().as_secs();
-                        print!("\r{}\r{} [{}s] {}", " ".repeat(terminal_width.saturating_sub(1)), spinner.to_string().cyan(), elapsed.to_string().bright_black(), formatted);
+                        print!("\r{}\r{} [{}s] {}", " ".repeat(terminal_width.saturating_sub(1)), spinner.to_string().cyan(), elapsed.to_string().bright_black(), formatted_compact);
                         io::stdout().flush()?;
                         needs_newline_on_exit = true;
                         progress_index += 1;
@@ -259,10 +260,11 @@ fn main() -> io::Result<()> {
                     if let Some(file) = &mut out_file {
                         writeln!(file, "{}", formatted)?;
                     } else if args.update_in_place {
-                        // Clear line and print new content with spinner and elapsed time
+                        // Use compact format for in-place updates
+                        let formatted_compact = format_aggregated_metrics_compact(agg_metrics);
                         let spinner = progress_chars[progress_index % progress_chars.len()];
                         let elapsed = start_time.elapsed().as_secs();
-                        print!("\r{}\r{} [{}s] {}", " ".repeat(terminal_width.saturating_sub(1)), spinner.to_string().cyan(), elapsed.to_string().bright_black(), formatted);
+                        print!("\r{}\r{} [{}s] {}", " ".repeat(terminal_width.saturating_sub(1)), spinner.to_string().cyan(), elapsed.to_string().bright_black(), formatted_compact);
                         io::stdout().flush()?;
                         needs_newline_on_exit = true;
                         progress_index += 1;
@@ -311,7 +313,7 @@ fn format_metrics(metrics: &Metrics) -> String {
     };
     
     format!(
-        "CPU: {} | Memory: {} | Threads: {} | Disk: {} read, {} written | Net: {} rx, {} tx | Uptime: {}s",
+        "CPU: {} | Memory: {} | Threads: {} | Disk: {} ⬇ {} ⬆ | Net: {} ⬇ {} ⬆ | Uptime: {}s",
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
         format!("{:.1} MB", mem_mb).color(mem_color),
         metrics.thread_count,
@@ -320,6 +322,32 @@ fn format_metrics(metrics: &Metrics) -> String {
         format_bytes(metrics.net_rx_bytes).green(),
         format_bytes(metrics.net_tx_bytes).green(),
         metrics.uptime_secs,
+    )
+}
+
+fn format_metrics_compact(metrics: &Metrics) -> String {
+    let cpu_color = match metrics.cpu_usage {
+        c if c < 10.0 => "green",
+        c if c < 50.0 => "yellow",
+        _ => "red",
+    };
+    
+    let mem_mb = metrics.mem_rss_kb as f64 / 1024.0;
+    let mem_color = match mem_mb {
+        m if m < 100.0 => "green",
+        m if m < 500.0 => "yellow",
+        _ => "red",
+    };
+    
+    format!(
+        "CPU {} | Mem {} | Threads {} | I/O {} ⬇ {} ⬆ | Net {} ⬇ {} ⬆",
+        format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
+        format!("{:.0}M", mem_mb).color(mem_color),
+        metrics.thread_count,
+        format_bytes(metrics.disk_read_bytes).cyan(),
+        format_bytes(metrics.disk_write_bytes).cyan(),
+        format_bytes(metrics.net_rx_bytes).green(),
+        format_bytes(metrics.net_tx_bytes).green(),
     )
 }
 
@@ -338,7 +366,7 @@ fn format_aggregated_metrics(metrics: &pmet::process_monitor::AggregatedMetrics)
     };
     
     format!(
-        "Tree ({} procs): CPU: {} | Memory: {} | Threads: {} | Disk: {} read, {} written | Net: {} rx, {} tx | Uptime: {}s",
+        "Tree ({} procs): CPU: {} | Memory: {} | Threads: {} | Disk: {} ⬇ {} ⬆ | Net: {} ⬇ {} ⬆ | Uptime: {}s",
         metrics.process_count,
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
         format!("{:.1} MB", mem_mb).color(mem_color),
@@ -348,6 +376,33 @@ fn format_aggregated_metrics(metrics: &pmet::process_monitor::AggregatedMetrics)
         format_bytes(metrics.net_rx_bytes).green(),
         format_bytes(metrics.net_tx_bytes).green(),
         metrics.uptime_secs,
+    )
+}
+
+fn format_aggregated_metrics_compact(metrics: &pmet::process_monitor::AggregatedMetrics) -> String {
+    let cpu_color = match metrics.cpu_usage {
+        c if c < 10.0 => "green",
+        c if c < 50.0 => "yellow", 
+        _ => "red",
+    };
+    
+    let mem_mb = metrics.mem_rss_kb as f64 / 1024.0;
+    let mem_color = match mem_mb {
+        m if m < 100.0 => "green",
+        m if m < 500.0 => "yellow",
+        _ => "red",
+    };
+    
+    format!(
+        "Tree({}): CPU {} | Mem {} | Threads {} | I/O {} ⬇ {} ⬆ | Net {} ⬇ {} ⬆",
+        metrics.process_count,
+        format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
+        format!("{:.0}M", mem_mb).color(mem_color),
+        metrics.thread_count,
+        format_bytes(metrics.disk_read_bytes).cyan(),
+        format_bytes(metrics.disk_write_bytes).cyan(),
+        format_bytes(metrics.net_rx_bytes).green(),
+        format_bytes(metrics.net_tx_bytes).green(),
     )
 }
 
