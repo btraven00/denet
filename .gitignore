@@ -1,0 +1,6 @@
+env/
+target/
+__pycache__/*
+
+*.swp
+*.swo
