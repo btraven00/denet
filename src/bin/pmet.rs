@@ -229,9 +229,9 @@ fn format_metrics(metrics: &Metrics) -> String {
     };
     
     format!(
-        "CPU: {:.1}% | Memory: {:.1} MB | Threads: {} | I/O: {} read, {} written | Uptime: {}s",
-        metrics.cpu_usage.to_string().color(cpu_color),
-        mem_mb.to_string().color(mem_color),
+        "CPU: {} | Memory: {} | Threads: {} | I/O: {} read, {} written | Uptime: {}s",
+        format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
+        format!("{:.1} MB", mem_mb).color(mem_color),
         metrics.thread_count,
         format_bytes(metrics.read_bytes).cyan(),
         format_bytes(metrics.write_bytes).cyan(),

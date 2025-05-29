@@ -122,9 +122,12 @@ impl ProcessMonitor {
         }
 
         if let Some(proc) = self.sys.process(self.pid.into()) {
+            // sysinfo returns memory in bytes, so we need to convert to KB
+            let mem_rss_kb = proc.memory() / 1024;
+            
             Some(Metrics {
                 cpu_usage: proc.cpu_usage(),
-                mem_rss_kb: proc.memory(),
+                mem_rss_kb,
                 read_bytes: proc.disk_usage().total_read_bytes,
                 write_bytes: proc.disk_usage().total_written_bytes,
                 thread_count: get_thread_count(usize::from(proc.pid())),
