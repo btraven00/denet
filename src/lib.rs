@@ -32,6 +32,19 @@ impl PyProcessMonitor {
         
         Ok(PyProcessMonitor { inner })
     }
+    
+    #[staticmethod]
+    fn from_pid(pid: usize, base_interval_ms: u64, max_interval_ms: u64) -> PyResult<Self> {
+        use std::time::Duration;
+        
+        let inner = ProcessMonitor::from_pid(
+            pid, 
+            Duration::from_millis(base_interval_ms),
+            Duration::from_millis(max_interval_ms),
+        ).map_err(process_monitor::io_err_to_py_err)?;
+        
+        Ok(PyProcessMonitor { inner })
+    }
 
     fn run(&mut self) -> PyResult<()> {
         use std::thread::sleep;
@@ -54,6 +67,10 @@ impl PyProcessMonitor {
     
     fn is_running(&mut self) -> PyResult<bool> {
         Ok(self.inner.is_running())
+    }
+    
+    fn get_pid(&self) -> PyResult<usize> {
+        Ok(self.inner.get_pid())
     }
 }
 

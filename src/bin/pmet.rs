@@ -1,20 +1,19 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use colored::*;
 use pmet::process_monitor::{ProcessMonitor, Metrics};
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::exit;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 /// Process Monitoring and Execution Tool (PMET)
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// Command to run and monitor
-    #[clap(value_name = "COMMAND")]
-    command: Vec<String>,
-
     /// Output in JSON format
     #[clap(short, long)]
     json: bool,
@@ -30,52 +29,147 @@ struct Args {
     /// Maximum sampling interval in milliseconds (default: 1000)
     #[clap(short, long, default_value = "1000")]
     max_interval: u64,
+    
+    /// Update output in place instead of printing new lines
+    #[clap(short, long)]
+    update_in_place: bool,
+    
+    /// Maximum duration to monitor in seconds (0 = unlimited)
+    #[clap(short, long, default_value = "0")]
+    duration: u64,
+    
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Run and monitor a new process
+    Run {
+        /// Command to run and monitor
+        #[clap(required = true)]
+        command: Vec<String>,
+    },
+    
+    /// Monitor an existing process by PID
+    Attach {
+        /// Process ID (PID) to monitor
+        #[clap(required = true)]
+        pid: usize,
+    }
 }
 
 fn main() -> io::Result<()> {
     // Parse command line arguments
     let args = Args::parse();
     
-    // Ensure we have a command to run
-    if args.command.is_empty() {
-        eprintln!("Error: No command specified");
-        eprintln!("Usage: pmet [OPTIONS] COMMAND");
-        exit(1);
-    }
-    
     // Create output file if specified
-    let mut out_file = args.out.map(|path| {
-        File::create(&path).unwrap_or_else(|err| {
+    let out_path = args.out.clone(); // Clone to keep the original
+    let mut out_file = args.out.as_ref().map(|path| {
+        File::create(path).unwrap_or_else(|err| {
             eprintln!("Error creating output file: {}", err);
             exit(1);
         })
     });
     
-    // Create a process monitor
-    let mut monitor = match ProcessMonitor::new(
-        args.command.clone(),
-        Duration::from_millis(args.interval),
-        Duration::from_millis(args.max_interval),
-    ) {
-        Ok(m) => m,
-        Err(err) => {
-            eprintln!("Error starting command: {}", err);
-            exit(1);
+    // Create process monitor based on the subcommand
+    let mut monitor = match &args.command {
+        Commands::Run { command } => {
+            if command.is_empty() {
+                eprintln!("Error: Empty command");
+                exit(1);
+            }
+            
+            match ProcessMonitor::new(
+                command.clone(),
+                Duration::from_millis(args.interval),
+                Duration::from_millis(args.max_interval),
+            ) {
+                Ok(m) => {
+                    println!("Monitoring process: {}", command.join(" ").cyan());
+                    m
+                },
+                Err(err) => {
+                    eprintln!("Error starting command: {}", err);
+                    exit(1);
+                }
+            }
+        },
+        Commands::Attach { pid } => {
+            match ProcessMonitor::from_pid(
+                *pid,
+                Duration::from_millis(args.interval),
+                Duration::from_millis(args.max_interval),
+            ) {
+                Ok(m) => {
+                    println!("Monitoring existing process with PID: {}", pid.to_string().cyan());
+                    m
+                },
+                Err(err) => {
+                    eprintln!("Error attaching to process: {}", err);
+                    exit(1);
+                }
+            }
         }
     };
     
-    println!("Monitoring process: {}", args.command.join(" ").cyan());
+    // Setup signal handling for clean shutdown
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    
+    ctrlc::set_handler(move || {
+        r.store(false, Ordering::SeqCst);
+        println!("\nReceived Ctrl-C, finishing...");
+    }).expect("Error setting Ctrl-C handler");
+    
     println!("Press Ctrl+C to stop monitoring");
     println!();
     
+    // For in-place updates
+    let mut last_line_length = 0;
+    
+    // Variables for collecting results
+    let start_time = Instant::now();
+    let mut metrics_count = 0;
+    let mut results = Vec::new();
+    
+    // Calculate timeout if duration is specified
+    let timeout = if args.duration > 0 {
+        Some(Duration::from_secs(args.duration))
+    } else {
+        None
+    };
+    
     // Monitoring loop
-    while monitor.is_running() {
+    while monitor.is_running() && running.load(Ordering::SeqCst) {
+        // Check timeout
+        if let Some(timeout_duration) = timeout {
+            if start_time.elapsed() >= timeout_duration {
+                println!("\nTimeout reached after {} seconds", args.duration);
+                break;
+            }
+        }
         if let Some(metrics) = monitor.sample_metrics() {
+            metrics_count += 1;
+            
+            // Store metrics for final summary if we're writing to a file
+            if args.out.is_some() {
+                results.push(metrics.clone());
+            }
+            
             // Format and display metrics
             if args.json {
                 let json = serde_json::to_string(&metrics).unwrap();
                 if let Some(file) = &mut out_file {
                     writeln!(file, "{}", json)?;
+                } else if args.update_in_place {
+                    // Clear the previous line if it exists
+                    if last_line_length > 0 {
+                        print!("\r{}\r", " ".repeat(last_line_length));
+                    }
+                    print!("{}", json);
+                    last_line_length = json.len();
+                    io::stdout().flush()?;
                 } else {
                     println!("{}", json);
                 }
@@ -83,6 +177,14 @@ fn main() -> io::Result<()> {
                 let formatted = format_metrics(&metrics);
                 if let Some(file) = &mut out_file {
                     writeln!(file, "{}", formatted)?;
+                } else if args.update_in_place {
+                    // Clear the previous line if it exists
+                    if last_line_length > 0 {
+                        print!("\r{}\r", " ".repeat(last_line_length));
+                    }
+                    print!("{}", formatted);
+                    last_line_length = formatted.len();
+                    io::stdout().flush()?;
                 } else {
                     println!("{}", formatted);
                 }
@@ -93,7 +195,22 @@ fn main() -> io::Result<()> {
         std::thread::sleep(monitor.adaptive_interval());
     }
     
-    println!("\nProcess has completed.");
+    // Clean up and ensure we have a newline if we were updating in place
+    if args.update_in_place {
+        println!();
+    }
+    
+    // Print summary
+    let runtime = start_time.elapsed();
+    println!("\nMonitoring complete after {:.1} seconds", runtime.as_secs_f64());
+    println!("Collected {} metric samples", metrics_count);
+    
+    // If we wrote to a file, print the path
+    if let Some(path) = &out_path {
+        println!("Results written to {}", path.display().to_string().green());
+        println!("Sample count: {}", results.len());
+    }
+    
     Ok(())
 }
 

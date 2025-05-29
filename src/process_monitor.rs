@@ -25,7 +25,7 @@ pub(crate) fn get_thread_count(pid: usize) -> usize {
     }
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub struct Metrics {
     pub cpu_usage: f32,
     pub mem_rss_kb: u64,
@@ -37,7 +37,8 @@ pub struct Metrics {
 
 // Main process monitor implementation
 pub struct ProcessMonitor {
-    pub child: Child,
+    pub child: Option<Child>,
+    pub pid: usize,
     pub sys: System,
     pub base_interval: Duration,
     pub max_interval: Duration,
@@ -54,7 +55,7 @@ pub fn io_err_to_py_err(err: std::io::Error) -> pyo3::PyErr {
 }
 
 impl ProcessMonitor {
-    // Use the same implementation for both Python and non-Python builds
+    // Create a new process monitor by launching a command
     pub fn new(cmd: Vec<String>, base_interval: Duration, max_interval: Duration) -> ProcessResult<Self> {
         if cmd.is_empty() {
             return Err(std::io::Error::new(
@@ -64,10 +65,39 @@ impl ProcessMonitor {
         }
 
         let child = Command::new(&cmd[0]).args(&cmd[1..]).spawn()?;
+        let pid = child.id() as usize;
 
         Ok(Self {
-            child,
+            child: Some(child),
+            pid,
             sys: System::new_all(),
+            base_interval,
+            max_interval,
+            start_time: Instant::now(),
+        })
+    }
+
+    // Create a process monitor for an existing process
+    pub fn from_pid(pid: usize, base_interval: Duration, max_interval: Duration) -> ProcessResult<Self> {
+        // Check if the process exists
+        let mut sys = System::new_all();
+        sys.refresh_all();
+        
+        // Give the system time to fully refresh, especially on some systems
+        std::thread::sleep(Duration::from_millis(10));
+        sys.refresh_processes();
+
+        if sys.process(pid.into()).is_none() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Process with PID {} not found", pid),
+            ));
+        }
+
+        Ok(Self {
+            child: None,
+            pid,
+            sys,
             base_interval,
             max_interval,
             start_time: Instant::now(),
@@ -83,9 +113,15 @@ impl ProcessMonitor {
     }
 
     pub fn sample_metrics(&mut self) -> Option<Metrics> {
-        self.sys.refresh_process((self.child.id() as usize).into());
+        // Refresh the specific process first
+        self.sys.refresh_process(self.pid.into());
+        
+        // If that doesn't work, try refreshing all processes
+        if self.sys.process(self.pid.into()).is_none() {
+            self.sys.refresh_processes();
+        }
 
-        if let Some(proc) = self.sys.process((self.child.id() as usize).into()) {
+        if let Some(proc) = self.sys.process(self.pid.into()) {
             Some(Metrics {
                 cpu_usage: proc.cpu_usage(),
                 mem_rss_kb: proc.memory(),
@@ -100,11 +136,29 @@ impl ProcessMonitor {
     }
 
     pub fn is_running(&mut self) -> bool {
-        match self.child.try_wait() {
-            Ok(Some(_)) => false,
-            Ok(None) => true,
-            Err(_) => false,
+        // If we have a child process, use try_wait to check its status
+        if let Some(child) = &mut self.child {
+            match child.try_wait() {
+                Ok(Some(_)) => false,
+                Ok(None) => true,
+                Err(_) => false,
+            }
+        } else {
+            // For existing processes, check if it still exists
+            self.sys.refresh_process(self.pid.into());
+            
+            // If specific refresh doesn't work, try refreshing all processes
+            if self.sys.process(self.pid.into()).is_none() {
+                self.sys.refresh_processes();
+            }
+            
+            self.sys.process(self.pid.into()).is_some()
         }
+    }
+
+    // Get the process ID
+    pub fn get_pid(&self) -> usize {
+        self.pid
     }
 }
 
@@ -118,6 +172,36 @@ mod tests {
         let base_interval = Duration::from_millis(100);
         let max_interval = Duration::from_millis(1000);
         ProcessMonitor::new(cmd, base_interval, max_interval)
+    }
+    
+    // Helper function for creating a test monitor from PID
+    fn create_test_monitor_from_pid(pid: usize) -> Result<ProcessMonitor, std::io::Error> {
+        let base_interval = Duration::from_millis(100);
+        let max_interval = Duration::from_millis(1000);
+        ProcessMonitor::from_pid(pid, base_interval, max_interval)
+    }
+
+    // Test attaching to existing process
+    #[test]
+    fn test_from_pid() {
+        // Start a process and get its PID
+        let cmd = if cfg!(target_os = "windows") {
+            vec!["powershell".to_string(), "-Command".to_string(), "Start-Sleep -Seconds 3".to_string()]
+        } else {
+            vec!["sleep".to_string(), "3".to_string()]
+        };
+        
+        // Create a process directly
+        let mut direct_monitor = create_test_monitor(cmd).unwrap();
+        let pid = direct_monitor.get_pid();
+        
+        // Now create a monitor attached to that PID
+        let pid_monitor = create_test_monitor_from_pid(pid);
+        assert!(pid_monitor.is_ok(), "Should be able to attach to running process");
+        
+        // Both monitors should report the process as running
+        assert!(direct_monitor.is_running(), "Direct monitor should show process running");
+        assert!(pid_monitor.unwrap().is_running(), "PID monitor should show process running");
     }
 
     #[test]

@@ -15,6 +15,7 @@ pyo3 = { version = "0.18", features = ["extension-module", "auto-initialize"], o
 tokio = { version = "1", features = ["full"], optional = true }
 clap = { version = "4.5", features = ["derive"] }
 colored = "2.1"
+ctrlc = "3.4"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
