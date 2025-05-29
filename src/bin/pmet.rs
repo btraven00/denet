@@ -39,6 +39,10 @@ struct Args {
     #[clap(short, long, default_value = "0")]
     duration: u64,
     
+    /// Show I/O since process start instead of since monitoring start
+    #[clap(long)]
+    since_process_start: bool,
+    
     #[command(subcommand)]
     command: Commands,
 }
@@ -81,10 +85,11 @@ fn main() -> io::Result<()> {
                 exit(1);
             }
             
-            match ProcessMonitor::new(
+            match ProcessMonitor::new_with_options(
                 command.clone(),
                 Duration::from_millis(args.interval),
                 Duration::from_millis(args.max_interval),
+                args.since_process_start,
             ) {
                 Ok(m) => {
                     println!("Monitoring process: {}", command.join(" ").cyan());
@@ -97,10 +102,11 @@ fn main() -> io::Result<()> {
             }
         },
         Commands::Attach { pid } => {
-            match ProcessMonitor::from_pid(
+            match ProcessMonitor::from_pid_with_options(
                 *pid,
                 Duration::from_millis(args.interval),
                 Duration::from_millis(args.max_interval),
+                args.since_process_start,
             ) {
                 Ok(m) => {
                     println!("Monitoring existing process with PID: {}", pid.to_string().cyan());

@@ -21,26 +21,30 @@ struct PyProcessMonitor {
 #[pymethods]
 impl PyProcessMonitor {
     #[new]
-    fn new(cmd: Vec<String>, base_interval_ms: u64, max_interval_ms: u64) -> PyResult<Self> {
+    #[pyo3(signature = (cmd, base_interval_ms, max_interval_ms, since_process_start=false))]
+    fn new(cmd: Vec<String>, base_interval_ms: u64, max_interval_ms: u64, since_process_start: bool) -> PyResult<Self> {
         use std::time::Duration;
         
-        let inner = ProcessMonitor::new(
+        let inner = ProcessMonitor::new_with_options(
             cmd,
             Duration::from_millis(base_interval_ms),
             Duration::from_millis(max_interval_ms),
+            since_process_start,
         ).map_err(process_monitor::io_err_to_py_err)?;
         
         Ok(PyProcessMonitor { inner })
     }
     
     #[staticmethod]
-    fn from_pid(pid: usize, base_interval_ms: u64, max_interval_ms: u64) -> PyResult<Self> {
+    #[pyo3(signature = (pid, base_interval_ms, max_interval_ms, since_process_start=false))]
+    fn from_pid(pid: usize, base_interval_ms: u64, max_interval_ms: u64, since_process_start: bool) -> PyResult<Self> {
         use std::time::Duration;
         
-        let inner = ProcessMonitor::from_pid(
+        let inner = ProcessMonitor::from_pid_with_options(
             pid, 
             Duration::from_millis(base_interval_ms),
             Duration::from_millis(max_interval_ms),
+            since_process_start,
         ).map_err(process_monitor::io_err_to_py_err)?;
         
         Ok(PyProcessMonitor { inner })
@@ -87,16 +91,18 @@ fn pmet(_py: Python, m: &PyModule) -> PyResult<()> {
 pub fn run_monitor(
     cmd: Vec<String>, 
     base_interval_ms: u64, 
-    max_interval_ms: u64
+    max_interval_ms: u64,
+    since_process_start: bool
 ) -> process_monitor::ProcessResult<()> {
     use std::time::Duration;
     use std::thread::sleep;
     use process_monitor::ProcessMonitor;
     
-    let mut monitor = ProcessMonitor::new(
+    let mut monitor = ProcessMonitor::new_with_options(
         cmd,
         Duration::from_millis(base_interval_ms),
         Duration::from_millis(max_interval_ms),
+        since_process_start,
     )?;
     
     while monitor.is_running() {

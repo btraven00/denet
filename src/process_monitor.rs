@@ -35,6 +35,12 @@ pub struct Metrics {
     pub uptime_secs: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct IoBaseline {
+    pub read_bytes: u64,
+    pub write_bytes: u64,
+}
+
 // Main process monitor implementation
 pub struct ProcessMonitor {
     pub child: Option<Child>,
@@ -43,6 +49,8 @@ pub struct ProcessMonitor {
     pub base_interval: Duration,
     pub max_interval: Duration,
     pub start_time: Instant,
+    pub io_baseline: Option<IoBaseline>,
+    pub since_process_start: bool,
 }
 
 // We'll use a Result type directly instead of a custom ErrorType to avoid orphan rule issues
@@ -57,6 +65,11 @@ pub fn io_err_to_py_err(err: std::io::Error) -> pyo3::PyErr {
 impl ProcessMonitor {
     // Create a new process monitor by launching a command
     pub fn new(cmd: Vec<String>, base_interval: Duration, max_interval: Duration) -> ProcessResult<Self> {
+        Self::new_with_options(cmd, base_interval, max_interval, false)
+    }
+
+    // Create a new process monitor with I/O accounting options
+    pub fn new_with_options(cmd: Vec<String>, base_interval: Duration, max_interval: Duration, since_process_start: bool) -> ProcessResult<Self> {
         if cmd.is_empty() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -78,11 +91,18 @@ impl ProcessMonitor {
             base_interval,
             max_interval,
             start_time: Instant::now(),
+            io_baseline: None,
+            since_process_start,
         })
     }
 
     // Create a process monitor for an existing process
     pub fn from_pid(pid: usize, base_interval: Duration, max_interval: Duration) -> ProcessResult<Self> {
+        Self::from_pid_with_options(pid, base_interval, max_interval, false)
+    }
+
+    // Create a process monitor for an existing process with I/O accounting options
+    pub fn from_pid_with_options(pid: usize, base_interval: Duration, max_interval: Duration, since_process_start: bool) -> ProcessResult<Self> {
         // Check if the process exists
         let mut sys = System::new_all();
         sys.refresh_all();
@@ -108,6 +128,8 @@ impl ProcessMonitor {
             base_interval,
             max_interval,
             start_time: Instant::now(),
+            io_baseline: None,
+            since_process_start,
         })
     }
 
@@ -135,11 +157,37 @@ impl ProcessMonitor {
             let mem_rss_kb = proc.memory() / 1024;
             let cpu_usage = proc.cpu_usage();
             
+            let current_read = proc.disk_usage().total_read_bytes;
+            let current_write = proc.disk_usage().total_written_bytes;
+            
+            // Handle I/O baseline for delta calculation
+            let (read_bytes, write_bytes) = if self.since_process_start {
+                // Show cumulative I/O since process start
+                (current_read, current_write)
+            } else {
+                // Show delta I/O since monitoring start
+                if self.io_baseline.is_none() {
+                    // First sample - establish baseline
+                    self.io_baseline = Some(IoBaseline {
+                        read_bytes: current_read,
+                        write_bytes: current_write,
+                    });
+                    (0, 0) // First sample shows 0 delta
+                } else {
+                    // Calculate delta from baseline
+                    let baseline = self.io_baseline.as_ref().unwrap();
+                    (
+                        current_read.saturating_sub(baseline.read_bytes),
+                        current_write.saturating_sub(baseline.write_bytes)
+                    )
+                }
+            };
+            
             Some(Metrics {
                 cpu_usage,
                 mem_rss_kb,
-                read_bytes: proc.disk_usage().total_read_bytes,
-                write_bytes: proc.disk_usage().total_written_bytes,
+                read_bytes,
+                write_bytes,
                 thread_count: get_thread_count(usize::from(proc.pid())),
                 uptime_secs: proc.run_time(),
             })
