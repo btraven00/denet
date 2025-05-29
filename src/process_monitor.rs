@@ -87,16 +87,26 @@ pub struct IoBaseline {
     pub net_tx_bytes: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct ChildIoBaseline {
+    pub pid: usize,
+    pub disk_read_bytes: u64,
+    pub disk_write_bytes: u64,
+    pub net_rx_bytes: u64,
+    pub net_tx_bytes: u64,
+}
+
 // Main process monitor implementation
 pub struct ProcessMonitor {
-    pub child: Option<Child>,
-    pub pid: usize,
-    pub sys: System,
-    pub base_interval: Duration,
-    pub max_interval: Duration,
-    pub start_time: Instant,
-    pub io_baseline: Option<IoBaseline>,
-    pub since_process_start: bool,
+    child: Option<Child>,
+    pid: usize,
+    sys: System,
+    base_interval: Duration,
+    max_interval: Duration,
+    start_time: Instant,
+    io_baseline: Option<IoBaseline>,
+    child_io_baselines: std::collections::HashMap<usize, ChildIoBaseline>,
+    since_process_start: bool,
 }
 
 // We'll use a Result type directly instead of a custom ErrorType to avoid orphan rule issues
@@ -138,6 +148,7 @@ impl ProcessMonitor {
             max_interval,
             start_time: Instant::now(),
             io_baseline: None,
+            child_io_baselines: HashMap::new(),
             since_process_start,
         })
     }
@@ -175,6 +186,7 @@ impl ProcessMonitor {
             max_interval,
             start_time: Instant::now(),
             io_baseline: None,
+            child_io_baselines: HashMap::new(),
             since_process_start,
         })
     }
@@ -346,10 +358,38 @@ impl ProcessMonitor {
                 let command = proc.name().to_string();
                 
                 // Get I/O stats for child
-                let disk_read = proc.disk_usage().total_read_bytes;
-                let disk_write = proc.disk_usage().total_written_bytes;
-                let net_rx = 0; // TODO: Implement for children
-                let net_tx = 0;
+                let current_disk_read = proc.disk_usage().total_read_bytes;
+                let current_disk_write = proc.disk_usage().total_written_bytes;
+                let current_net_rx = 0; // TODO: Implement for children
+                let current_net_tx = 0;
+                
+                // Handle I/O baseline for child processes
+                let (disk_read_bytes, disk_write_bytes, net_rx_bytes, net_tx_bytes) = if self.since_process_start {
+                    // Show cumulative I/O since process start
+                    (current_disk_read, current_disk_write, current_net_rx, current_net_tx)
+                } else {
+                    // Show delta I/O since monitoring start
+                    if !self.child_io_baselines.contains_key(&child_pid) {
+                        // First time seeing this child - establish baseline
+                        self.child_io_baselines.insert(child_pid, ChildIoBaseline {
+                            pid: child_pid,
+                            disk_read_bytes: current_disk_read,
+                            disk_write_bytes: current_disk_write,
+                            net_rx_bytes: current_net_rx,
+                            net_tx_bytes: current_net_tx,
+                        });
+                        (0, 0, 0, 0) // First sample shows 0 delta
+                    } else {
+                        // Calculate delta from baseline
+                        let baseline = &self.child_io_baselines[&child_pid];
+                        (
+                            current_disk_read.saturating_sub(baseline.disk_read_bytes),
+                            current_disk_write.saturating_sub(baseline.disk_write_bytes),
+                            current_net_rx.saturating_sub(baseline.net_rx_bytes),
+                            current_net_tx.saturating_sub(baseline.net_tx_bytes)
+                        )
+                    }
+                };
                 
                 let child_ts_ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -361,10 +401,10 @@ impl ProcessMonitor {
                     cpu_usage: proc.cpu_usage(),
                     mem_rss_kb: proc.memory() / 1024,
                     mem_vms_kb: proc.virtual_memory() / 1024,
-                    disk_read_bytes: disk_read,
-                    disk_write_bytes: disk_write,
-                    net_rx_bytes: net_rx,
-                    net_tx_bytes: net_tx,
+                    disk_read_bytes,
+                    disk_write_bytes,
+                    net_rx_bytes,
+                    net_tx_bytes,
                     thread_count: get_thread_count(child_pid),
                     uptime_secs: proc.run_time(),
                 };

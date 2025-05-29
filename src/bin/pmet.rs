@@ -313,7 +313,7 @@ fn format_metrics(metrics: &Metrics) -> String {
     };
     
     format!(
-        "CPU: {} | Memory: {} | Threads: {} | Disk: {} ⬇ {} ⬆ | Net: {} ⬇ {} ⬆ | Uptime: {}s",
+        "CPU: {} | Memory: {} | Threads: {} | Disk: {} rd, {} wr | Net: {} rx, {} tx | Uptime: {}s",
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
         format!("{:.1} MB", mem_mb).color(mem_color),
         metrics.thread_count,
@@ -340,7 +340,7 @@ fn format_metrics_compact(metrics: &Metrics) -> String {
     };
     
     format!(
-        "CPU {} | Mem {} | Threads {} | I/O {} ⬇ {} ⬆ | Net {} ⬇ {} ⬆",
+        "CPU {} | Mem {} | Threads {} | Disk {} rd, {} wr | Net {} rx, {} tx",
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
         format!("{:.0}M", mem_mb).color(mem_color),
         metrics.thread_count,
@@ -366,7 +366,7 @@ fn format_aggregated_metrics(metrics: &pmet::process_monitor::AggregatedMetrics)
     };
     
     format!(
-        "Tree ({} procs): CPU: {} | Memory: {} | Threads: {} | Disk: {} ⬇ {} ⬆ | Net: {} ⬇ {} ⬆ | Uptime: {}s",
+        "Tree ({} procs): CPU: {} | Memory: {} | Threads: {} | Disk: {} rd, {} wr | Net: {} rx, {} tx | Uptime: {}s",
         metrics.process_count,
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
         format!("{:.1} MB", mem_mb).color(mem_color),
@@ -394,7 +394,7 @@ fn format_aggregated_metrics_compact(metrics: &pmet::process_monitor::Aggregated
     };
     
     format!(
-        "Tree({}): CPU {} | Mem {} | Threads {} | I/O {} ⬇ {} ⬆ | Net {} ⬇ {} ⬆",
+        "Tree({}): CPU {} | Mem {} | Threads {} | Disk {} rd, {} wr | Net {} rx, {} tx",
         metrics.process_count,
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
         format!("{:.0}M", mem_mb).color(mem_color),
