@@ -244,12 +244,14 @@ fn format_metrics(metrics: &Metrics) -> String {
     };
     
     format!(
-        "CPU: {} | Memory: {} | Threads: {} | I/O: {} read, {} written | Uptime: {}s",
+        "CPU: {} | Memory: {} | Threads: {} | Disk: {} read, {} written | Net: {} rx, {} tx | Uptime: {}s",
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
         format!("{:.1} MB", mem_mb).color(mem_color),
         metrics.thread_count,
-        format_bytes(metrics.read_bytes).cyan(),
-        format_bytes(metrics.write_bytes).cyan(),
+        format_bytes(metrics.disk_read_bytes).cyan(),
+        format_bytes(metrics.disk_write_bytes).cyan(),
+        format_bytes(metrics.net_rx_bytes).green(),
+        format_bytes(metrics.net_tx_bytes).green(),
         metrics.uptime_secs,
     )
 }

@@ -3,6 +3,8 @@ use std::process::{Command, Child};
 use std::time::{Duration, Instant};
 use sysinfo::{ProcessExt, System, SystemExt};
 use std::fs;
+use std::io::Read;
+use std::collections::HashMap;
 
 // In a real-world implementation, we might want this function to be more robust
 // or use platform-specific APIs. For now, we'll keep it simple.
@@ -29,16 +31,20 @@ pub(crate) fn get_thread_count(pid: usize) -> usize {
 pub struct Metrics {
     pub cpu_usage: f32,
     pub mem_rss_kb: u64,
-    pub read_bytes: u64,
-    pub write_bytes: u64,
+    pub disk_read_bytes: u64,
+    pub disk_write_bytes: u64,
+    pub net_rx_bytes: u64,
+    pub net_tx_bytes: u64,
     pub thread_count: usize,
     pub uptime_secs: u64,
 }
 
 #[derive(Debug, Clone)]
 pub struct IoBaseline {
-    pub read_bytes: u64,
-    pub write_bytes: u64,
+    pub disk_read_bytes: u64,
+    pub disk_write_bytes: u64,
+    pub net_rx_bytes: u64,
+    pub net_tx_bytes: u64,
 }
 
 // Main process monitor implementation
@@ -157,28 +163,37 @@ impl ProcessMonitor {
             let mem_rss_kb = proc.memory() / 1024;
             let cpu_usage = proc.cpu_usage();
             
-            let current_read = proc.disk_usage().total_read_bytes;
-            let current_write = proc.disk_usage().total_written_bytes;
+            let current_disk_read = proc.disk_usage().total_read_bytes;
+            let current_disk_write = proc.disk_usage().total_written_bytes;
+            
+            // Get network I/O - for now, we'll use 0 as sysinfo doesn't provide per-process network stats
+            // TODO: Implement platform-specific network I/O collection
+            let current_net_rx = self.get_process_net_rx_bytes();
+            let current_net_tx = self.get_process_net_tx_bytes();
             
             // Handle I/O baseline for delta calculation
-            let (read_bytes, write_bytes) = if self.since_process_start {
+            let (disk_read_bytes, disk_write_bytes, net_rx_bytes, net_tx_bytes) = if self.since_process_start {
                 // Show cumulative I/O since process start
-                (current_read, current_write)
+                (current_disk_read, current_disk_write, current_net_rx, current_net_tx)
             } else {
                 // Show delta I/O since monitoring start
                 if self.io_baseline.is_none() {
                     // First sample - establish baseline
                     self.io_baseline = Some(IoBaseline {
-                        read_bytes: current_read,
-                        write_bytes: current_write,
+                        disk_read_bytes: current_disk_read,
+                        disk_write_bytes: current_disk_write,
+                        net_rx_bytes: current_net_rx,
+                        net_tx_bytes: current_net_tx,
                     });
-                    (0, 0) // First sample shows 0 delta
+                    (0, 0, 0, 0) // First sample shows 0 delta
                 } else {
                     // Calculate delta from baseline
                     let baseline = self.io_baseline.as_ref().unwrap();
                     (
-                        current_read.saturating_sub(baseline.read_bytes),
-                        current_write.saturating_sub(baseline.write_bytes)
+                        current_disk_read.saturating_sub(baseline.disk_read_bytes),
+                        current_disk_write.saturating_sub(baseline.disk_write_bytes),
+                        current_net_rx.saturating_sub(baseline.net_rx_bytes),
+                        current_net_tx.saturating_sub(baseline.net_tx_bytes)
                     )
                 }
             };
@@ -186,8 +201,10 @@ impl ProcessMonitor {
             Some(Metrics {
                 cpu_usage,
                 mem_rss_kb,
-                read_bytes,
-                write_bytes,
+                disk_read_bytes,
+                disk_write_bytes,
+                net_rx_bytes,
+                net_tx_bytes,
                 thread_count: get_thread_count(usize::from(proc.pid())),
                 uptime_secs: proc.run_time(),
             })
@@ -220,6 +237,84 @@ impl ProcessMonitor {
     // Get the process ID
     pub fn get_pid(&self) -> usize {
         self.pid
+    }
+
+    // Get network receive bytes for the process
+    fn get_process_net_rx_bytes(&self) -> u64 {
+        #[cfg(target_os = "linux")]
+        {
+            self.get_linux_process_net_stats().0
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            0 // Not implemented for non-Linux platforms yet
+        }
+    }
+
+    // Get network transmit bytes for the process
+    fn get_process_net_tx_bytes(&self) -> u64 {
+        #[cfg(target_os = "linux")]
+        {
+            self.get_linux_process_net_stats().1
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            0 // Not implemented for non-Linux platforms yet
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn get_linux_process_net_stats(&self) -> (u64, u64) {
+        // Parse /proc/[pid]/net/dev if it exists (in network namespaces)
+        // Fall back to system-wide /proc/net/dev as approximation
+        
+        let net_dev_path = format!("/proc/{}/net/dev", self.pid);
+        let net_stats = if std::path::Path::new(&net_dev_path).exists() {
+            self.parse_net_dev(&net_dev_path)
+        } else {
+            // Fall back to system-wide stats
+            // This is less accurate but better than nothing
+            self.parse_net_dev("/proc/net/dev")
+        };
+
+        // Get interface statistics (sum all interfaces except loopback)
+        let mut total_rx = 0u64;
+        let mut total_tx = 0u64;
+        
+        for (interface, (rx, tx)) in net_stats {
+            if interface != "lo" { // Skip loopback
+                total_rx += rx;
+                total_tx += tx;
+            }
+        }
+        
+        (total_rx, total_tx)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn parse_net_dev(&self, path: &str) -> HashMap<String, (u64, u64)> {
+        let mut stats = HashMap::new();
+        
+        if let Ok(mut file) = std::fs::File::open(path) {
+            let mut contents = String::new();
+            if file.read_to_string(&mut contents).is_ok() {
+                for line in contents.lines().skip(2) { // Skip header lines
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 10 {
+                        if let Some(interface) = parts[0].strip_suffix(':') {
+                            if let (Ok(rx_bytes), Ok(tx_bytes)) = (
+                                parts[1].parse::<u64>(),
+                                parts[9].parse::<u64>()
+                            ) {
+                                stats.insert(interface.to_string(), (rx_bytes, tx_bytes));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stats
     }
 }
 
