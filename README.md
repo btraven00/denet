@@ -33,19 +33,28 @@ cargo install pmet  # Rust binary
 
 ```bash
 # Basic monitoring with colored output
-pmet sleep 5
+pmet run sleep 5
 
 # Output as JSON
-pmet --json sleep 5 > metrics.json
+pmet --json run sleep 5 > metrics.json
 
 # Write output to a file
-pmet --out metrics.log sleep 5
+pmet --out metrics.log run sleep 5
 
 # Custom sampling interval (in milliseconds)
-pmet --interval 500 sleep 5
+pmet --interval 500 run sleep 5
 
 # Specify max sampling interval for adaptive mode
-pmet --max-interval 2000 sleep 5
+pmet --max-interval 2000 run sleep 5
+
+# Monitor existing process by PID
+pmet attach 1234
+
+# In-place updates with spinner and elapsed time
+pmet --update-in-place run sleep 5
+
+# Duration-limited monitoring
+pmet --duration 10 attach 1234
 ```
 
 ### Python API

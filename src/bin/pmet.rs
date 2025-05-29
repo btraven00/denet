@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use colored::*;
+use crossterm;
 use pmet::process_monitor::{ProcessMonitor, Metrics};
 use std::fs::File;
 use std::io::{self, Write};
@@ -125,8 +126,16 @@ fn main() -> io::Result<()> {
     println!("Press Ctrl+C to stop monitoring");
     println!();
     
-    // For in-place updates
-    let mut last_line_length = 0;
+    // For in-place updates - use a more sophisticated approach
+    let mut terminal_width = 80; // Default fallback
+    if let Ok((w, _)) = crossterm::terminal::size() {
+        terminal_width = w as usize;
+    }
+    let mut needs_newline_on_exit = false;
+    
+    // Progress indicator for in-place updates
+    let progress_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let mut progress_index = 0;
     
     // Variables for collecting results
     let start_time = Instant::now();
@@ -163,13 +172,13 @@ fn main() -> io::Result<()> {
                 if let Some(file) = &mut out_file {
                     writeln!(file, "{}", json)?;
                 } else if args.update_in_place {
-                    // Clear the previous line if it exists
-                    if last_line_length > 0 {
-                        print!("\r{}\r", " ".repeat(last_line_length));
-                    }
-                    print!("{}", json);
-                    last_line_length = json.len();
+                    // Clear line and print new content with spinner and elapsed time
+                    let spinner = progress_chars[progress_index % progress_chars.len()];
+                    let elapsed = start_time.elapsed().as_secs();
+                    print!("\r{}\r{} [{}s] {}", " ".repeat(terminal_width.saturating_sub(1)), spinner.to_string().cyan(), elapsed.to_string().bright_black(), json);
                     io::stdout().flush()?;
+                    needs_newline_on_exit = true;
+                    progress_index += 1;
                 } else {
                     println!("{}", json);
                 }
@@ -178,13 +187,13 @@ fn main() -> io::Result<()> {
                 if let Some(file) = &mut out_file {
                     writeln!(file, "{}", formatted)?;
                 } else if args.update_in_place {
-                    // Clear the previous line if it exists
-                    if last_line_length > 0 {
-                        print!("\r{}\r", " ".repeat(last_line_length));
-                    }
-                    print!("{}", formatted);
-                    last_line_length = formatted.len();
+                    // Clear line and print new content with spinner and elapsed time
+                    let spinner = progress_chars[progress_index % progress_chars.len()];
+                    let elapsed = start_time.elapsed().as_secs();
+                    print!("\r{}\r{} [{}s] {}", " ".repeat(terminal_width.saturating_sub(1)), spinner.to_string().cyan(), elapsed.to_string().bright_black(), formatted);
                     io::stdout().flush()?;
+                    needs_newline_on_exit = true;
+                    progress_index += 1;
                 } else {
                     println!("{}", formatted);
                 }
@@ -196,7 +205,7 @@ fn main() -> io::Result<()> {
     }
     
     // Clean up and ensure we have a newline if we were updating in place
-    if args.update_in_place {
+    if needs_newline_on_exit {
         println!();
     }
     
