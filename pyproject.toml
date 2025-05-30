@@ -20,6 +20,7 @@ test = { cmd = "python -m pytest tests/" }
 test-rust = { cmd = "cargo test --no-default-features" }
 test-all = { cmd = "cargo test --no-default-features && ./scripts/build_and_install.sh && python -m pytest tests/" }
 test-ci = { cmd = "cargo test --no-default-features && ./scripts/build_and_install.sh && python -m pytest tests/" }
+coverage = { cmd = "cargo llvm-cov --lib --no-default-features --html -- --skip test_from_pid --skip test_process_metadata" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
