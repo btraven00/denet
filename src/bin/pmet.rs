@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use colored::*;
+use colored::Colorize;
 use crossterm;
 use pmet::process_monitor::{ProcessMonitor, Metrics};
 use std::fs::File;
@@ -65,12 +65,24 @@ enum Commands {
         /// Process ID (PID) to monitor
         #[clap(required = true)]
         pid: usize,
+    },
+    
+    /// Generate a summary from a previously saved metrics file
+    Summary {
+        /// Path to the metrics file
+        #[clap(required = true)]
+        file: PathBuf,
     }
 }
 
 fn main() -> io::Result<()> {
     // Parse command line arguments
     let args = Args::parse();
+    
+    // Handle summary subcommand separately as it doesn't require a monitor
+    if let Commands::Summary { file } = &args.command {
+        return generate_summary_from_file(file);
+    }
     
     // Create output file if specified
     let out_path = args.out.clone(); // Clone to keep the original
@@ -83,6 +95,8 @@ fn main() -> io::Result<()> {
     
     // Create process monitor based on the subcommand
     let mut monitor = match &args.command {
+        // Summary command is handled above, not here
+        Commands::Summary { .. } => unreachable!(),
         Commands::Run { command } => {
             if command.is_empty() {
                 eprintln!("Error: Empty command");
@@ -292,7 +306,11 @@ fn main() -> io::Result<()> {
     // If we wrote to a file, print the path
     if let Some(path) = &out_path {
         println!("Results written to {}", path.display().to_string().green());
-        println!("Sample count: {}", results.len());
+    }
+    
+    // Generate and print summary
+    if !results.is_empty() {
+        print_summary(&results, runtime.as_secs_f64());
     }
     
     Ok(())
@@ -430,5 +448,50 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
     } else {
         format!("{:.1}GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+/// Generate and print a summary from metrics
+fn print_summary(metrics: &[Metrics], duration: f64) {
+    let summary = pmet::process_monitor::Summary::from_metrics(metrics, duration);
+    
+    println!("\n{}", "EXECUTION SUMMARY".bold());
+    println!("{}", "=================".bold());
+    println!("Duration: {:.2} seconds", summary.total_time_secs);
+    println!("Samples: {}", summary.sample_count);
+    println!("Max processes: {}", summary.max_processes);
+    println!("Max threads: {}", summary.max_threads);
+    println!("Peak memory usage: {} MB", (summary.peak_mem_rss_kb as f64 / 1024.0).round());
+    println!("Average CPU usage: {:.1}%", summary.avg_cpu_usage);
+    println!("Total disk read: {}", format_bytes(summary.total_disk_read_bytes));
+    println!("Total disk write: {}", format_bytes(summary.total_disk_write_bytes));
+    println!("Total network received: {}", format_bytes(summary.total_net_rx_bytes));
+    println!("Total network sent: {}", format_bytes(summary.total_net_tx_bytes));
+}
+
+/// Generate a summary from a JSON file with metrics
+fn generate_summary_from_file(file_path: &PathBuf) -> io::Result<()> {
+    println!("Generating summary from file: {}", file_path.display());
+    
+    match pmet::process_monitor::Summary::from_json_file(file_path) {
+        Ok(summary) => {
+            println!("\n{}", "FILE SUMMARY".bold());
+            println!("{}", "============".bold());
+            println!("Duration: {:.2} seconds", summary.total_time_secs);
+            println!("Samples: {}", summary.sample_count);
+            println!("Max processes: {}", summary.max_processes);
+            println!("Max threads: {}", summary.max_threads);
+            println!("Peak memory usage: {} MB", (summary.peak_mem_rss_kb as f64 / 1024.0).round());
+            println!("Average CPU usage: {:.1}%", summary.avg_cpu_usage);
+            println!("Total disk read: {}", format_bytes(summary.total_disk_read_bytes));
+            println!("Total disk write: {}", format_bytes(summary.total_disk_write_bytes));
+            println!("Total network received: {}", format_bytes(summary.total_net_rx_bytes));
+            println!("Total network sent: {}", format_bytes(summary.total_net_tx_bytes));
+            Ok(())
+        },
+        Err(e) => {
+            eprintln!("Error processing metrics file: {}", e);
+            Err(e)
+        }
     }
 }

@@ -6,7 +6,7 @@ PMET outputs JSON in a streaming format optimized for efficiency and time-series
 
 **First line**: Process metadata (emitted once)
 ```json
-{"pid": 1234, "cmd": ["sleep", "5"], "exe": "/usr/bin/sleep", "start_time_secs": 1748542000}
+{"pid": 1234, "cmd": ["sleep", "5"], "exe": "/usr/bin/sleep", "t0_ms": 1748542000000}
 ```
 
 **Subsequent lines**: Process tree metrics (streamed continuously)
@@ -21,7 +21,7 @@ PMET outputs JSON in a streaming format optimized for efficiency and time-series
 | `pid` | number | Process ID |
 | `cmd` | string[] | Command line arguments |
 | `exe` | string | Executable path |
-| `start_time_secs` | number | Process start time (Unix seconds) |
+| `t0_ms` | number | Process start time (Unix milliseconds) |
 
 ## Metrics Fields
 
@@ -69,6 +69,6 @@ Includes all fields from Individual Process Metrics plus:
 ## Example Complete Record
 
 ```json
-{"pid":1234,"cmd":["python","script.py"],"exe":"/usr/bin/python3","start_time_secs":1748542000}
+{"pid":1234,"cmd":["python","script.py"],"exe":"/usr/bin/python3","t0_ms":1748542000000}
 {"ts_ms":1748542001000,"parent":{"ts_ms":1748542001050,"cpu_usage":15.2,"mem_rss_kb":8192,"mem_vms_kb":32768,"disk_read_bytes":1024,"disk_write_bytes":2048,"net_rx_bytes":512,"net_tx_bytes":256,"thread_count":3,"uptime_secs":1},"children":[{"pid":1235,"command":"worker","metrics":{"ts_ms":1748542001060,"cpu_usage":5.1,"mem_rss_kb":4096,"mem_vms_kb":16384,"disk_read_bytes":512,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":1,"uptime_secs":1}}],"aggregated":{"ts_ms":1748542001000,"cpu_usage":20.3,"mem_rss_kb":12288,"mem_vms_kb":49152,"disk_read_bytes":1536,"disk_write_bytes":2048,"net_rx_bytes":512,"net_tx_bytes":256,"thread_count":4,"process_count":2,"uptime_secs":1}}
 ```

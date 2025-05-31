@@ -2,11 +2,11 @@
 pub mod process_monitor;
 
 // Re-export the ProcessMonitor and related types for use in tests and binaries
-pub use process_monitor::{ProcessMonitor, Metrics, ProcessMetadata, AggregatedMetrics, ProcessTreeMetrics, ChildProcessMetrics};
+pub use process_monitor::{ProcessMonitor, Metrics, ProcessMetadata, AggregatedMetrics, ProcessTreeMetrics, ChildProcessMetrics, Summary};
 
 // Import what we need for the Python module
 #[cfg(feature = "python")]
-use pyo3::prelude::*;
+use pyo3::{prelude::*, wrap_pyfunction};
 
 #[cfg(feature = "python")]
 #[pyclass]
@@ -82,9 +82,57 @@ impl PyProcessMonitor {
 }
 
 #[cfg(feature = "python")]
+#[pyfunction]
+fn generate_summary_from_file(path: String) -> PyResult<String> {
+    match process_monitor::Summary::from_json_file(&path) {
+        Ok(summary) => Ok(serde_json::to_string(&summary).unwrap_or_default()),
+        Err(e) => Err(pyo3::exceptions::PyIOError::new_err(format!("Error reading metrics file: {}", e)))
+    }
+}
+
+#[cfg(feature = "python")]
+#[pyfunction]
+fn generate_summary_from_metrics_json(metrics_json: Vec<String>, elapsed_time: f64) -> PyResult<String> {
+    let mut metrics: Vec<Metrics> = Vec::new();
+    let mut agg_metrics: Vec<AggregatedMetrics> = Vec::new();
+    
+    for json_str in metrics_json {
+        // Try parsing as various types of metrics
+        if let Ok(m) = serde_json::from_str::<Metrics>(&json_str) {
+            metrics.push(m);
+        } else if let Ok(am) = serde_json::from_str::<AggregatedMetrics>(&json_str) {
+            agg_metrics.push(am);
+        } else {
+            // Try parsing as tree metrics (with nested structure)
+            let json_value: Result<serde_json::Value, _> = serde_json::from_str(&json_str);
+            if let Ok(value) = json_value {
+                // Check if this is a tree metrics structure with "aggregated" field
+                if let Some(agg) = value.get("aggregated") {
+                    if let Ok(am) = serde_json::from_value::<AggregatedMetrics>(agg.clone()) {
+                        agg_metrics.push(am);
+                    }
+                }
+            }
+        }
+    }
+    
+    let summary = if !agg_metrics.is_empty() {
+        process_monitor::Summary::from_aggregated_metrics(&agg_metrics, elapsed_time)
+    } else if !metrics.is_empty() {
+        process_monitor::Summary::from_metrics(&metrics, elapsed_time)
+    } else {
+        process_monitor::Summary::new()
+    };
+    
+    Ok(serde_json::to_string(&summary).unwrap_or_default())
+}
+
+#[cfg(feature = "python")]
 #[pymodule]
 fn pmet(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyProcessMonitor>()?;
+    m.add_function(wrap_pyfunction!(generate_summary_from_file, m)?)?;
+    m.add_function(wrap_pyfunction!(generate_summary_from_metrics_json, m)?)?;
     Ok(())
 }
 
