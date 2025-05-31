@@ -1,4 +1,4 @@
-# PMET Test Scripts
+# Denet Test Scripts
 
 Test scripts for child process monitoring functionality.
 
@@ -8,17 +8,17 @@ Test scripts for child process monitoring functionality.
 Basic test with 3 child processes.
 
 ```bash
-./target/release/pmet run -- python3 scripts/simple_child_test.py
-./target/release/pmet --json run -- python3 scripts/simple_child_test.py
-./target/release/pmet --exclude-children run -- python3 scripts/simple_child_test.py
+./target/release/denet run -- python3 scripts/simple_child_test.py
+./target/release/denet --json run -- python3 scripts/simple_child_test.py
+./target/release/denet --exclude-children run -- python3 scripts/simple_child_test.py
 ```
 
 ### `test_child_processes.py`
 Complex test with multiple children, worker threads, and lifecycle changes.
 
 ```bash
-./target/release/pmet run -- python3 scripts/test_child_processes.py
-./target/release/pmet --duration 10 --json run -- python3 scripts/test_child_processes.py
+./target/release/denet run -- python3 scripts/test_child_processes.py
+./target/release/denet --duration 10 --json run -- python3 scripts/test_child_processes.py
 ```
 
 ## Expected Behavior

@@ -1,4 +1,4 @@
-# Testing Strategy for `pmet`
+# Testing Strategy for `denet`
 
 ## Overview
 

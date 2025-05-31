@@ -1,5 +1,5 @@
 [package]
-name = "pmet"
+name = "denet"
 version = "0.1.0"
 edition = "2021"
 
@@ -22,8 +22,8 @@ crossterm = "0.27"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "pmet"
-path = "src/bin/pmet.rs"
+name = "denet"
+path = "src/bin/denet.rs"
 
 [dev-dependencies]
 once_cell = "1.18"

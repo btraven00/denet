@@ -1,12 +1,12 @@
-# PMET: Process Monitoring and Execution Tool
+# denet: a streaming process monitor
 
-PMET is a high-performance process monitoring tool that provides detailed metrics on running processes, including CPU, memory, I/O, and thread usage. Built with a Rust core and Python bindings, it follows a Rust-first development approach while providing convenient Python access.
+Denet is a streaming process monitoring tool that provides detailed metrics on running processes, including CPU, memory, I/O, and thread usage. Built with a Rust core and Python bindings, it follows a Rust-first development approach while providing convenient Python access.
 
 ## Features
 
 - Lightweight, cross-platform process monitoring
 - Adaptive sampling intervals that automatically adjust based on runtime
-- Memory usage tracking (RSS)
+- Memory usage tracking (RSS, VMS)
 - CPU usage monitoring
 - I/O bytes read/written tracking
 - Thread count monitoring
@@ -18,13 +18,13 @@ PMET is a high-performance process monitoring tool that provides detailed metric
 
 - Python 3.6+
 - Rust (for development only)
-- [pixi](https://prefix.dev/docs/pixi/overview) (for development environment)
+- [pixi](https://prefix.dev/docs/pixi/overview) (for development only)
 
 ## Installation
 
 ```bash
-pip install pmet  # Python package
-cargo install pmet  # Rust binary
+pip install denet  # Python package
+cargo install denet  # Rust binary
 ```
 
 ## Usage
@@ -33,38 +33,35 @@ cargo install pmet  # Rust binary
 
 ```bash
 # Basic monitoring with colored output
-pmet run sleep 5
+denet run sleep 5
 
 # Output as JSON
-pmet --json run sleep 5 > metrics.json
+denet --json run sleep 5 > metrics.json
 
 # Write output to a file
-pmet --out metrics.log run sleep 5
+denet --out metrics.log run sleep 5
 
 # Custom sampling interval (in milliseconds)
-pmet --interval 500 run sleep 5
+denet --interval 500 run sleep 5
 
 # Specify max sampling interval for adaptive mode
-pmet --max-interval 2000 run sleep 5
+denet --max-interval 2000 run sleep 5
 
 # Monitor existing process by PID
-pmet attach 1234
+denet attach 1234
 
-# In-place updates with spinner and elapsed time
-pmet --update-in-place run sleep 5
-
-# Duration-limited monitoring
-pmet --duration 10 attach 1234
+# Monitor just for 10 seconds
+denet --duration 10 attach 1234
 ```
 
 ### Python API
 
 ```python
-import pmet
 import json
+import denet
 
 # Create a monitor for a process
-monitor = pmet.PyProcessMonitor(
+monitor = denet.ProcessMonitor(
     cmd=["python", "-c", "import time; time.sleep(10)"],
     base_interval_ms=100,  # Start sampling every 100ms
     max_interval_ms=1000   # Sample at most every 1000ms
@@ -85,7 +82,7 @@ while monitor.is_running():
 
 ## Development
 
-PMET follows a Rust-first development approach, with Python bindings as a secondary interface.
+Denet follows a Rust-first development approach, with Python bindings as a secondary interface.
 
 ### Setting Up the Development Environment
 
@@ -132,11 +129,11 @@ The project includes scripts to help with development:
 ## Project Structure
 
 ```
-pmet/
+denet/
 ├── src/              # Rust source code (primary development focus)
 │   ├── lib.rs        # Python binding interface
 │   ├── bin/          # CLI executables
-│   │   └── pmet.rs   # Command-line interface implementation
+│   │   └── denet.rs  # Command-line interface implementation
 │   └── process_monitor.rs  # Core implementation with Rust tests
 ├── tests/            # Python binding tests
 │   └── cli/          # Command-line interface tests
@@ -148,7 +145,7 @@ pmet/
 
 ## License
 
-MIT
+GPL-3
 
 ## Acknowledgements
 

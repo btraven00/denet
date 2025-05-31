@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Simple child process test for PMET."""
+"""Simple child process test for DENET."""
 
 import subprocess
 import time

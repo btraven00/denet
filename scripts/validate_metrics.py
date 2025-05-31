@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Validation script to compare PMET metrics with standard Unix tools.
+Validation script to compare DENET metrics with standard Unix tools.
 Usage: python validate_metrics.py [process_name_or_pid]
 """
 
@@ -38,7 +38,7 @@ def get_process_info_ps(pid):
     }
 
 def get_children_pstree(pid):
-    """Get all descendant processes using pstree (matches PMET recursive behavior)"""
+    """Get all descendant processes using pstree (matches DENET recursive behavior)"""
     pstree_output = run_command(f"pstree -p {pid}")
     if not pstree_output:
         return []
@@ -104,17 +104,17 @@ def count_threads_proc(pid):
     except (FileNotFoundError, PermissionError):
         return None
 
-def run_pmet_sample(target):
-    """Run PMET and get one sample"""
+def run_denet_sample(target):
+    """Run DENET and get one sample"""
     try:
-        # Find pmet binary
-        pmet_binary = "./target/debug/pmet"
-        if not Path(pmet_binary).exists():
-            pmet_binary = "cargo run --"
+        # Find denet binary
+        denet_binary = "./target/debug/denet"
+        if not Path(denet_binary).exists():
+            denet_binary = "cargo run --"
         
         # Determine if target is PID or command
         if target.isdigit():
-            cmd = f"timeout 2 {pmet_binary} --json --duration 1 attach {target}"
+            cmd = f"timeout 2 {denet_binary} --json --duration 1 attach {target}"
         else:
             # Find PID of process by name
             pgrep_output = run_command(f"pgrep -n {target}")
@@ -122,7 +122,7 @@ def run_pmet_sample(target):
                 print(f"Process '{target}' not found")
                 return None
             pid = pgrep_output.strip()
-            cmd = f"timeout 2 {pmet_binary} --json --duration 1 attach {pid}"
+            cmd = f"timeout 2 {denet_binary} --json --duration 1 attach {pid}"
         
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         lines = result.stdout.strip().split('\n')
@@ -144,19 +144,19 @@ def run_pmet_sample(target):
         
         return metadata, sample
     except Exception as e:
-        print(f"Error running PMET: {e}")
+        print(f"Error running DENET: {e}")
         return None, None
 
 def compare_metrics(target):
-    """Compare PMET metrics with Unix tools"""
+    """Compare DENET metrics with Unix tools"""
     print(f"=== Validating metrics for: {target} ===\n")
     
-    # Run PMET
-    print("🔍 Running PMET...")
-    metadata, sample = run_pmet_sample(target)
+    # Run DENET
+    print("🔍 Running DENET...")
+    metadata, sample = run_denet_sample(target)
     
     if not metadata or not sample:
-        print("❌ Failed to get PMET data")
+        print("❌ Failed to get DENET data")
         return
     
     pid = metadata['pid']
@@ -174,35 +174,35 @@ def compare_metrics(target):
     children_ps_recursive = get_children_ps_recursive(pid)
     
     print("\n=== PROCESS COUNTING COMPARISON ===")
-    pmet_children = len(sample['children']) if sample['children'] else 0
-    pmet_total_procs = sample['aggregated']['process_count'] if sample['aggregated'] else 1
+    denet_children = len(sample['children']) if sample['children'] else 0
+    denet_total_procs = sample['aggregated']['process_count'] if sample['aggregated'] else 1
     
-    print(f"PMET children (recursive):     {pmet_children}")
-    print(f"PMET total processes:          {pmet_total_procs}")
+    print(f"DENET children (recursive):     {denet_children}")
+    print(f"DENET total processes:          {denet_total_procs}")
     print(f"ps direct children:            {len(children_ps_direct)}")
     print(f"ps recursive children:         {len(children_ps_recursive)}")
     print(f"pstree all descendants:        {len(children_pstree)}")
     
-    if pmet_children != len(children_ps_recursive):
-        print(f"⚠️  Recursive child count mismatch: PMET={pmet_children}, ps_recursive={len(children_ps_recursive)}")
+    if denet_children != len(children_ps_recursive):
+        print(f"⚠️  Recursive child count mismatch: DENET={denet_children}, ps_recursive={len(children_ps_recursive)}")
     else:
         print("✅ Recursive child count matches ps")
     
-    # Note: PMET counts all descendants, not just direct children
-    print(f"ℹ️  PMET uses recursive counting (like pstree), not just direct children")
+    # Note: DENET counts all descendants, not just direct children
+    print(f"ℹ️  DENET uses recursive counting (like pstree), not just direct children")
     
     print("\n=== THREAD COUNTING COMPARISON ===")
     if sample['parent']:
-        pmet_parent_threads = sample['parent']['thread_count']
-        pmet_total_threads = sample['aggregated']['thread_count'] if sample['aggregated'] else pmet_parent_threads
+        denet_parent_threads = sample['parent']['thread_count']
+        denet_total_threads = sample['aggregated']['thread_count'] if sample['aggregated'] else denet_parent_threads
         
-        print(f"PMET parent threads:  {pmet_parent_threads}")
-        print(f"PMET total threads:   {pmet_total_threads}")
+        print(f"DENET parent threads:  {denet_parent_threads}")
+        print(f"DENET total threads:   {denet_total_threads}")
         
         if ps_info:
             print(f"ps nlwp (threads):    {ps_info['threads']}")
-            if pmet_parent_threads != ps_info['threads']:
-                print(f"⚠️  Parent thread count mismatch: PMET={pmet_parent_threads}, ps={ps_info['threads']}")
+            if denet_parent_threads != ps_info['threads']:
+                print(f"⚠️  Parent thread count mismatch: DENET={denet_parent_threads}, ps={ps_info['threads']}")
             else:
                 print("✅ Parent thread count matches ps")
         
@@ -211,25 +211,25 @@ def compare_metrics(target):
         
         if proc_threads:
             print(f"/proc/task count:     {proc_threads}")
-            if pmet_parent_threads != proc_threads:
-                print(f"⚠️  Thread count mismatch: PMET={pmet_parent_threads}, /proc/task={proc_threads}")
+            if denet_parent_threads != proc_threads:
+                print(f"⚠️  Thread count mismatch: DENET={denet_parent_threads}, /proc/task={proc_threads}")
             else:
                 print("✅ Thread count matches /proc/task")
     
     print("\n=== MEMORY COMPARISON ===")
     if sample['parent']:
-        pmet_rss = sample['parent']['mem_rss_kb']
-        pmet_vms = sample['parent']['mem_vms_kb']
+        denet_rss = sample['parent']['mem_rss_kb']
+        denet_vms = sample['parent']['mem_vms_kb']
         
-        print(f"PMET RSS (KB):        {pmet_rss}")
-        print(f"PMET VMS (KB):        {pmet_vms}")
+        print(f"DENET RSS (KB):        {denet_rss}")
+        print(f"DENET VMS (KB):        {denet_vms}")
         
         if ps_info:
             print(f"ps RSS (KB):          {ps_info['rss_kb']}")
             print(f"ps VSZ (KB):          {ps_info['vsz_kb']}")
             
-            rss_diff_pct = abs(pmet_rss - ps_info['rss_kb']) / ps_info['rss_kb'] * 100
-            vsz_diff_pct = abs(pmet_vms - ps_info['vsz_kb']) / ps_info['vsz_kb'] * 100
+            rss_diff_pct = abs(denet_rss - ps_info['rss_kb']) / ps_info['rss_kb'] * 100
+            vsz_diff_pct = abs(denet_vms - ps_info['vsz_kb']) / ps_info['vsz_kb'] * 100
             
             if rss_diff_pct > 5:
                 print(f"⚠️  RSS difference: {rss_diff_pct:.1f}%")
@@ -261,7 +261,7 @@ def compare_metrics(target):
         print(f"All descendants found by ps: {len(children_ps_recursive)} total")
     
     if sample['children']:
-        print("Children found by PMET:")
+        print("Children found by DENET:")
         for child in sample['children'][:5]:  # Show first 5
             print(f"  PID {child['pid']}: {child['command']} (threads: {child['metrics']['thread_count']})")
         if len(sample['children']) > 5:

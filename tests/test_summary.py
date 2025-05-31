@@ -10,9 +10,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
-    import pmet
+    import denet
 except ImportError:
-    print("pmet module not found. Run 'pixi run develop' first to build the extension.")
+    print("denet module not found. Run 'pixi run develop' first to build the extension.")
     sys.exit(1)
 
 class TestSummary(unittest.TestCase):
@@ -20,7 +20,7 @@ class TestSummary(unittest.TestCase):
         """Test generating a summary from JSON metrics strings"""
         # Create sample metrics
         metrics = []
-        
+
         # First sample
         metrics.append(json.dumps({
             "ts_ms": 1000,
@@ -34,7 +34,7 @@ class TestSummary(unittest.TestCase):
             "thread_count": 2,
             "uptime_secs": 10
         }))
-        
+
         # Second sample with higher values
         metrics.append(json.dumps({
             "ts_ms": 2000,
@@ -48,14 +48,14 @@ class TestSummary(unittest.TestCase):
             "thread_count": 3,
             "uptime_secs": 20
         }))
-        
+
         # Calculate duration from timestamps
         elapsed_time = (2000 - 1000) / 1000.0  # 1 second
-        
+
         # Generate summary
-        summary_json = pmet.generate_summary_from_metrics_json(metrics, elapsed_time)
+        summary_json = denet.generate_summary_from_metrics_json(metrics, elapsed_time)
         summary = json.loads(summary_json)
-        
+
         # Verify summary contents
         self.assertEqual(summary["total_time_secs"], elapsed_time)
         self.assertEqual(summary["sample_count"], 2)
@@ -71,7 +71,7 @@ class TestSummary(unittest.TestCase):
     def test_generate_summary_from_tree_metrics_json(self):
         """Test generating summary from tree metrics JSON strings"""
         metrics = []
-        
+
         # Create tree metrics with aggregated data - first sample
         tree_metric1 = {
             "ts_ms": 1000,
@@ -103,7 +103,7 @@ class TestSummary(unittest.TestCase):
             }
         }
         metrics.append(json.dumps(tree_metric1))
-        
+
         # Add a second sample with higher values
         tree_metric2 = {
             "ts_ms": 2000,
@@ -135,12 +135,12 @@ class TestSummary(unittest.TestCase):
             }
         }
         metrics.append(json.dumps(tree_metric2))
-        
+
         # Generate summary
         elapsed_time = 1.0  # 1 second
-        summary_json = pmet.generate_summary_from_metrics_json(metrics, elapsed_time)
+        summary_json = denet.generate_summary_from_metrics_json(metrics, elapsed_time)
         summary = json.loads(summary_json)
-        
+
         # Verify summary contents
         self.assertEqual(summary["sample_count"], 2)
         self.assertEqual(summary["max_processes"], 3)  # Max from second sample
@@ -166,7 +166,7 @@ class TestSummary(unittest.TestCase):
                 "thread_count": 2,
                 "uptime_secs": 10
             }) + "\n")
-            
+
             tmp.write(json.dumps({
                 "ts_ms": 2000,
                 "cpu_usage": 15.0,
@@ -179,21 +179,21 @@ class TestSummary(unittest.TestCase):
                 "thread_count": 3,
                 "uptime_secs": 20
             }) + "\n")
-            
+
             tmp_path = tmp.name
-        
+
         try:
             # Generate summary from the file
-            summary_json = pmet.generate_summary_from_file(tmp_path)
+            summary_json = denet.generate_summary_from_file(tmp_path)
             summary = json.loads(summary_json)
-            
+
             # Verify summary contents
             self.assertEqual(summary["sample_count"], 2)
             self.assertEqual(summary["total_time_secs"], 1.0)  # (2000-1000)/1000
             self.assertEqual(summary["max_threads"], 3)
             self.assertEqual(summary["peak_mem_rss_kb"], 2048)
             self.assertEqual(summary["avg_cpu_usage"], 10.0)  # (5 + 15) / 2
-            
+
         finally:
             # Clean up
             try:

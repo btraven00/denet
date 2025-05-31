@@ -27,13 +27,13 @@ def cpu_intensive_work():
 
 def io_intensive_work():
     """I/O-intensive work to generate disk activity"""
-    print(f"[I/O Worker {os.getpid()}] Starting I/O-intensive work...")
-    temp_file = f"/tmp/pmet_test_io_{os.getpid()}.txt"
+        print(f"[I/O Worker {os.getpid()}] Starting I/O-intensive work...")
+        temp_file = f"/tmp/denet_test_io_{os.getpid()}.txt"
     
     # Write data
     with open(temp_file, 'w') as f:
         for i in range(1000):
-            f.write(f"Line {i}: This is test data for I/O monitoring in PMET child process {os.getpid()}\n")
+            f.write(f"Line {i}: This is test data for I/O monitoring in DENET child process {os.getpid()}\n")
     
     # Read it back
     with open(temp_file, 'r') as f:
@@ -44,7 +44,7 @@ def io_intensive_work():
     print(f"[I/O Worker {os.getpid()}] Processed {len(lines)} lines")
 
 def main():
-    print(f"=== PMET Child Process Test Script ===")
+    print(f"=== DENET Child Process Test Script ===")
     print(f"Parent PID: {os.getpid()}")
     print(f"Command: {' '.join(sys.argv)}")
     print()
@@ -95,7 +95,7 @@ def main():
             print(f"  Parent work iteration {i+1}/8 (PID {os.getpid()})")
             
             # Do some parent work
-            temp_file = f"/tmp/pmet_parent_work_{i}.txt"
+            temp_file = f"/tmp/denet_parent_work_{i}.txt"
             with open(temp_file, 'w') as f:
                 f.write(f"Parent process {os.getpid()} work iteration {i}\n")
                 for j in range(100):

@@ -3,7 +3,7 @@ requires = ["maturin>=1.8.3,<2.0"]
 build-backend = "maturin"
 
 [tool.pixi.project]
-name = "pmet"
+name = "denet"
 version = "0.1.0"
 channels = ["conda-forge", "pypi"]
 platforms = ["linux-64"]

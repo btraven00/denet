@@ -1,5 +1,5 @@
 #!/bin/bash
-# Direct build and install script for pmet
+# Direct build and install script for denet
 # This script builds the Rust extension and installs it directly with pip
 # without relying on maturin's develop command
 
@@ -9,7 +9,7 @@ set -e  # Exit on error
 cd "$(dirname "$0")/.."
 
 # Display what we're doing
-echo "🔨 Building and installing pmet..."
+echo "🔨 Building and installing denet..."
 
 # Get Python executable path
 PYTHON_EXE=$(which python)
@@ -59,8 +59,9 @@ else
 fi
 
 # Verify the installation
+# Verify that the module can be imported
 echo "Verifying installation..."
-if $PYTHON_EXE -c "import pmet; print('✅ pmet successfully installed!')"; then
+if $PYTHON_EXE -c "import denet; print('✅ denet successfully installed!')"; then
     echo "✅ Build and installation complete!"
 else
     echo "❌ Installation verification failed."
@@ -69,8 +70,8 @@ else
     echo "Python path:"
     $PYTHON_EXE -c "import sys; print(sys.path)"
     
-    echo "Attempting to find pmet module..."
-    find $($PYTHON_EXE -c "import site; print(' '.join(site.getsitepackages()))") -name "*pmet*" || echo "No pmet module found"
+    echo "Attempting to find denet module..."
+    find $($PYTHON_EXE -c "import site; print(' '.join(site.getsitepackages()))") -name "*denet*" || echo "No denet module found"
     
     exit 1
 fi
