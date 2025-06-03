@@ -1,5 +1,6 @@
 env/
 target/
+scratch/
 
 __pycache__/*
 *.pyc

@@ -2,6 +2,14 @@
 name = "denet"
 version = "0.1.0"
 edition = "2021"
+description = "a simple process monitor"
+license = "GPL-3.0-or-later"
+documentation = "https://docs.rs/denet"
+homepage = "https://github.com/btraven00/denet"
+repository = "https://github.com/btraven00/denet"
+readme = "README.md"
+keywords = ["profiling", "monitor", "cpu", "resources"]
+authors = ["ben <ben.uzh@proton.me>"]
 
 [features]
 default = ["python"]
