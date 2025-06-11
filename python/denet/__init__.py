@@ -12,6 +12,8 @@ from .analysis import (
     save_metrics
 )
 
+__version__ = "0.1.1"
+
 import os
 import sys
 import json

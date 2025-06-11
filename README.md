@@ -1,8 +1,12 @@
 # denet: a streaming process monitor
 
-Denet is a streaming process monitoring tool that provides detailed metrics on running processes, including CPU, memory, I/O, and thread usage. Built with a Rust core and Python bindings, it follows a Rust-first development approach while providing convenient Python access.
+**denet** /de.net/ *v.* 1. *Turkish*: to monitor, to supervise, to audit. 2. to track metrics of a running process.
+
+Denet is a streaming process monitoring tool that provides detailed metrics on running processes, including CPU, memory, I/O, and thread usage. Built with Rust, with Python bindings.
 
 [![PyPI version](https://badge.fury.io/py/denet.svg)](https://badge.fury.io/py/denet)
+[![Crates.io](https://img.shields.io/crates/v/denet.svg)](https://crates.io/crates/denet)
+[![codecov](https://codecov.io/gh/btraven00/denet/branch/main/graph/badge.svg)](https://codecov.io/gh/btraven00/denet)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 ## Features
@@ -138,7 +142,7 @@ print(f"Result: {result}, Collected {len(metrics)} samples")
 @denet.profile
 def simple_function():
     return sum(range(1000000))
-    
+
 result, metrics = simple_function()
 ```
 
@@ -159,7 +163,7 @@ with denet.monitor(
     for i in range(5):
         # Do something CPU intensive
         result = sum(i*i for i in range(1_000_000))
-        
+
 # Access collected metrics after the block
 samples = mon.get_samples()
 print(f"Collected {len(samples)} samples")
@@ -173,6 +177,7 @@ print(f"Peak memory: {summary['peak_mem_rss_kb']/1024:.2f} MB")
 
 # Save samples to a file (includes metadata line in JSONL format)
 mon.save_samples("metrics.jsonl", "jsonl")  # First line contains process metadata
+```
 
 ## Development
 
@@ -209,83 +214,17 @@ print(f"Total I/O: {stats['total_io_bytes']} bytes")
 csv_data = denet.convert_format(metrics, to_format="csv")
 with open("metrics.csv", "w") as f:
     f.write(csv_data)
-    
+
 # Save metrics with custom options
 denet.save_metrics(metrics, "data.jsonl", format="jsonl", include_metadata=True)
-    
+
 # Analyze process tree patterns
 tree_analysis = denet.process_tree_analysis(metrics)
 ```
 
+## Development
 
-Denet follows a Rust-first development approach, with Python bindings as a secondary interface.
-
-### Setting Up the Development Environment
-
-1. Clone the repository
-2. Install pixi if you don't have it already: [Pixi Installation Guide](https://prefix.dev/docs/pixi/overview)
-3. Set up the development environment:
-
-```bash
-pixi install
-```
-
-### Development Workflow
-
-1. Make changes to Rust code in `src/`
-2. Test with Cargo: `pixi run test-rust`
-3. Build and install Python bindings: `pixi run develop`
-4. Test Python bindings: `pixi run test`
-
-### Running Tests
-
-```bash
-# Run Rust tests only (primary development testing)
-pixi run test-rust
-
-# Run Python tests only (after building with "develop")
-pixi run test
-
-# Run all tests together
-pixi run test-all
-```
-
-### Helper Scripts
-
-The project includes scripts to help with development:
-
-```bash
-# Build and install the extension in the current Python environment
-./scripts/build_and_install.sh
-
-# Run tests in CI environment
-./ci/run_tests.sh
-```
-
-## Project Structure
-
-```
-denet/
-├── src/              # Rust source code (primary development focus)
-│   ├── lib.rs        # Core library and Python binding interface (PyO3)
-│   ├── bin/          # CLI executables
-│   │   └── denet.rs  # Command-line interface implementation
-│   └── process_monitor.rs  # Core implementation with Rust tests
-├── python/           # Python package
-│   └── denet/        # Python module
-│       ├── __init__.py    # Python API (decorator and context manager)
-│       └── analysis.py    # Analysis utilities
-├── tests/            # Tests
-│   ├── python/       # Python binding tests
-│   │   ├── test_convenience.py  # Tests for decorator and context manager
-│   │   ├── test_process_monitor.py  # Tests for ProcessMonitor class
-│   │   └── test_analysis.py  # Tests for analysis utilities
-│   └── cli/          # Command-line interface tests
-├── ci/               # Continuous Integration scripts
-├── scripts/          # Helper scripts for development
-├── Cargo.toml        # Rust dependencies and configuration
-└── pyproject.toml    # Python build configuration (maturin settings)
-```
+For detailed developer documentation, including project structure, development workflow, testing, and release process, see [Developer Documentation](docs/dev.md).
 
 ## License
 
