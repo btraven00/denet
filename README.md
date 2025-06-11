@@ -1,12 +1,13 @@
 # denet: a streaming process monitor
 
-**denet** /de.net/ *v.* 1. *Turkish*: to monitor, to supervise, to audit. 2. to track metrics of a running process.
+**denet** /de.net/ _v._ 1. _Turkish_: to monitor, to supervise, to audit. 2. to track metrics of a running process.
 
 Denet is a streaming process monitoring tool that provides detailed metrics on running processes, including CPU, memory, I/O, and thread usage. Built with Rust, with Python bindings.
 
 [![PyPI version](https://badge.fury.io/py/denet.svg)](https://badge.fury.io/py/denet)
 [![Crates.io](https://img.shields.io/crates/v/denet.svg)](https://crates.io/crates/denet)
 [![codecov](https://codecov.io/gh/btraven00/denet/branch/main/graph/badge.svg)](https://codecov.io/gh/btraven00/denet)
+[![Ruff](https://img.shields.io/badge/code%20style-ruff-black)](https://github.com/astral-sh/ruff)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 ## Features
@@ -82,18 +83,11 @@ monitor = denet.ProcessMonitor(
     output_file=None         # Optional file output
 )
 
-# Option 1: Run the monitor until the process completes
+# Let the monitor run automatically until the process completes
+# Samples are collected at the specified sampling rate in the background
 monitor.run()
 
-# Option 2: Sample on demand and collect metrics
-while monitor.is_running():
-    # Sample once and get metrics as JSON string
-    metrics_json = monitor.sample_once()
-    if metrics_json:
-        metrics = json.loads(metrics_json)
-        print(f"CPU: {metrics['cpu_usage']}%, Memory: {metrics['mem_rss_kb']/1024:.2f} MB")
-
-# Access all collected samples
+# Access all collected samples after process completion
 samples = monitor.get_samples()
 print(f"Collected {len(samples)} samples")
 
@@ -103,7 +97,6 @@ summary = json.loads(summary_json)
 print(f"Average CPU usage: {summary['avg_cpu_usage']}%")
 print(f"Peak memory: {summary['peak_mem_rss_kb']/1024:.2f} MB")
 print(f"Total time: {summary['total_time_secs']:.2f} seconds")
-print(f"Process runtime: {metrics[-1]['uptime_secs']} seconds")
 print(f"Sample count: {summary['sample_count']}")
 
 # Save samples to different formats
@@ -113,6 +106,11 @@ monitor.save_samples("metrics.csv", "csv")     # CSV format
 
 # JSONL files include a metadata line at the beginning with process info
 # {"pid": 1234, "cmd": ["python"], "executable": "/usr/bin/python", "t0_ms": 1625184000000}
+
+# Alternative approach: For more control, you can also monitor in a loop:
+# while monitor.is_running():
+#     time.sleep(0.5)
+#     # Do other work while monitoring continues in background...
 ```
 
 #### Function Decorator
