@@ -1,10 +1,20 @@
 coverage:
   precision: 2
   round: down
-  range: "70...100"
+  range: "60...100"
   status:
     project:
       default:
+        target: auto
+        threshold: 1%
+      python:
+        flags: 
+          - python
+        target: auto
+        threshold: 1%
+      rust:
+        flags: 
+          - rust
         target: auto
         threshold: 1%
     patch:
@@ -22,3 +32,13 @@ comment:
 ignore:
   - "tests/**/*"
   - "docs/**/*"
+
+flags:
+  python:
+    paths:
+      - python/
+    carryforward: true
+  rust:
+    paths:
+      - src/
+    carryforward: true

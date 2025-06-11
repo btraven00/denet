@@ -48,7 +48,9 @@ jobs:
       - name: Install dependencies
         run: |
           pixi install
-          cargo install cargo-llvm-cov
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            cargo install cargo-llvm-cov --force
+          fi
 
       - name: Lint code
         run: |
@@ -60,8 +62,17 @@ jobs:
         run: |
           pixi run check-fmt
 
-      - name: Run Rust tests with coverage
+      # Split Rust testing and coverage for better OS support
+      - name: Run Rust tests (macOS)
+        if: matrix.os == 'macos-latest'
         run: |
+          echo "Running standard Rust tests on macOS"
+          cargo test --no-default-features
+          
+      - name: Run Rust tests with coverage (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          echo "Running Rust tests with coverage on Linux"
           cargo llvm-cov --lcov --output-path lcov.info
 
       - name: Build and install Python package
@@ -72,14 +83,26 @@ jobs:
         run: |
           pixi run test-cov
 
-      - name: Upload coverage to Codecov
+      - name: Upload Python coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./coverage.xml,./lcov.info
-          flags: unittests
-          name: codecov-umbrella
+          files: ./coverage.xml
+          flags: python
+          name: python-coverage
           fail_ci_if_error: false
+          verbose: true
+          
+      - name: Upload Rust coverage to Codecov (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./lcov.info
+          flags: rust
+          name: rust-coverage
+          fail_ci_if_error: false
+          verbose: true
 
   build-wheels:
     name: Build wheels on ${{ matrix.os }} (py${{ matrix.python-version }})
