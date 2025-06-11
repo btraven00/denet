@@ -28,6 +28,7 @@ platforms = ["linux-64", "osx-arm64"]
 python = "==3.12"
 maturin = "==1.8.6"
 pytest = ">=7.0.0"
+pytest-cov = ">=4.1.0"
 ruff = ">=0.1.0"
 
 [tool.pixi.tasks]
@@ -35,6 +36,7 @@ build = { cmd = "maturin build --release" }
 publish-pypi = { cmd = "maturin publish --skip-existing" }
 develop = { cmd = "./scripts/build_and_install.sh" }
 test = { cmd = "python -m pytest tests/python/" }
+test-cov = { cmd = "python -m pytest tests/python/ --cov=denet --cov-report=xml --cov-branch" }
 test-rust = { cmd = "cargo test --no-default-features" }
 test-all = { cmd = "cargo test --no-default-features && python -m pytest tests/python/" }
 test-ci = { cmd = "cargo test --no-default-features && python -m pytest tests/python/" }

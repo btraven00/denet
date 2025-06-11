@@ -25,7 +25,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          components: clippy, rustfmt, llvm-tools-preview
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -48,6 +48,7 @@ jobs:
       - name: Install dependencies
         run: |
           pixi install
+          cargo install cargo-llvm-cov
 
       - name: Lint code
         run: |
@@ -59,9 +60,9 @@ jobs:
         run: |
           pixi run check-fmt
 
-      - name: Run Rust tests
+      - name: Run Rust tests with coverage
         run: |
-          pixi run test-rust
+          cargo llvm-cov --lcov --output-path lcov.info
 
       - name: Build and install Python package
         run: |
@@ -69,7 +70,16 @@ jobs:
 
       - name: Run python tests
         run: |
-          pixi run test
+          pixi run test-cov
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml,./lcov.info
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
 
   build-wheels:
     name: Build wheels on ${{ matrix.os }} (py${{ matrix.python-version }})
