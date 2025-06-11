@@ -1,9 +1,8 @@
-import unittest
-import time
 import json
-import sys
 import os
+import sys
 import tempfile
+import unittest
 from pathlib import Path
 
 # Add the package to the path if running tests directly
@@ -15,6 +14,7 @@ except ImportError:
     print("denet module not found. Run 'pixi run develop' first to build the extension.")
     sys.exit(1)
 
+
 class TestSummary(unittest.TestCase):
     def test_generate_summary_from_metrics_json(self):
         """Test generating a summary from JSON metrics strings"""
@@ -22,32 +22,40 @@ class TestSummary(unittest.TestCase):
         metrics = []
 
         # First sample
-        metrics.append(json.dumps({
-            "ts_ms": 1000,
-            "cpu_usage": 5.0,
-            "mem_rss_kb": 1024,
-            "mem_vms_kb": 2048,
-            "disk_read_bytes": 1000,
-            "disk_write_bytes": 2000,
-            "net_rx_bytes": 300,
-            "net_tx_bytes": 400,
-            "thread_count": 2,
-            "uptime_secs": 10
-        }))
+        metrics.append(
+            json.dumps(
+                {
+                    "ts_ms": 1000,
+                    "cpu_usage": 5.0,
+                    "mem_rss_kb": 1024,
+                    "mem_vms_kb": 2048,
+                    "disk_read_bytes": 1000,
+                    "disk_write_bytes": 2000,
+                    "net_rx_bytes": 300,
+                    "net_tx_bytes": 400,
+                    "thread_count": 2,
+                    "uptime_secs": 10,
+                }
+            )
+        )
 
         # Second sample with higher values
-        metrics.append(json.dumps({
-            "ts_ms": 2000,
-            "cpu_usage": 15.0,
-            "mem_rss_kb": 2048,
-            "mem_vms_kb": 4096,
-            "disk_read_bytes": 2500,
-            "disk_write_bytes": 3000,
-            "net_rx_bytes": 800,
-            "net_tx_bytes": 900,
-            "thread_count": 3,
-            "uptime_secs": 20
-        }))
+        metrics.append(
+            json.dumps(
+                {
+                    "ts_ms": 2000,
+                    "cpu_usage": 15.0,
+                    "mem_rss_kb": 2048,
+                    "mem_vms_kb": 4096,
+                    "disk_read_bytes": 2500,
+                    "disk_write_bytes": 3000,
+                    "net_rx_bytes": 800,
+                    "net_tx_bytes": 900,
+                    "thread_count": 3,
+                    "uptime_secs": 20,
+                }
+            )
+        )
 
         # Calculate duration from timestamps
         elapsed_time = (2000 - 1000) / 1000.0  # 1 second
@@ -85,7 +93,7 @@ class TestSummary(unittest.TestCase):
                 "net_rx_bytes": 200,
                 "net_tx_bytes": 300,
                 "thread_count": 1,
-                "uptime_secs": 5
+                "uptime_secs": 5,
             },
             "children": [],
             "aggregated": {
@@ -99,8 +107,8 @@ class TestSummary(unittest.TestCase):
                 "net_tx_bytes": 360,
                 "thread_count": 2,
                 "process_count": 2,
-                "uptime_secs": 5
-            }
+                "uptime_secs": 5,
+            },
         }
         metrics.append(json.dumps(tree_metric1))
 
@@ -117,7 +125,7 @@ class TestSummary(unittest.TestCase):
                 "net_rx_bytes": 250,
                 "net_tx_bytes": 360,
                 "thread_count": 1,
-                "uptime_secs": 6
+                "uptime_secs": 6,
             },
             "children": [],
             "aggregated": {
@@ -131,8 +139,8 @@ class TestSummary(unittest.TestCase):
                 "net_tx_bytes": 460,
                 "thread_count": 3,
                 "process_count": 3,
-                "uptime_secs": 6
-            }
+                "uptime_secs": 6,
+            },
         }
         metrics.append(json.dumps(tree_metric2))
 
@@ -152,33 +160,43 @@ class TestSummary(unittest.TestCase):
     def test_generate_summary_from_file(self):
         """Test generating summary from a JSON file"""
         # Create a temporary file with test metrics
-        with tempfile.NamedTemporaryFile(mode='w+', suffix='.json', delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(mode="w+", suffix=".json", delete=False) as tmp:
             # Write a few sample metrics
-            tmp.write(json.dumps({
-                "ts_ms": 1000,
-                "cpu_usage": 5.0,
-                "mem_rss_kb": 1024,
-                "mem_vms_kb": 2048,
-                "disk_read_bytes": 1000,
-                "disk_write_bytes": 2000,
-                "net_rx_bytes": 300,
-                "net_tx_bytes": 400,
-                "thread_count": 2,
-                "uptime_secs": 10
-            }) + "\n")
+            tmp.write(
+                json.dumps(
+                    {
+                        "ts_ms": 1000,
+                        "cpu_usage": 5.0,
+                        "mem_rss_kb": 1024,
+                        "mem_vms_kb": 2048,
+                        "disk_read_bytes": 1000,
+                        "disk_write_bytes": 2000,
+                        "net_rx_bytes": 300,
+                        "net_tx_bytes": 400,
+                        "thread_count": 2,
+                        "uptime_secs": 10,
+                    }
+                )
+                + "\n"
+            )
 
-            tmp.write(json.dumps({
-                "ts_ms": 2000,
-                "cpu_usage": 15.0,
-                "mem_rss_kb": 2048,
-                "mem_vms_kb": 4096,
-                "disk_read_bytes": 2500,
-                "disk_write_bytes": 3000,
-                "net_rx_bytes": 800,
-                "net_tx_bytes": 900,
-                "thread_count": 3,
-                "uptime_secs": 20
-            }) + "\n")
+            tmp.write(
+                json.dumps(
+                    {
+                        "ts_ms": 2000,
+                        "cpu_usage": 15.0,
+                        "mem_rss_kb": 2048,
+                        "mem_vms_kb": 4096,
+                        "disk_read_bytes": 2500,
+                        "disk_write_bytes": 3000,
+                        "net_rx_bytes": 800,
+                        "net_tx_bytes": 900,
+                        "thread_count": 3,
+                        "uptime_secs": 20,
+                    }
+                )
+                + "\n"
+            )
 
             tmp_path = tmp.name
 
@@ -198,7 +216,7 @@ class TestSummary(unittest.TestCase):
             # Clean up
             try:
                 os.unlink(tmp_path)
-            except:
+            except Exception:
                 pass
 
 

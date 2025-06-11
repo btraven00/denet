@@ -45,7 +45,7 @@ impl PyProcessMonitor {
         )
         .map_err(process_monitor::io_err_to_py_err)?;
 
-        Ok(PyProcessMonitor { 
+        Ok(PyProcessMonitor {
             inner,
             samples: Vec::new(),
             output_file,
@@ -75,7 +75,7 @@ impl PyProcessMonitor {
         )
         .map_err(process_monitor::io_err_to_py_err)?;
 
-        Ok(PyProcessMonitor { 
+        Ok(PyProcessMonitor {
             inner,
             samples: Vec::new(),
             output_file,
@@ -85,9 +85,9 @@ impl PyProcessMonitor {
     }
 
     fn run(&mut self) -> PyResult<()> {
-        use std::thread::sleep;
         use std::fs::OpenOptions;
         use std::io::Write;
+        use std::thread::sleep;
 
         // Open file if output_file is specified
         let mut file_handle = if let Some(path) = &self.output_file {
@@ -105,12 +105,12 @@ impl PyProcessMonitor {
         while self.inner.is_running() {
             if let Some(metrics) = self.inner.sample_metrics() {
                 let json = serde_json::to_string(&metrics).unwrap();
-                
+
                 // Store in memory if enabled
                 if self.store_in_memory {
                     self.samples.push(metrics.clone());
                 }
-                
+
                 // Write to file if output_file is specified
                 if let Some(file) = &mut file_handle {
                     // For jsonl format, write one line per sample
@@ -134,16 +134,16 @@ impl PyProcessMonitor {
     fn sample_once(&mut self) -> PyResult<Option<String>> {
         use std::fs::OpenOptions;
         use std::io::Write;
-        
+
         let metrics_opt = self.inner.sample_metrics();
-        
+
         // Process metrics if available
         if let Some(metrics) = &metrics_opt {
             // Store in memory if enabled
             if self.store_in_memory {
                 self.samples.push(metrics.clone());
             }
-            
+
             // Write to file if output_file is specified
             if let Some(path) = &self.output_file {
                 let mut file = OpenOptions::new()
@@ -151,12 +151,12 @@ impl PyProcessMonitor {
                     .append(true)
                     .open(path)
                     .map_err(process_monitor::io_err_to_py_err)?;
-                
+
                 let json = serde_json::to_string(&metrics).unwrap_or_default();
                 writeln!(file, "{}", json).map_err(process_monitor::io_err_to_py_err)?;
             }
         }
-        
+
         // Return JSON string as before for backward compatibility
         Ok(metrics_opt.map(|metrics| serde_json::to_string(&metrics).unwrap_or_default()))
     }
@@ -175,41 +175,41 @@ impl PyProcessMonitor {
             .get_metadata()
             .map(|metadata| serde_json::to_string(&metadata).unwrap_or_default()))
     }
-    
+
     // New methods for sample management
-    
+
     fn get_samples(&self) -> Vec<String> {
         self.samples
             .iter()
             .map(|m| serde_json::to_string(m).unwrap_or_default())
             .collect()
     }
-    
+
     fn clear_samples(&mut self) -> PyResult<()> {
         self.samples.clear();
         Ok(())
     }
-    
+
     fn save_samples(&self, path: String, format: Option<String>) -> PyResult<()> {
         use std::fs::File;
         use std::io::Write;
-        
+
         let output_format = format.unwrap_or_else(|| "jsonl".to_string());
         let mut file = File::create(&path).map_err(process_monitor::io_err_to_py_err)?;
-        
+
         match output_format.as_str() {
             "json" => {
                 // Write as a JSON array
                 let json_array = serde_json::to_string(&self.samples).unwrap_or_default();
                 file.write_all(json_array.as_bytes())
                     .map_err(process_monitor::io_err_to_py_err)?;
-            },
+            }
             "csv" => {
                 // Write as CSV
                 // Header row
                 writeln!(file, "ts_ms,cpu_usage,mem_rss_kb,mem_vms_kb,disk_read_bytes,disk_write_bytes,net_rx_bytes,net_tx_bytes,thread_count,uptime_secs")
                     .map_err(process_monitor::io_err_to_py_err)?;
-                
+
                 // Data rows
                 for metrics in &self.samples {
                     writeln!(
@@ -228,7 +228,7 @@ impl PyProcessMonitor {
                     )
                     .map_err(process_monitor::io_err_to_py_err)?;
                 }
-            },
+            }
             _ => {
                 // Default to jsonl (one JSON object per line)
                 for metrics in &self.samples {
@@ -237,20 +237,20 @@ impl PyProcessMonitor {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     fn get_summary(&self) -> PyResult<String> {
         if self.samples.is_empty() {
             return Ok(serde_json::to_string(&process_monitor::Summary::new()).unwrap_or_default());
         }
-        
+
         // Calculate elapsed time from first to last sample
         let first = &self.samples[0];
         let last = &self.samples[self.samples.len() - 1];
         let elapsed_time = (last.ts_ms - first.ts_ms) as f64 / 1000.0; // Convert to seconds
-        
+
         let summary = process_monitor::Summary::from_metrics(&self.samples, elapsed_time);
         Ok(serde_json::to_string(&summary).unwrap_or_default())
     }
@@ -320,6 +320,7 @@ fn generate_summary_from_metrics_json(
     store_in_memory = true,
     include_children = true
 ))]
+#[allow(clippy::too_many_arguments)]
 fn profile<'a>(
     py: Python<'a>,
     func: &'a PyAny,

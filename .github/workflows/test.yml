@@ -2,20 +2,20 @@ name: denet CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main]
   pull_request:
-    branches: [ main, master ]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   test:
-    name: Test on ${{ matrix.os }}
+    name: Test on ${{ matrix.os }} (py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ['3.9', '3.12']
+        python-version: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +31,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
 
       - name: Install pixi
         run: |
@@ -50,10 +49,15 @@ jobs:
         run: |
           pixi install
 
-      - name: Lint Rust code
+      - name: Lint code
         run: |
           cargo fmt --all -- --check
           cargo clippy -- -D warnings
+          pixi run lint
+
+      - name: Run format check
+        run: |
+          pixi run check-fmt
 
       - name: Run Rust tests
         run: |
@@ -63,22 +67,18 @@ jobs:
         run: |
           pixi run develop
 
-      - name: Run Python tests
+      - name: Run python tests
         run: |
           pixi run test
 
-      - name: Run all tests together
-        run: |
-          pixi run test-all
-
   build-wheels:
-    name: Build wheels on ${{ matrix.os }}
+    name: Build wheels on ${{ matrix.os }} (py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ['3.9', '3.12']
+        python-version: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -109,14 +109,14 @@ jobs:
           path: target/wheels/*.whl
 
   test-wheels:
-    name: Test wheels on ${{ matrix.os }}
+    name: Test wheels on ${{ matrix.os }} (py${matrix.python-version})
     needs: build-wheels
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ['3.9', '3.12']
+        python-version: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4

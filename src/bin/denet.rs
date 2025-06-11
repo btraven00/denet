@@ -1,6 +1,5 @@
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use crossterm;
 use denet::process_monitor::{AggregatedMetrics, Metrics, ProcessMonitor};
 use std::fs::File;
 use std::io::{self, Write};

@@ -1,8 +1,7 @@
-import unittest
-import time
 import json
 import sys
-import os
+import time
+import unittest
 from pathlib import Path
 
 # Add the package to the path if running tests directly
@@ -13,6 +12,7 @@ try:
 except ImportError:
     print("denet module not found. Run 'pixi run develop' first to build the extension.")
     sys.exit(1)
+
 
 class TestProcessMonitor(unittest.TestCase):
     def test_create_monitor(self):
@@ -55,8 +55,6 @@ for i in range(5):
 
         try:
             import threading
-            import io
-            from contextlib import redirect_stdout
 
             # We can't easily capture the monitor's output with redirect_stdout
             # because it comes from a C extension
@@ -142,8 +140,8 @@ for i in range(5):
         # Verify timestamps are monotonic if we have multiple samples
         if len(samples) >= 2:
             for i in range(1, len(samples)):
-                self.assertGreaterEqual(samples[i]["ts_ms"], samples[i-1]["ts_ms"],
-                                      "Timestamps should be monotonic")
+                self.assertGreaterEqual(samples[i]["ts_ms"], samples[i - 1]["ts_ms"], "Timestamps should be monotonic")
+
 
 if __name__ == "__main__":
     unittest.main()

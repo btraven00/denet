@@ -38,6 +38,19 @@ pixi run test
 pixi run test-all
 ```
 
+### Linting and Formatting
+
+```bash
+# Lint Python code
+pixi run lint
+
+# Fix linting issues automatically
+pixi run lint-fix
+
+# Format Rust and Python code
+pixi run fmt
+```
+
 ### Testing Strategy
 
 - **Unit Tests:** Test individual components in isolation
@@ -83,6 +96,15 @@ The project includes scripts to help with development:
 
 # Run tests in CI environment
 ./ci/run_tests.sh
+
+# Check code style and lint
+pixi run lint
+
+# Fix code style issues automatically
+pixi run lint-fix
+
+# Format both Rust and Python code
+pixi run fmt
 ```
 
 ## Project Structure
@@ -157,3 +179,5 @@ denet/
 - Follow [PEP 8](https://www.python.org/dev/peps/pep-0008/)
 - Use type hints for function signatures
 - Document functions and classes with docstrings
+- Use `ruff` for linting and formatting (configured in `pyproject.toml`)
+- Run `pixi run lint` to check for issues and `pixi run lint-fix` to automatically fix issues

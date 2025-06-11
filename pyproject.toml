@@ -28,6 +28,7 @@ platforms = ["linux-64"]
 python = "==3.12"
 maturin = "==1.8.6"
 pytest = ">=7.0.0"
+ruff = ">=0.1.0"
 
 [tool.pixi.tasks]
 build = { cmd = "maturin build --release" }
@@ -38,12 +39,83 @@ test-rust = { cmd = "cargo test --no-default-features" }
 test-all = { cmd = "cargo test --no-default-features && python -m pytest tests/python/" }
 test-ci = { cmd = "cargo test --no-default-features && python -m pytest tests/python/" }
 coverage = { cmd = "cargo llvm-cov --lib --no-default-features --html -- --skip test_from_pid --skip test_process_metadata" }
+lint = { cmd = "ruff check --force-exclude python/ tests/" }
+lint-fix = { cmd = "ruff check --fix --force-exclude python/ tests/" }
+fmt = { cmd = "cargo fmt --all && ruff format --force-exclude python/ tests/" }
+fmt-python = { cmd = "ruff format tests/python/ python/denet/" }
+check-fmt = { cmd = "cargo fmt --all -- --check && ruff format --force-exclude python/ tests/ --check" }
+rust-lint = { cmd = "cargo clippy -- -D warnings" }
+rust-fmt = { cmd = "cargo fmt --all" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
 
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+# Only check for basic syntax errors initially
+select = ["E", "F"]
+# Ignore line length issues globally
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Specific exclusions for changed files
+"tests/python/test_process_monitor.py" = [
+    "F401", # Unused import
+    "F811", # Redefined name
+    "F841", # Unused variable
+    "E402", # Module level import not at top of file
+    "E711", # Comparison with None
+    "E712", # Comparison with True/False
+    "F821", # Undefined name
+    "E721", # Type comparison
+    "E722", # Bare except
+    "E741", # Ambiguous variable name
+]
+"tests/python/test_convenience.py" = [
+    "F401", # Unused import
+    "F811", # Redefined name
+    "F841", # Unused variable
+    "E402", # Module level import not at top of file
+    "E711", # Comparison with None
+    "E712", # Comparison with True/False
+    "F821", # Undefined name
+    "E722", # Bare except
+    "F541", # f-string without placeholders
+]
+"python/denet/__init__.py" = [
+    "F403", # Import * used
+    "F405", # Name from star imports
+    "E402", # Module level import not at top
+    "F821", # Undefined name
+    "E722", # Bare except
+    "E731", # Lambda assignment
+    "F541", # f-string without placeholders
+    "F811", # Redefined name
+    "F601", # Dictionary key repeated
+]
+"python/denet/analysis.py" = [
+    "F541", # f-string without placeholders
+    "F841", # Unused variable
+    "E722", # Bare except
+    "F821", # Undefined name
+    "E731", # Lambda assignment
+    "E741", # Ambiguous variable name
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
 [tool.maturin]
 python-source = "python"
 module-name = "denet._denet"
 features = ["python"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["denet"]
+combine-as-imports = true
