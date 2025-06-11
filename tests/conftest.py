@@ -5,11 +5,14 @@ from pathlib import Path
 
 # Simple check that the denet module is importable
 def pytest_configure(config):
-    # Check if the denet module is already importable
+    # Add the project root to Python path for tests
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    sys.path.insert(0, project_root)
+    
+    # Check if local modules can be imported (don't exit on failure)
     try:
         import denet
+        print("Using installed denet module")
     except ImportError:
-        print("ERROR: The denet module is not importable.")
-        print("Please run 'pixi run develop' before running the tests.")
-        print("Or use 'pixi run test-all' to run both Rust and Python tests.")
-        sys.exit(1)
+        print("NOTE: Using local denet module paths for testing")
+        # Allow tests to continue with local imports

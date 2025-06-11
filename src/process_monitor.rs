@@ -33,7 +33,7 @@ pub(crate) fn get_thread_count(pid: usize) -> usize {
 pub struct ProcessMetadata {
     pub pid: usize,
     pub cmd: Vec<String>,
-    pub exe: String,
+    pub executable: String,
     pub t0_ms: u64,
 }
 
@@ -496,7 +496,7 @@ impl ProcessMonitor {
             Some(ProcessMetadata {
                 pid: self.pid,
                 cmd: proc.cmd().to_vec(),
-                exe: proc.exe().to_string_lossy().to_string(),
+                executable: proc.exe().to_string_lossy().to_string(),
                 t0_ms: self.t0_ms,
             })
         } else {

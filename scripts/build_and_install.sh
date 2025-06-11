@@ -1,12 +1,18 @@
 #!/bin/bash
 # Direct build and install script for denet
-# This script builds the Rust extension and installs it directly with pip
+# This script builds the Rust extension and Python package and installs it directly with pip
 # without relying on maturin's develop command
 
 set -e  # Exit on error
 
 # Go to the project root
 cd "$(dirname "$0")/.."
+
+# Ensure the Python package directory exists
+mkdir -p denet
+
+# Ensure the Python package directory exists
+mkdir -p python/denet
 
 # Display what we're doing
 echo "🔨 Building and installing denet..."
@@ -17,7 +23,7 @@ echo "Using Python at: $PYTHON_EXE"
 
 # Build the wheel using maturin
 echo "Building wheel..."
-maturin build
+maturin build --release
 
 # Find the most recently built wheel
 WHEEL_PATH=$(ls -t target/wheels/*.whl | head -1)
@@ -44,11 +50,17 @@ else
     TEMP_DIR=$(mktemp -d)
     unzip -q "$WHEEL_PATH" -d "$TEMP_DIR"
     
+    # Find and copy all Python package files
+    echo "Copying Python package files..."
+    mkdir -p "$SITE_PACKAGES/denet"
+    cp -r "$TEMP_DIR/denet"/* "$SITE_PACKAGES/denet/"
+    
     # Find and copy the .so file
     SO_FILE=$(find "$TEMP_DIR" -name "*.so" | head -1)
     if [ -n "$SO_FILE" ]; then
-        cp "$SO_FILE" "$SITE_PACKAGES/"
-        echo "Copied $SO_FILE to $SITE_PACKAGES/"
+        mkdir -p "$SITE_PACKAGES/denet"
+        cp "$SO_FILE" "$SITE_PACKAGES/denet/_denet.so"
+        echo "Copied $SO_FILE to $SITE_PACKAGES/denet/_denet.so"
     else
         echo "Error: No .so file found in the wheel"
         exit 1
