@@ -1,4 +1,6 @@
-use serde::{Deserialize, Serialize};
+use crate::monitor::{
+    AggregatedMetrics, ChildProcessMetrics, Metrics, ProcessMetadata, ProcessTreeMetrics, Summary,
+};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
@@ -7,7 +9,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{self, Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
-// In a real-world implementation, we might want this function to be more robust
+// In the long run, we will want this function to be more robust
 // or use platform-specific APIs. For now, we'll keep it simple.
 pub(crate) fn get_thread_count(_pid: usize) -> usize {
     #[cfg(target_os = "linux")]
@@ -28,244 +30,66 @@ pub(crate) fn get_thread_count(_pid: usize) -> usize {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ProcessMetadata {
-    pub pid: usize,
-    pub cmd: Vec<String>,
-    pub executable: String,
-    pub t0_ms: u64,
-}
+/// Read metrics from a JSON file and generate a summary
+pub fn summary_from_json_file<P: AsRef<Path>>(path: P) -> io::Result<Summary> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Metrics {
-    pub ts_ms: u64,
-    pub cpu_usage: f32,
-    pub mem_rss_kb: u64,
-    pub mem_vms_kb: u64,
-    pub disk_read_bytes: u64,
-    pub disk_write_bytes: u64,
-    pub net_rx_bytes: u64,
-    pub net_tx_bytes: u64,
-    pub thread_count: usize,
-    pub uptime_secs: u64,
-    pub cpu_core: Option<u32>,
-}
+    let mut metrics_vec: Vec<AggregatedMetrics> = Vec::new();
+    let mut regular_metrics: Vec<Metrics> = Vec::new();
+    let mut first_timestamp: Option<u64> = None;
+    let mut last_timestamp: Option<u64> = None;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ProcessTreeMetrics {
-    pub ts_ms: u64,
-    pub parent: Option<Metrics>,
-    pub children: Vec<ChildProcessMetrics>,
-    pub aggregated: Option<AggregatedMetrics>,
-}
+    // Process file line by line since each line is a separate JSON object
+    for line in reader.lines() {
+        let line = line?;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ChildProcessMetrics {
-    pub pid: usize,
-    pub command: String,
-    pub metrics: Metrics,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct AggregatedMetrics {
-    pub ts_ms: u64,
-    pub cpu_usage: f32,
-    pub mem_rss_kb: u64,
-    pub mem_vms_kb: u64,
-    pub disk_read_bytes: u64,
-    pub disk_write_bytes: u64,
-    pub net_rx_bytes: u64,
-    pub net_tx_bytes: u64,
-    pub thread_count: usize,
-    pub process_count: usize,
-    pub uptime_secs: u64,
-}
-
-/// Summarizes metrics collected during a monitoring session
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Summary {
-    /// Total time elapsed in seconds
-    pub total_time_secs: f64,
-    /// Number of samples collected
-    pub sample_count: usize,
-    /// Maximum number of processes observed
-    pub max_processes: usize,
-    /// Maximum number of threads observed
-    pub max_threads: usize,
-    /// Cumulative disk read bytes
-    pub total_disk_read_bytes: u64,
-    /// Cumulative disk write bytes
-    pub total_disk_write_bytes: u64,
-    /// Cumulative network received bytes
-    pub total_net_rx_bytes: u64,
-    /// Cumulative network transmitted bytes
-    pub total_net_tx_bytes: u64,
-    /// Maximum memory RSS observed across all processes (in KB)
-    pub peak_mem_rss_kb: u64,
-    /// Average CPU usage (percent)
-    pub avg_cpu_usage: f32,
-}
-
-impl Default for Summary {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Summary {
-    /// Creates a new empty summary
-    pub fn new() -> Self {
-        Summary {
-            total_time_secs: 0.0,
-            sample_count: 0,
-            max_processes: 0,
-            max_threads: 0,
-            total_disk_read_bytes: 0,
-            total_disk_write_bytes: 0,
-            total_net_rx_bytes: 0,
-            total_net_tx_bytes: 0,
-            peak_mem_rss_kb: 0,
-            avg_cpu_usage: 0.0,
-        }
-    }
-
-    /// Generate a summary from a collection of Metrics
-    pub fn from_metrics(metrics: &[Metrics], elapsed_time: f64) -> Self {
-        let mut summary = Summary::new();
-        let mut total_cpu = 0.0;
-
-        summary.total_time_secs = elapsed_time;
-        summary.sample_count = metrics.len();
-
-        if metrics.is_empty() {
-            return summary;
+        // Skip empty lines
+        if line.trim().is_empty() {
+            continue;
         }
 
-        for metric in metrics {
-            // For non-aggregated metrics, we assume process_count is 1
-            summary.max_processes = summary.max_processes.max(1);
-            summary.max_threads = summary.max_threads.max(metric.thread_count);
-
-            // Track I/O (we're using the final values as cumulative totals)
-            summary.total_disk_read_bytes =
-                summary.total_disk_read_bytes.max(metric.disk_read_bytes);
-            summary.total_disk_write_bytes =
-                summary.total_disk_write_bytes.max(metric.disk_write_bytes);
-            summary.total_net_rx_bytes = summary.total_net_rx_bytes.max(metric.net_rx_bytes);
-            summary.total_net_tx_bytes = summary.total_net_tx_bytes.max(metric.net_tx_bytes);
-
-            // Track peak memory usage
-            summary.peak_mem_rss_kb = summary.peak_mem_rss_kb.max(metric.mem_rss_kb);
-
-            // Sum CPU usage for average calculation
-            total_cpu += metric.cpu_usage as f64;
-        }
-
-        // Calculate average CPU usage
-        summary.avg_cpu_usage = (total_cpu / metrics.len() as f64) as f32;
-
-        summary
-    }
-
-    /// Generate a summary from a collection of AggregatedMetrics
-    pub fn from_aggregated_metrics(metrics: &[AggregatedMetrics], elapsed_time: f64) -> Self {
-        let mut summary = Summary::new();
-        let mut total_cpu = 0.0;
-
-        summary.total_time_secs = elapsed_time;
-        summary.sample_count = metrics.len();
-
-        if metrics.is_empty() {
-            return summary;
-        }
-
-        for metric in metrics {
-            // Track max processes and threads
-            summary.max_processes = summary.max_processes.max(metric.process_count);
-            summary.max_threads = summary.max_threads.max(metric.thread_count);
-
-            // Track I/O (we're using the final values as cumulative totals)
-            summary.total_disk_read_bytes =
-                summary.total_disk_read_bytes.max(metric.disk_read_bytes);
-            summary.total_disk_write_bytes =
-                summary.total_disk_write_bytes.max(metric.disk_write_bytes);
-            summary.total_net_rx_bytes = summary.total_net_rx_bytes.max(metric.net_rx_bytes);
-            summary.total_net_tx_bytes = summary.total_net_tx_bytes.max(metric.net_tx_bytes);
-
-            // Track peak memory usage
-            summary.peak_mem_rss_kb = summary.peak_mem_rss_kb.max(metric.mem_rss_kb);
-
-            // Sum CPU usage for average calculation
-            total_cpu += metric.cpu_usage as f64;
-        }
-
-        // Calculate average CPU usage
-        summary.avg_cpu_usage = (total_cpu / metrics.len() as f64) as f32;
-
-        summary
-    }
-
-    /// Read metrics from a JSON file and generate a summary
-    pub fn from_json_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
-
-        let mut metrics_vec: Vec<AggregatedMetrics> = Vec::new();
-        let mut regular_metrics: Vec<Metrics> = Vec::new();
-        let mut first_timestamp: Option<u64> = None;
-        let mut last_timestamp: Option<u64> = None;
-
-        // Process file line by line since each line is a separate JSON object
-        for line in reader.lines() {
-            let line = line?;
-
-            // Skip empty lines
-            if line.trim().is_empty() {
-                continue;
+        // Try to parse as different types of metrics
+        if let Ok(agg_metric) = serde_json::from_str::<AggregatedMetrics>(&line) {
+            // Got aggregated metrics
+            if first_timestamp.is_none() {
+                first_timestamp = Some(agg_metric.ts_ms);
             }
-
-            // Try to parse as different types of metrics
-            if let Ok(agg_metric) = serde_json::from_str::<AggregatedMetrics>(&line) {
-                // Got aggregated metrics
+            last_timestamp = Some(agg_metric.ts_ms);
+            metrics_vec.push(agg_metric);
+        } else if let Ok(tree_metrics) = serde_json::from_str::<ProcessTreeMetrics>(&line) {
+            // Got tree metrics, extract aggregated metrics if available
+            if let Some(agg) = tree_metrics.aggregated {
                 if first_timestamp.is_none() {
-                    first_timestamp = Some(agg_metric.ts_ms);
+                    first_timestamp = Some(agg.ts_ms);
                 }
-                last_timestamp = Some(agg_metric.ts_ms);
-                metrics_vec.push(agg_metric);
-            } else if let Ok(tree_metrics) = serde_json::from_str::<ProcessTreeMetrics>(&line) {
-                // Got tree metrics, extract aggregated metrics if available
-                if let Some(agg) = tree_metrics.aggregated {
-                    if first_timestamp.is_none() {
-                        first_timestamp = Some(agg.ts_ms);
-                    }
-                    last_timestamp = Some(agg.ts_ms);
-                    metrics_vec.push(agg);
-                }
-            } else if let Ok(metric) = serde_json::from_str::<Metrics>(&line) {
-                // Got regular metrics
-                if first_timestamp.is_none() {
-                    first_timestamp = Some(metric.ts_ms);
-                }
-                last_timestamp = Some(metric.ts_ms);
-                regular_metrics.push(metric);
+                last_timestamp = Some(agg.ts_ms);
+                metrics_vec.push(agg);
             }
-            // Ignore metadata and other lines we can't parse
+        } else if let Ok(metric) = serde_json::from_str::<Metrics>(&line) {
+            // Got regular metrics
+            if first_timestamp.is_none() {
+                first_timestamp = Some(metric.ts_ms);
+            }
+            last_timestamp = Some(metric.ts_ms);
+            regular_metrics.push(metric);
         }
+        // Ignore metadata and other lines we can't parse
+    }
 
-        // Calculate total time
-        let elapsed_time = match (first_timestamp, last_timestamp) {
-            (Some(first), Some(last)) => (last - first) as f64 / 1000.0,
-            _ => 0.0,
-        };
+    // Calculate total time
+    let elapsed_time = match (first_timestamp, last_timestamp) {
+        (Some(first), Some(last)) => (last - first) as f64 / 1000.0,
+        _ => 0.0,
+    };
 
-        // Generate summary based on the metrics we found
-        if !metrics_vec.is_empty() {
-            Ok(Self::from_aggregated_metrics(&metrics_vec, elapsed_time))
-        } else if !regular_metrics.is_empty() {
-            Ok(Self::from_metrics(&regular_metrics, elapsed_time))
-        } else {
-            Ok(Self::new()) // Return empty summary if no metrics found
-        }
+    // Generate summary based on the metrics we found
+    if !metrics_vec.is_empty() {
+        Ok(Summary::from_aggregated_metrics(&metrics_vec, elapsed_time))
+    } else if !regular_metrics.is_empty() {
+        Ok(Summary::from_metrics(&regular_metrics, elapsed_time))
+    } else {
+        Ok(Summary::default()) // Return empty summary if no metrics found
     }
 }
 

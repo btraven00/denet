@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use denet::process_monitor::{AggregatedMetrics, Metrics, ProcessMonitor};
+use denet::error::Result;
+use denet::monitor::{AggregatedMetrics, Metrics, Summary, SummaryGenerator};
+use denet::process_monitor::ProcessMonitor;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -93,7 +95,7 @@ enum Commands {
     },
 }
 
-fn main() -> io::Result<()> {
+fn main() -> Result<()> {
     // Parse command line arguments
     let args = Args::parse();
 
@@ -556,7 +558,7 @@ fn format_bytes(bytes: u64) -> String {
 /// Generate and print a summary from metrics
 /// Print a summary of collected metrics
 fn print_summary(metrics: &[Metrics], duration: f64) {
-    let summary = denet::process_monitor::Summary::from_metrics(metrics, duration);
+    let summary = Summary::from_metrics(metrics, duration);
 
     println!("\n{}", "EXECUTION SUMMARY".bold());
     println!("{}", "=================".bold());
@@ -592,15 +594,15 @@ fn generate_summary_from_file(
     file_path: &PathBuf,
     json_output: bool,
     out_file: Option<&PathBuf>,
-) -> io::Result<()> {
+) -> Result<()> {
     if !json_output {
         println!("Generating statistics from file: {}", file_path.display());
     }
 
-    match denet::process_monitor::Summary::from_json_file(file_path) {
+    match SummaryGenerator::from_json_file(file_path) {
         Ok(summary) => {
             if json_output {
-                let json = serde_json::to_string_pretty(&summary).unwrap();
+                let json = serde_json::to_string_pretty(&summary)?;
 
                 // If out file is specified, write JSON to the file
                 if let Some(out_path) = out_file {

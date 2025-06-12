@@ -82,6 +82,34 @@ impl CpuSampler {
         }
     }
 
+    /// Static method to get CPU usage for a single measurement
+    /// This creates a temporary sampler instance for one-off measurements
+    pub fn get_cpu_usage_static(pid: usize) -> Result<f32, std::io::Error> {
+        // For static usage, we use procfs directly
+        let process = Process::new(pid as i32).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Process not found: {}", e),
+            )
+        })?;
+
+        let stat = process
+            .stat()
+            .map_err(|e| std::io::Error::other(format!("Failed to read process stat: {}", e)))?;
+
+        // For a single measurement, we can't calculate delta, so return approximate CPU usage
+        let total_time = stat.utime + stat.stime;
+        let _clock_ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as u64;
+        let uptime_ticks = stat.starttime;
+
+        if uptime_ticks > 0 {
+            let cpu_usage = (total_time as f64 / uptime_ticks as f64) * 100.0;
+            Ok(cpu_usage.min(100.0) as f32)
+        } else {
+            Ok(0.0)
+        }
+    }
+
     /// Get CPU usage percentage for a process (0-100% per core)
     ///
     /// Returns the CPU usage as a percentage, where:
