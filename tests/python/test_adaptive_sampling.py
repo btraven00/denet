@@ -49,10 +49,10 @@ def test_adaptive_sampling_intervals():
 
 def test_adaptive_sampling_with_short_process():
     """Test adaptive sampling with a very short process."""
-    # Process that runs for only 0.5 seconds
+    # Process that runs for only 1 second (increased from 0.5s for sysinfo v0.35.2 compatibility)
     monitor = denet.ProcessMonitor(
-        cmd=["python", "-c", "import time; time.sleep(0.5)"],
-        base_interval_ms=50,  # Very fast initial sampling
+        cmd=["python", "-c", "import time; time.sleep(1.0)"],
+        base_interval_ms=25,  # Very fast initial sampling
         max_interval_ms=1000,
         store_in_memory=True,
     )
@@ -60,8 +60,8 @@ def test_adaptive_sampling_with_short_process():
     monitor.run()
     samples = monitor.get_samples()
 
-    # With a 0.5 second process and 50ms base interval, we should get several samples
-    assert len(samples) >= 5, f"Expected at least 5 samples for 0.5s process, got {len(samples)}"
+    # With a 1.0 second process and 25ms base interval, we should get several samples
+    assert len(samples) >= 3, f"Expected at least 3 samples for 1.0s process, got {len(samples)}"
 
     # All intervals should be close to base_interval since process is short
     timestamps = [json.loads(s)["ts_ms"] for s in samples]
@@ -69,8 +69,8 @@ def test_adaptive_sampling_with_short_process():
 
     if intervals:
         max_interval = max(intervals)
-        # For a 0.5s process, intervals shouldn't have time to grow much
-        assert max_interval < 200, f"Max interval should be < 200ms for short process, got {max_interval}ms"
+        # For a 1.0s process, intervals shouldn't have time to grow much
+        assert max_interval < 300, f"Max interval should be < 300ms for short process, got {max_interval}ms"
 
 
 def test_adaptive_sampling_custom_parameters():

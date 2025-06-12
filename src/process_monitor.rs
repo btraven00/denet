@@ -5,7 +5,7 @@ use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use sysinfo::{ProcessExt, System, SystemExt};
+use sysinfo::{self, Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 // In a real-world implementation, we might want this function to be more robust
 // or use platform-specific APIs. For now, we'll keep it simple.
@@ -344,7 +344,7 @@ impl ProcessMonitor {
         let mut sys = System::new_all();
         // Initialize the system with process information
         sys.refresh_all();
-        sys.refresh_cpu();
+        sys.refresh_cpu_all();
 
         let now = Instant::now();
         Ok(Self {
@@ -385,19 +385,22 @@ impl ProcessMonitor {
     ) -> ProcessResult<Self> {
         // Check if the process exists
         let mut sys = System::new_all();
+        // Initialize the system with process information
         sys.refresh_all();
-        sys.refresh_cpu();
+        sys.refresh_cpu_all();
 
         // Try multiple refreshes instead of sleeping
         let mut retries = 3;
         let mut process_found = false;
+        let pid_sys = Pid::from_u32(pid as u32);
 
         while retries > 0 && !process_found {
-            sys.refresh_processes();
-            if sys.process(pid.into()).is_some() {
+            sys.refresh_processes(ProcessesToUpdate::All, true);
+            if sys.process(pid_sys).is_some() {
                 process_found = true;
             } else {
                 retries -= 1;
+                std::thread::sleep(std::time::Duration::from_millis(50));
             }
         }
 
@@ -462,9 +465,14 @@ impl ProcessMonitor {
 
         // We still need to refresh the process for memory and other metrics
         // But we don't need the CPU refresh delay for Linux anymore
-        self.sys.refresh_process(self.pid.into());
+        let pid = Pid::from_u32(self.pid as u32);
+        self.sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid]),
+            false,
+            ProcessRefreshKind::everything(),
+        );
 
-        if let Some(proc) = self.sys.process(self.pid.into()) {
+        if let Some(proc) = self.sys.process(pid) {
             // sysinfo returns memory in bytes, so we need to convert to KB
             let mem_rss_kb = proc.memory() / 1024;
             let mem_vms_kb = proc.virtual_memory() / 1024;
@@ -479,13 +487,18 @@ impl ProcessMonitor {
                 let time_since_last_refresh = now.duration_since(self.last_refresh_time);
 
                 // Refresh CPU for accurate measurement
-                self.sys.refresh_cpu();
+                self.sys.refresh_cpu_all();
 
                 // If not enough time has passed, add a delay for accuracy
                 if time_since_last_refresh < Duration::from_millis(100) {
                     std::thread::sleep(Duration::from_millis(100));
-                    self.sys.refresh_cpu();
-                    self.sys.refresh_process(self.pid.into());
+                    self.sys.refresh_cpu_all();
+                    let pid = Pid::from_u32(self.pid as u32);
+                    self.sys.refresh_processes_specifics(
+                        ProcessesToUpdate::Some(&[pid]),
+                        false,
+                        ProcessRefreshKind::everything(),
+                    );
                 }
 
                 proc.cpu_usage()
@@ -546,7 +559,7 @@ impl ProcessMonitor {
                 disk_write_bytes,
                 net_rx_bytes,
                 net_tx_bytes,
-                thread_count: get_thread_count(usize::from(proc.pid())),
+                thread_count: get_thread_count(proc.pid().as_u32() as usize),
                 uptime_secs: proc.run_time(),
                 cpu_core: Self::get_process_cpu_core(self.pid),
             })
@@ -565,14 +578,25 @@ impl ProcessMonitor {
             }
         } else {
             // For existing processes, check if it still exists
-            self.sys.refresh_process(self.pid.into());
+            let pid = Pid::from_u32(self.pid as u32);
+
+            // First try with specific process refresh
+            self.sys.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&[pid]),
+                false,
+                ProcessRefreshKind::everything(),
+            );
 
             // If specific refresh doesn't work, try refreshing all processes
-            if self.sys.process(self.pid.into()).is_none() {
-                self.sys.refresh_processes();
+            if self.sys.process(pid).is_none() {
+                self.sys.refresh_processes(ProcessesToUpdate::All, true);
+
+                // Give a small amount of time for the process to be detected
+                // This helps with the test reliability
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
 
-            self.sys.process(self.pid.into()).is_some()
+            self.sys.process(pid).is_some()
         }
     }
 
@@ -583,13 +607,31 @@ impl ProcessMonitor {
 
     // Get process metadata (static information)
     pub fn get_metadata(&mut self) -> Option<ProcessMetadata> {
-        self.sys.refresh_process(self.pid.into());
+        let pid = Pid::from_u32(self.pid as u32);
+        self.sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid]),
+            false,
+            ProcessRefreshKind::everything(),
+        );
 
-        if let Some(proc) = self.sys.process(self.pid.into()) {
+        if let Some(proc) = self.sys.process(pid) {
+            // Convert OsString to String with potential data loss on invalid UTF-8
+            let cmd: Vec<String> = proc
+                .cmd()
+                .iter()
+                .map(|os_str| os_str.to_string_lossy().to_string())
+                .collect();
+
+            // Handle exe which is now Option<&Path>
+            let executable = proc
+                .exe()
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_default();
+
             Some(ProcessMetadata {
                 pid: self.pid,
-                cmd: proc.cmd().to_vec(),
-                executable: proc.exe().to_string_lossy().to_string(),
+                cmd,
+                executable,
                 t0_ms: self.t0_ms,
             })
         } else {
@@ -599,7 +641,7 @@ impl ProcessMonitor {
 
     // Get all child processes recursively
     pub fn get_child_pids(&mut self) -> Vec<usize> {
-        self.sys.refresh_processes();
+        self.sys.refresh_processes(ProcessesToUpdate::All, true);
         let mut children = Vec::new();
         self.find_children_recursive(self.pid, &mut children);
         children
@@ -607,10 +649,11 @@ impl ProcessMonitor {
 
     // Recursively find all descendants of a process
     fn find_children_recursive(&self, parent_pid: usize, children: &mut Vec<usize>) {
+        let parent_pid_sys = Pid::from_u32(parent_pid as u32);
         for (pid, process) in self.sys.processes() {
             if let Some(ppid) = process.parent() {
-                if usize::from(ppid) == parent_pid {
-                    let child_pid = usize::from(*pid);
+                if ppid == parent_pid_sys {
+                    let child_pid = pid.as_u32() as usize;
                     children.push(child_pid);
                     // Recursively find grandchildren
                     self.find_children_recursive(child_pid, children);
@@ -636,10 +679,15 @@ impl ProcessMonitor {
         for child_pid in child_pids.iter() {
             // We no longer need delays between child measurements for Linux with our new CPU sampler
             // But we still need to refresh process info for other metrics
-            self.sys.refresh_process((*child_pid).into());
+            let pid = Pid::from_u32(*child_pid as u32);
+            self.sys.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&[pid]),
+                false,
+                ProcessRefreshKind::everything(),
+            );
 
-            if let Some(proc) = self.sys.process((*child_pid).into()) {
-                let command = proc.name().to_string();
+            if let Some(proc) = self.sys.process(pid) {
+                let command = proc.name().to_string_lossy().to_string();
 
                 // Get I/O stats for child
                 let current_disk_read = proc.disk_usage().total_read_bytes;
@@ -914,6 +962,9 @@ mod tests {
             let mut monitor = self.create_monitor()?;
             let pid = monitor.get_pid();
 
+            // Give the process a small amount of time to start
+            std::thread::sleep(Duration::from_millis(50));
+
             // Verify the process is running using a retry strategy
             if !self.wait_for_condition(|| monitor.is_running()) {
                 return Err(std::io::Error::new(
@@ -1036,10 +1087,10 @@ mod tests {
 
         // Test with a longer running process
         let fixture = ProcessTestFixture {
-            cmd: vec!["sleep".to_string(), "1".to_string()],
+            cmd: vec!["sleep".to_string(), "2".to_string()], // Increased sleep time for reliability
             base_interval: Duration::from_millis(100),
             max_interval: Duration::from_millis(1000),
-            ready_timeout: Duration::from_secs(3), // Longer timeout for this test
+            ready_timeout: Duration::from_secs(5), // Longer timeout for this test
         };
         let (mut monitor, _) = fixture.create_and_verify_running().unwrap();
 

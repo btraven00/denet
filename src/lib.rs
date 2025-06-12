@@ -400,17 +400,17 @@ fn generate_summary_from_metrics_json(
 #[allow(clippy::too_many_arguments)]
 fn profile<'a>(
     py: Python<'a>,
-    func: &'a PyAny,
+    func: &Bound<'a, PyAny>,
     base_interval_ms: u64,
     max_interval_ms: u64,
     output_file: Option<String>,
     output_format: &str,
     store_in_memory: bool,
     include_children: bool,
-) -> PyResult<&'a PyAny> {
+) -> PyResult<Bound<'a, PyAny>> {
     // Create a decorator that will wrap the function
     use pyo3::types::PyDict;
-    let locals = PyDict::new(py);
+    let locals = PyDict::new_bound(py);
     locals.set_item("func", func)?;
     locals.set_item("base_interval_ms", base_interval_ms)?;
     locals.set_item("max_interval_ms", max_interval_ms)?;
@@ -418,10 +418,10 @@ fn profile<'a>(
     locals.set_item("output_format", output_format)?;
     locals.set_item("store_in_memory", store_in_memory)?;
     locals.set_item("include_children", include_children)?;
-    locals.set_item("ProcessMonitor", py.get_type::<PyProcessMonitor>())?;
+    locals.set_item("ProcessMonitor", py.get_type_bound::<PyProcessMonitor>())?;
 
     // Define a wrapper function that will time the original function
-    py.eval(
+    py.eval_bound(
         r#"
 def wrapper(*args, **kwargs):
     import os
@@ -504,7 +504,7 @@ wrapper = functools.wraps(func)(wrapper)
 wrapper
         "#,
         None,
-        Some(locals),
+        Some(&locals),
     )
     .map_err(|e| {
         e.print(py);
@@ -529,17 +529,17 @@ fn monitor<'a>(
     output_file: Option<String>,
     output_format: &str,
     store_in_memory: bool,
-) -> PyResult<&'a PyAny> {
+) -> PyResult<Bound<'a, PyAny>> {
     use pyo3::types::PyDict;
-    let locals = PyDict::new(py);
+    let locals = PyDict::new_bound(py);
     locals.set_item("base_interval_ms", base_interval_ms)?;
     locals.set_item("max_interval_ms", max_interval_ms)?;
     locals.set_item("output_file", output_file)?;
     locals.set_item("output_format", output_format)?;
     locals.set_item("store_in_memory", store_in_memory)?;
-    locals.set_item("ProcessMonitor", py.get_type::<PyProcessMonitor>())?;
+    locals.set_item("ProcessMonitor", py.get_type_bound::<PyProcessMonitor>())?;
 
-    py.eval(
+    py.eval_bound(
         r#"
 class MonitorContextManager:
     def __init__(self, base_interval_ms, max_interval_ms, output_file, output_format, store_in_memory):
@@ -657,7 +657,7 @@ class MonitorContextManager:
 MonitorContextManager(base_interval_ms, max_interval_ms, output_file, output_format, store_in_memory)
         "#,
         None,
-        Some(locals),
+        Some(&locals),
     )
     .map_err(|e| {
         e.print(py);
@@ -667,7 +667,7 @@ MonitorContextManager(base_interval_ms, max_interval_ms, output_file, output_for
 
 #[cfg(feature = "python")]
 #[pymodule]
-fn _denet(_py: Python, m: &PyModule) -> PyResult<()> {
+fn _denet(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyProcessMonitor>()?;
     m.add_function(wrap_pyfunction!(generate_summary_from_file, m)?)?;
     m.add_function(wrap_pyfunction!(generate_summary_from_metrics_json, m)?)?;
