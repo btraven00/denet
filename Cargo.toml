@@ -1,6 +1,6 @@
 [package]
 name = "denet"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "a simple process monitor"
 license = "GPL-3.0-or-later"
@@ -28,6 +28,11 @@ clap = { version = "4.5", features = ["derive"] }
 colored = "2.1"
 ctrlc = "3.4"
 crossterm = "0.27"
+
+# Add libc for sysconf and procfs for process information on Linux
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+procfs = "0.16"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

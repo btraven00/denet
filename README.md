@@ -15,7 +15,7 @@ Denet is a streaming process monitoring tool that provides detailed metrics on r
 - Lightweight, cross-platform process monitoring
 - Adaptive sampling intervals that automatically adjust based on runtime
 - Memory usage tracking (RSS, VMS)
-- CPU usage monitoring
+- CPU usage monitoring with accurate multi-core support
 - I/O bytes read/written tracking
 - Thread count monitoring
 - Recursive child process tracking
@@ -41,13 +41,22 @@ cargo install denet  # Rust binary
 
 ## Usage
 
+### Understanding CPU Utilization
+
+CPU usage is reported in a `top`-compatible format where 100% represents one fully utilized CPU core:
+- 100% = one core fully utilized
+- 400% = four cores fully utilized
+- Child processes are tracked separately and aggregated for total resource usage
+
+This is consistent with standard tools like `top` and `htop`. For example, a process using 3 CPU cores at full capacity will show 300% CPU usage, regardless of how many cores your system has.
+
 ### Command-Line Interface
 
 ```bash
 # Basic monitoring with colored output
 denet run sleep 5
 
-# Output as JSON
+# Output as JSON (actually JSONL format with metadata on first line)
 denet --json run sleep 5 > metrics.json
 
 # Write output to a file
@@ -64,6 +73,12 @@ denet attach 1234
 
 # Monitor just for 10 seconds
 denet --duration 10 attach 1234
+
+# Quiet mode (suppress process output)
+denet --quiet --json --out metrics.jsonl run python script.py
+
+# Monitor a CPU-intensive workload (shows aggregated metrics for all children)
+denet run python cpu_intensive_script.py
 ```
 
 ### Python API
@@ -177,7 +192,15 @@ print(f"Peak memory: {summary['peak_mem_rss_kb']/1024:.2f} MB")
 mon.save_samples("metrics.jsonl", "jsonl")  # First line contains process metadata
 ```
 
-## Development
+## Adaptive Sampling
+
+Denet uses an intelligent adaptive sampling strategy to balance detail and efficiency:
+
+1. **First second**: Samples at the base interval rate (fast sampling for short processes)
+2. **1-10 seconds**: Gradually increases from base to max interval
+3. **After 10 seconds**: Uses the maximum interval rate
+
+This approach ensures high-resolution data for short-lived processes while reducing overhead for long-running ones.
 
 ## Analysis Utilities
 
@@ -218,6 +241,9 @@ denet.save_metrics(metrics, "data.jsonl", format="jsonl", include_metadata=True)
 
 # Analyze process tree patterns
 tree_analysis = denet.process_tree_analysis(metrics)
+
+# Example: Analyze CPU usage from multi-process workload
+# See scripts/analyze_cpu.py for detailed CPU analysis example
 ```
 
 ## Development

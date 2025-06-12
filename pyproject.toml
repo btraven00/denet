@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "denet"
-version = "0.1.1"
+version = "0.2.0"
 description = "A streaming process monitoring tool"
 readme = "README.md"
 authors = [{ name = "btraven00" }]
@@ -20,7 +20,7 @@ classifiers = [
 
 [tool.pixi.project]
 name = "denet"
-version = "0.1.1"
+version = "0.2.0"
 channels = ["conda-forge", "pypi"]
 platforms = ["linux-64", "osx-arm64"]
 
@@ -39,15 +39,23 @@ test = { cmd = "python -m pytest tests/python/" }
 test-cov = { cmd = "python -m pytest tests/python/ --cov=denet --cov-report=xml --cov-branch" }
 test-rust = { cmd = "cargo test --no-default-features" }
 test-all = { cmd = "cargo test --no-default-features && python -m pytest tests/python/" }
-test-ci = { cmd = "cargo test --no-default-features && python -m pytest tests/python/" }
 coverage = { cmd = "cargo llvm-cov --lib --no-default-features --html -- --skip test_from_pid --skip test_process_metadata" }
+
 lint = { cmd = "ruff check --force-exclude python/ tests/" }
 lint-fix = { cmd = "ruff check --fix --force-exclude python/ tests/" }
+
 fmt = { cmd = "cargo fmt --all && ruff format --force-exclude python/ tests/" }
 fmt-python = { cmd = "ruff format tests/python/ python/denet/" }
 check-fmt = { cmd = "cargo fmt --all -- --check && ruff format --force-exclude python/ tests/ --check" }
+
 rust-lint = { cmd = "cargo clippy -- -D warnings" }
 rust-fmt = { cmd = "cargo fmt --all" }
+
+# Comprehensive lint check for all code (Rust + Python)
+lint-all = { cmd = "cargo clippy -- -D warnings && ruff check --force-exclude python/ tests/ && ruff check tests/python/ python/denet/" }
+
+# Comprehensive fix for all code (Rust + Python)
+fix-all = { cmd = "cargo fmt --all && ruff format --force-exclude python/ tests/ && ruff format tests/python/ python/denet/ && ruff check --fix --force-exclude python/ tests/ && ruff check --fix tests/python/ python/denet/" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

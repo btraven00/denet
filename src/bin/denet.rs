@@ -537,6 +537,7 @@ fn convert_aggregated_to_metrics(agg: &AggregatedMetrics) -> Metrics {
         net_tx_bytes: agg.net_tx_bytes,
         thread_count: agg.thread_count,
         uptime_secs: agg.uptime_secs,
+        cpu_core: None,
     }
 }
 

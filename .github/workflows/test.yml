@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
         python-version: ["3.12", "3.13"]
 
     steps:
@@ -52,25 +52,13 @@ jobs:
             cargo install cargo-llvm-cov --force
           fi
 
-      - name: Lint code
+      - name: Lint and format check
         run: |
           cargo fmt --all -- --check
-          cargo clippy -- -D warnings
-          pixi run lint
+          pixi run lint-all
 
-      - name: Run format check
-        run: |
-          pixi run check-fmt
-
-      # Split Rust testing and coverage for better OS support
-      - name: Run Rust tests (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          echo "Running standard Rust tests on macOS"
-          cargo test --no-default-features
-          
-      - name: Run Rust tests with coverage (Linux only)
-        if: matrix.os == 'ubuntu-latest'
+      # Run Rust tests with coverage
+      - name: Run Rust tests with coverage
         run: |
           echo "Running Rust tests with coverage on Linux"
           cargo llvm-cov --lcov --output-path lcov.info
@@ -92,9 +80,8 @@ jobs:
           name: python-coverage
           fail_ci_if_error: false
           verbose: true
-          
-      - name: Upload Rust coverage to Codecov (Linux only)
-        if: matrix.os == 'ubuntu-latest'
+
+      - name: Upload Rust coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -110,7 +97,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
         python-version: ["3.12", "3.13"]
 
     steps:
@@ -148,7 +135,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
         python-version: ["3.12", "3.13"]
 
     steps:

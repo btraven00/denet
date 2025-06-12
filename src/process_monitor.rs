@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{ProcessExt, System, SystemExt};
 
@@ -48,6 +48,7 @@ pub struct Metrics {
     pub net_tx_bytes: u64,
     pub thread_count: usize,
     pub uptime_secs: u64,
+    pub cpu_core: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -297,6 +298,8 @@ pub struct ProcessMonitor {
     io_baseline: Option<IoBaseline>,
     child_io_baselines: std::collections::HashMap<usize, ChildIoBaseline>,
     since_process_start: bool,
+    last_refresh_time: Instant,
+    cpu_sampler: crate::cpu_sampler::CpuSampler,
 }
 
 // We'll use a Result type directly instead of a custom ErrorType to avoid orphan rule issues
@@ -309,7 +312,6 @@ pub fn io_err_to_py_err(err: std::io::Error) -> pyo3::PyErr {
 }
 
 impl ProcessMonitor {
-    // Create a new process monitor by launching a command
     pub fn new(
         cmd: Vec<String>,
         base_interval: Duration,
@@ -332,27 +334,36 @@ impl ProcessMonitor {
             ));
         }
 
-        let child = Command::new(&cmd[0]).args(&cmd[1..]).spawn()?;
+        let child = Command::new(&cmd[0])
+            .args(&cmd[1..])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
         let pid = child.id() as usize;
 
         let mut sys = System::new_all();
         // Initialize the system with process information
         sys.refresh_all();
+        sys.refresh_cpu();
 
+        let now = Instant::now();
         Ok(Self {
             child: Some(child),
             pid,
             sys,
             base_interval,
             max_interval,
-            start_time: Instant::now(),
+            start_time: now,
             t0_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards")
                 .as_millis() as u64,
             io_baseline: None,
-            child_io_baselines: HashMap::new(),
+            child_io_baselines: std::collections::HashMap::new(),
             since_process_start,
+            last_refresh_time: now,
+            #[cfg(target_os = "linux")]
+            cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
         })
     }
 
@@ -375,12 +386,22 @@ impl ProcessMonitor {
         // Check if the process exists
         let mut sys = System::new_all();
         sys.refresh_all();
+        sys.refresh_cpu();
 
-        // Give the system time to fully refresh, especially on some systems
-        std::thread::sleep(Duration::from_millis(10));
-        sys.refresh_processes();
+        // Try multiple refreshes instead of sleeping
+        let mut retries = 3;
+        let mut process_found = false;
 
-        if sys.process(pid.into()).is_none() {
+        while retries > 0 && !process_found {
+            sys.refresh_processes();
+            if sys.process(pid.into()).is_some() {
+                process_found = true;
+            } else {
+                retries -= 1;
+            }
+        }
+
+        if !process_found {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!("Process with PID {} not found", pid),
@@ -390,48 +411,85 @@ impl ProcessMonitor {
         // Initialize the system with process information
         sys.refresh_all();
 
+        let now = Instant::now();
         Ok(Self {
             child: None,
             pid,
             sys,
             base_interval,
             max_interval,
-            start_time: Instant::now(),
+            start_time: now,
             t0_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards")
                 .as_millis() as u64,
             io_baseline: None,
-            child_io_baselines: HashMap::new(),
+            child_io_baselines: std::collections::HashMap::new(),
             since_process_start,
+            last_refresh_time: now,
+            #[cfg(target_os = "linux")]
+            cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
         })
     }
 
     pub fn adaptive_interval(&self) -> Duration {
-        // Simple linear increase capped at max_interval
+        // Adaptive sampling strategy:
+        // - First 1 second: use base_interval (fast sampling for short processes)
+        // - 1-10 seconds: gradually increase from base to max
+        // - After 10 seconds: use max_interval
         let elapsed = self.start_time.elapsed().as_secs_f64();
-        let scale = 1.0 + elapsed / 10.0; // Grows every 10 seconds
-        let interval_secs =
-            (self.base_interval.as_secs_f64() * scale).min(self.max_interval.as_secs_f64());
+
+        let interval_secs = if elapsed < 1.0 {
+            // First second: sample at base rate
+            self.base_interval.as_secs_f64()
+        } else if elapsed < 10.0 {
+            // 1-10 seconds: linear interpolation between base and max
+            let t = (elapsed - 1.0) / 9.0; // 0 to 1 over 9 seconds
+            let base = self.base_interval.as_secs_f64();
+            let max = self.max_interval.as_secs_f64();
+            base + (max - base) * t
+        } else {
+            // After 10 seconds: use max interval
+            self.max_interval.as_secs_f64()
+        };
+
         Duration::from_secs_f64(interval_secs)
     }
 
     pub fn sample_metrics(&mut self) -> Option<Metrics> {
-        // For accurate CPU calculation, refresh all processes first
-        // This gives sysinfo the data it needs to calculate CPU percentages
-        self.sys.refresh_processes();
+        let now = Instant::now();
+        self.last_refresh_time = now;
 
-        // Wait a small moment for the system to settle
-        std::thread::sleep(Duration::from_millis(50));
-
-        // Refresh again to get the CPU calculation
+        // We still need to refresh the process for memory and other metrics
+        // But we don't need the CPU refresh delay for Linux anymore
         self.sys.refresh_process(self.pid.into());
 
         if let Some(proc) = self.sys.process(self.pid.into()) {
             // sysinfo returns memory in bytes, so we need to convert to KB
             let mem_rss_kb = proc.memory() / 1024;
             let mem_vms_kb = proc.virtual_memory() / 1024;
-            let cpu_usage = proc.cpu_usage();
+
+            // Use different CPU measurement methods based on platform
+            #[cfg(target_os = "linux")]
+            let cpu_usage = self.cpu_sampler.get_cpu_usage(self.pid).unwrap_or(0.0);
+
+            #[cfg(not(target_os = "linux"))]
+            let cpu_usage = {
+                // For non-Linux: keep using sysinfo with the refresh strategy
+                let time_since_last_refresh = now.duration_since(self.last_refresh_time);
+
+                // Refresh CPU for accurate measurement
+                self.sys.refresh_cpu();
+
+                // If not enough time has passed, add a delay for accuracy
+                if time_since_last_refresh < Duration::from_millis(100) {
+                    std::thread::sleep(Duration::from_millis(100));
+                    self.sys.refresh_cpu();
+                    self.sys.refresh_process(self.pid.into());
+                }
+
+                proc.cpu_usage()
+            };
 
             let current_disk_read = proc.disk_usage().total_read_bytes;
             let current_disk_write = proc.disk_usage().total_written_bytes;
@@ -490,6 +548,7 @@ impl ProcessMonitor {
                 net_tx_bytes,
                 thread_count: get_thread_count(usize::from(proc.pid())),
                 uptime_secs: proc.run_time(),
+                cpu_core: Self::get_process_cpu_core(self.pid),
             })
         } else {
             None
@@ -574,10 +633,12 @@ impl ProcessMonitor {
         let child_pids = self.get_child_pids();
         let mut child_metrics = Vec::new();
 
-        for child_pid in child_pids {
-            self.sys.refresh_process(child_pid.into());
+        for child_pid in child_pids.iter() {
+            // We no longer need delays between child measurements for Linux with our new CPU sampler
+            // But we still need to refresh process info for other metrics
+            self.sys.refresh_process((*child_pid).into());
 
-            if let Some(proc) = self.sys.process(child_pid.into()) {
+            if let Some(proc) = self.sys.process((*child_pid).into()) {
                 let command = proc.name().to_string();
 
                 // Get I/O stats for child
@@ -598,11 +659,11 @@ impl ProcessMonitor {
                         )
                     } else {
                         // Show delta I/O since monitoring start
-                        match self.child_io_baselines.entry(child_pid) {
+                        match self.child_io_baselines.entry(*child_pid) {
                             std::collections::hash_map::Entry::Vacant(e) => {
                                 // First time seeing this child - establish baseline
                                 e.insert(ChildIoBaseline {
-                                    pid: child_pid,
+                                    pid: *child_pid,
                                     disk_read_bytes: current_disk_read,
                                     disk_write_bytes: current_disk_write,
                                     net_rx_bytes: current_net_rx,
@@ -628,25 +689,42 @@ impl ProcessMonitor {
                     .expect("Time went backwards")
                     .as_millis() as u64;
 
+                // Use different CPU measurement methods based on platform
+                #[cfg(target_os = "linux")]
+                let cpu_usage = self.cpu_sampler.get_cpu_usage(*child_pid).unwrap_or(0.0);
+
+                #[cfg(not(target_os = "linux"))]
+                let cpu_usage = proc.cpu_usage();
+
                 let metrics = Metrics {
                     ts_ms: child_ts_ms,
-                    cpu_usage: proc.cpu_usage(),
+                    cpu_usage,
                     mem_rss_kb: proc.memory() / 1024,
                     mem_vms_kb: proc.virtual_memory() / 1024,
                     disk_read_bytes,
                     disk_write_bytes,
                     net_rx_bytes,
                     net_tx_bytes,
-                    thread_count: get_thread_count(child_pid),
+                    thread_count: get_thread_count(*child_pid),
                     uptime_secs: proc.run_time(),
+                    cpu_core: Self::get_process_cpu_core(*child_pid),
                 };
 
                 child_metrics.push(ChildProcessMetrics {
-                    pid: child_pid,
+                    pid: *child_pid,
                     command,
                     metrics,
                 });
             }
+        }
+
+        // Cleanup stale entries in the CPU sampler
+        #[cfg(target_os = "linux")]
+        {
+            let all_pids = std::iter::once(self.pid)
+                .chain(child_pids.iter().copied())
+                .collect::<Vec<_>>();
+            self.cpu_sampler.cleanup_stale_entries(&all_pids);
         }
 
         // Create aggregated metrics
@@ -769,6 +847,34 @@ impl ProcessMonitor {
 
         stats
     }
+
+    /// Get the CPU core a process is currently running on (Linux only)
+    #[cfg(target_os = "linux")]
+    fn get_process_cpu_core(pid: usize) -> Option<u32> {
+        // Read /proc/[pid]/stat to get the last CPU the process ran on
+        let stat_path = format!("/proc/{}/stat", pid);
+        if let Ok(contents) = std::fs::read_to_string(&stat_path) {
+            // The CPU field is the 39th field in /proc/[pid]/stat
+            // Format: pid (comm) state ppid pgrp session tty_nr tpgid flags...
+            // We need to handle the command field which can contain spaces and parentheses
+            if let Some(last_paren) = contents.rfind(')') {
+                let after_comm = &contents[last_paren + 1..];
+                let fields: Vec<&str> = after_comm.split_whitespace().collect();
+                // CPU is the 37th field after the command (0-indexed)
+                if fields.len() > 36 {
+                    if let Ok(cpu) = fields[36].parse::<u32>() {
+                        return Some(cpu);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn get_process_cpu_core(_pid: usize) -> Option<u32> {
+        None // Not implemented for non-Linux platforms
+    }
 }
 
 #[cfg(test)]
@@ -777,52 +883,123 @@ mod tests {
     use std::thread;
 
     // Helper function for creating a test monitor with standard parameters
-    fn create_test_monitor(cmd: Vec<String>) -> Result<ProcessMonitor, std::io::Error> {
-        let base_interval = Duration::from_millis(100);
-        let max_interval = Duration::from_millis(1000);
-        ProcessMonitor::new(cmd, base_interval, max_interval)
+    // Test fixture for process monitoring tests
+    struct ProcessTestFixture {
+        cmd: Vec<String>,
+        base_interval: Duration,
+        max_interval: Duration,
+        ready_timeout: Duration,
     }
 
-    // Helper function for creating a test monitor from PID
+    impl ProcessTestFixture {
+        fn new(cmd: Vec<String>) -> Self {
+            Self {
+                cmd,
+                base_interval: Duration::from_millis(100),
+                max_interval: Duration::from_millis(1000),
+                ready_timeout: Duration::from_millis(500),
+            }
+        }
+
+        fn create_monitor(&self) -> Result<ProcessMonitor, std::io::Error> {
+            ProcessMonitor::new(self.cmd.clone(), self.base_interval, self.max_interval)
+        }
+
+        fn create_monitor_from_pid(&self, pid: usize) -> Result<ProcessMonitor, std::io::Error> {
+            ProcessMonitor::from_pid(pid, self.base_interval, self.max_interval)
+        }
+
+        // Create a monitor and wait until the process is reliably detected
+        fn create_and_verify_running(&self) -> Result<(ProcessMonitor, usize), std::io::Error> {
+            let mut monitor = self.create_monitor()?;
+            let pid = monitor.get_pid();
+
+            // Verify the process is running using a retry strategy
+            if !self.wait_for_condition(|| monitor.is_running()) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Process did not start or was not detected",
+                ));
+            }
+
+            Ok((monitor, pid))
+        }
+
+        // Utility method for waiting with exponential backoff
+        // Wait for a condition to become true with exponential backoff
+        // This approach is more reliable than fixed sleeps and handles
+        // timing variations in test environments
+        fn wait_for_condition<F>(&self, mut condition: F) -> bool
+        where
+            F: FnMut() -> bool,
+        {
+            let start = std::time::Instant::now();
+            let mut delay_ms = 1;
+
+            while start.elapsed() < self.ready_timeout {
+                if condition() {
+                    return true;
+                }
+
+                // Exponential backoff with a maximum delay
+                std::thread::sleep(Duration::from_millis(delay_ms));
+                delay_ms = std::cmp::min(delay_ms * 2, 50);
+            }
+
+            false
+        }
+    }
+
+    // Helper function for creating a test monitor
+    fn create_test_monitor(cmd: Vec<String>) -> Result<ProcessMonitor, std::io::Error> {
+        ProcessTestFixture::new(cmd).create_monitor()
+    }
+
+    // This function is intentionally left in place for future reference, but is currently
+    // not used directly as the fixture pattern provides better test isolation
+    #[allow(dead_code)]
     fn create_test_monitor_from_pid(pid: usize) -> Result<ProcessMonitor, std::io::Error> {
-        let base_interval = Duration::from_millis(100);
-        let max_interval = Duration::from_millis(1000);
-        ProcessMonitor::from_pid(pid, base_interval, max_interval)
+        let fixture = ProcessTestFixture {
+            cmd: vec![],
+            base_interval: Duration::from_millis(100),
+            max_interval: Duration::from_millis(1000),
+            ready_timeout: Duration::from_millis(500),
+        };
+        fixture.create_monitor_from_pid(pid)
     }
 
     // Test attaching to existing process
     #[test]
     fn test_from_pid() {
-        // Start a process and get its PID
+        // Create a test fixture with a longer-running process
         let cmd = if cfg!(target_os = "windows") {
             vec![
                 "powershell".to_string(),
                 "-Command".to_string(),
-                "Start-Sleep -Seconds 3".to_string(),
+                "Start-Sleep -Seconds 5".to_string(),
             ]
         } else {
-            vec!["sleep".to_string(), "3".to_string()]
+            vec!["sleep".to_string(), "5".to_string()]
         };
 
-        // Create a process directly
-        let mut direct_monitor = create_test_monitor(cmd).unwrap();
-        let pid = direct_monitor.get_pid();
+        let fixture = ProcessTestFixture::new(cmd);
 
-        // Now create a monitor attached to that PID
-        let pid_monitor = create_test_monitor_from_pid(pid);
+        // Create and verify the direct monitor is running
+        let (_, pid) = fixture.create_and_verify_running().unwrap();
+
+        // Create a monitor for the existing process
+        let pid_monitor = fixture.create_monitor_from_pid(pid);
         assert!(
             pid_monitor.is_ok(),
             "Should be able to attach to running process"
         );
 
-        // Both monitors should report the process as running
+        let mut pid_monitor = pid_monitor.unwrap();
+
+        // Verify the PID monitor can detect the process
         assert!(
-            direct_monitor.is_running(),
-            "Direct monitor should show process running"
-        );
-        assert!(
-            pid_monitor.unwrap().is_running(),
-            "PID monitor should show process running"
+            fixture.wait_for_condition(|| pid_monitor.is_running()),
+            "PID monitor should detect the running process"
         );
     }
 
@@ -848,31 +1025,31 @@ mod tests {
     #[test]
     fn test_is_running() {
         // Test with a short-lived process
-        let cmd = vec!["echo".to_string(), "hello".to_string()];
-        let mut monitor = create_test_monitor(cmd).unwrap();
+        let fixture = ProcessTestFixture::new(vec!["echo".to_string(), "hello".to_string()]);
+        let mut monitor = fixture.create_monitor().unwrap();
 
-        // Process may complete quickly, so give it a moment to finish
-        thread::sleep(Duration::from_millis(50));
-
-        // Check if the echo process finished (it should)
-        let still_running = monitor.is_running();
-        assert!(!still_running, "Short process should have terminated");
-
-        // Test with a longer running process
-        let cmd = vec!["sleep".to_string(), "1".to_string()];
-        let mut monitor = create_test_monitor(cmd).unwrap();
-
-        // Check immediately - should be running
+        // Wait for the process to terminate
         assert!(
-            monitor.is_running(),
-            "Sleep process should be running initially"
+            fixture.wait_for_condition(|| !monitor.is_running()),
+            "Short-lived process should terminate"
         );
 
-        // Wait for it to complete
-        thread::sleep(Duration::from_secs(2));
+        // Test with a longer running process
+        let fixture = ProcessTestFixture {
+            cmd: vec!["sleep".to_string(), "1".to_string()],
+            base_interval: Duration::from_millis(100),
+            max_interval: Duration::from_millis(1000),
+            ready_timeout: Duration::from_secs(3), // Longer timeout for this test
+        };
+        let (mut monitor, _) = fixture.create_and_verify_running().unwrap();
+
+        // Verify it's running (this is already done by create_and_verify_running, but we're being explicit)
+        assert!(monitor.is_running(), "Process should be running initially");
+
+        // Now wait for it to terminate
         assert!(
-            !monitor.is_running(),
-            "Sleep process should have terminated"
+            fixture.wait_for_condition(|| !monitor.is_running()),
+            "Process should terminate within the timeout period"
         );
     }
 
