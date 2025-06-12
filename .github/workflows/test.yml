@@ -59,11 +59,15 @@ jobs:
 
       # Run Rust tests with coverage
       - name: Run Rust tests with coverage
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         run: |
           echo "Running Rust tests with coverage on Linux"
           cargo llvm-cov --lcov --output-path lcov.info
 
       - name: Build and install Python package
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         run: |
           pixi run develop
 
@@ -119,6 +123,8 @@ jobs:
           python -m pip install maturin twine pytest
 
       - name: Build wheels
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         run: |
           maturin build --release
 
@@ -129,7 +135,7 @@ jobs:
           path: target/wheels/*.whl
 
   test-wheels:
-    name: Test wheels on ${{ matrix.os }} (py${matrix.python-version})
+    name: Test wheels on ${{ matrix.os }} (py${{ matrix.python-version }})
     needs: build-wheels
     runs-on: ${{ matrix.os }}
     strategy:
