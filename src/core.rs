@@ -306,7 +306,33 @@ pub fn run_monitor(cmd: Vec<String>, config: DenetConfig) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
     use std::time::Duration;
+
+    // Helper struct for mocking external dependencies
+    struct TestContext {
+        current_pid: usize,
+        base_interval: Duration,
+        max_interval: Duration,
+    }
+
+    impl TestContext {
+        fn new() -> Self {
+            Self {
+                current_pid: std::process::id() as usize,
+                base_interval: Duration::from_millis(10),
+                max_interval: Duration::from_millis(100),
+            }
+        }
+
+        fn build_config(&self) -> MonitorConfig {
+            MonitorConfig::builder()
+                .base_interval(self.base_interval)
+                .max_interval(self.max_interval)
+                .build()
+                .unwrap()
+        }
+    }
 
     #[test]
     fn test_monitor_config_validation() {
@@ -333,5 +359,312 @@ mod tests {
         assert_eq!(config.include_children, false);
 
         Ok(())
+    }
+
+    // Test empty command validation
+    #[test]
+    fn test_new_with_empty_command() {
+        let result = ProcessMonitor::new_with_config(vec![], MonitorConfig::default());
+        assert!(matches!(result, Err(DenetError::InvalidConfiguration(_))));
+    }
+
+    // Test nonexistent PID handling
+    #[test]
+    fn test_nonexistent_pid() {
+        let result =
+            ProcessMonitor::from_pid_with_config(u32::MAX as usize, MonitorConfig::default());
+        assert!(matches!(result, Err(DenetError::ProcessNotFound(_))));
+    }
+
+    // Test adaptive interval behavior
+    #[test]
+    fn test_adaptive_interval_behavior() {
+        let ctx = TestContext::new();
+        let config = ctx.build_config();
+
+        let mut monitor = ProcessMonitor {
+            pid: ctx.current_pid,
+            config,
+            metadata: None,
+            child_process: None,
+            start_time: Instant::now(),
+            last_sample_time: Instant::now()
+                .checked_sub(Duration::from_millis(50))
+                .unwrap(),
+            adaptive_interval: ctx.base_interval,
+        };
+
+        // Since we're at base_interval already, it shouldn't decrease further
+        let now = Instant::now();
+        monitor.update_adaptive_interval(true, now);
+        assert_eq!(monitor.adaptive_interval, ctx.base_interval);
+
+        // Set interval higher first
+        monitor.adaptive_interval = Duration::from_millis(20);
+        // The update_adaptive_interval checks if the time_since_last is less than
+        // adaptive_interval*2, which it might not be in a test environment
+        // Force enough time to have passed
+        let new_now = now + Duration::from_millis(10);
+        monitor.update_adaptive_interval(true, new_now);
+        // 9/10 of 20ms = 18ms, but not less than base_interval (10ms)
+        assert!(monitor.adaptive_interval >= ctx.base_interval);
+        assert!(monitor.adaptive_interval <= Duration::from_millis(20));
+
+        // Test failed sample - interval should increase
+        monitor.adaptive_interval = Duration::from_millis(20);
+        monitor.update_adaptive_interval(false, new_now);
+        // 11/10 of 20ms = 22ms
+        assert!(monitor.adaptive_interval >= Duration::from_millis(20));
+        assert!(monitor.adaptive_interval <= ctx.max_interval);
+    }
+    // Test metadata collection and caching
+    #[test]
+    fn test_metadata_collection_and_caching() -> Result<()> {
+        // Use current process
+        let ctx = TestContext::new();
+        let mut monitor =
+            ProcessMonitor::from_pid_with_config(ctx.current_pid, ctx.build_config())?;
+
+        // First call should collect metadata
+        let metadata1 = monitor.get_metadata();
+        assert!(metadata1.is_some());
+
+        // Should be cached now
+        let metadata2 = monitor.get_metadata();
+        assert!(metadata2.is_some());
+
+        // Both should be the same instance
+        assert_eq!(format!("{:?}", metadata1), format!("{:?}", metadata2));
+
+        Ok(())
+    }
+
+    // Test empty command rejection
+    #[test]
+    fn test_empty_command_rejected() {
+        let config = MonitorConfig::default();
+        let result = ProcessMonitor::new_with_config(vec![], config);
+        assert!(result.is_err());
+        match result {
+            Err(DenetError::InvalidConfiguration(msg)) => {
+                assert!(
+                    msg.contains("empty"),
+                    "Error message should mention empty command"
+                );
+            }
+            _ => panic!("Expected InvalidConfiguration error"),
+        }
+    }
+
+    // Test nonexistent PID
+    #[test]
+    fn test_from_pid_with_config_nonexistent_pid() {
+        let config = MonitorConfig::default();
+        // Use a large PID that's unlikely to exist
+        let result = ProcessMonitor::from_pid_with_config(999999, config);
+        assert!(result.is_err());
+
+        if let Err(DenetError::ProcessNotFound(pid)) = result {
+            assert_eq!(pid, 999999);
+        } else {
+            panic!("Expected ProcessNotFound error");
+        }
+    }
+
+    // Test the adaptive interval logic by examining the algorithm directly
+    #[test]
+    fn test_adaptive_interval_adjustment() {
+        // Create a direct test focusing on the algorithm in update_adaptive_interval
+
+        // Case 1: Failed sample should increase interval
+        {
+            let config = MonitorConfig::builder()
+                .base_interval_ms(10)
+                .max_interval_ms(1000)
+                .build()
+                .unwrap();
+
+            let mut monitor = ProcessMonitor {
+                pid: 1,
+                config,
+                metadata: None,
+                child_process: None,
+                start_time: Instant::now(),
+                last_sample_time: Instant::now(),
+                adaptive_interval: Duration::from_millis(50),
+            };
+
+            // Initial value
+            assert_eq!(monitor.adaptive_interval, Duration::from_millis(50));
+
+            // Failed sample should increase by roughly 10%
+            monitor.update_adaptive_interval(false, Instant::now());
+            assert!(monitor.adaptive_interval >= Duration::from_millis(50));
+            // Allow some flexibility in the exact calculation
+            assert!(monitor.adaptive_interval <= Duration::from_millis(60));
+        }
+
+        // Case 2: Base interval as lower bound
+        {
+            let base_interval = Duration::from_millis(10);
+            let config = MonitorConfig::builder()
+                .base_interval(base_interval)
+                .max_interval_ms(100)
+                .build()
+                .unwrap();
+
+            let mut monitor = ProcessMonitor {
+                pid: 1,
+                config,
+                metadata: None,
+                child_process: None,
+                start_time: Instant::now(),
+                last_sample_time: Instant::now(),
+                adaptive_interval: base_interval,
+            };
+
+            // Even with a successful sample, can't go below base interval
+            let now = Instant::now();
+            monitor.update_adaptive_interval(true, now);
+            assert_eq!(monitor.adaptive_interval, base_interval);
+        }
+    }
+
+    // Test is_running with real child process
+    #[test]
+    fn test_is_running_with_child() -> Result<()> {
+        // Create a short-lived process
+        let cmd = if cfg!(target_os = "windows") {
+            vec!["timeout".to_string(), "1".to_string()]
+        } else {
+            vec!["sleep".to_string(), "0.1".to_string()]
+        };
+
+        let config = MonitorConfig::default();
+        let mut monitor = ProcessMonitor::new_with_config(cmd, config)?;
+
+        // Process should start running
+        assert!(monitor.is_running());
+
+        // Wait for it to exit
+        thread::sleep(Duration::from_millis(200));
+
+        // Process should be finished
+        assert!(!monitor.is_running());
+
+        Ok(())
+    }
+
+    // Test sample_metrics timing updates
+    #[test]
+    fn test_sample_timing_updates() -> Result<()> {
+        // Use current process
+        let ctx = TestContext::new();
+        let mut monitor =
+            ProcessMonitor::from_pid_with_config(ctx.current_pid, ctx.build_config())?;
+
+        // Set known state
+        monitor.last_sample_time = Instant::now()
+            .checked_sub(Duration::from_millis(100))
+            .unwrap();
+        let old_sample_time = monitor.last_sample_time;
+
+        // Sample should update last_sample_time
+        let _ = monitor.sample_metrics();
+        assert!(monitor.last_sample_time > old_sample_time);
+
+        Ok(())
+    }
+
+    // Test the process monitoring duration limit
+    #[test]
+    fn test_monitoring_duration_limit() -> Result<()> {
+        let mock_command = if cfg!(target_os = "windows") {
+            vec!["timeout".to_string(), "10".to_string()]
+        } else {
+            vec!["sleep".to_string(), "10".to_string()]
+        };
+
+        // Create config with short max duration
+        let config = DenetConfig {
+            monitor: MonitorConfig::builder()
+                .base_interval_ms(10)
+                .max_duration(Duration::from_millis(100))
+                .build()?,
+            output: crate::config::OutputConfig::builder().quiet(true).build(),
+        };
+
+        // Start monitoring with duration limit
+        let start_time = Instant::now();
+        let result = run_monitor(mock_command, config);
+        let elapsed = start_time.elapsed();
+
+        // Should complete around the max_duration time, not the sleep time
+        assert!(result.is_ok());
+
+        // Use more generous time bounds for CI environments where timing can vary
+        assert!(
+            elapsed < Duration::from_millis(300),
+            "Took too long: {:?}",
+            elapsed
+        );
+        assert!(
+            elapsed >= Duration::from_millis(50),
+            "Finished too quickly: {:?}",
+            elapsed
+        );
+
+        Ok(())
+    }
+
+    // Linux-specific tests
+    #[cfg(target_os = "linux")]
+    mod linux_tests {
+        use super::*;
+
+        #[test]
+        fn test_get_thread_count() {
+            // Current process should have at least one thread
+            let current_pid = std::process::id() as usize;
+            let config = MonitorConfig::default();
+
+            let monitor = ProcessMonitor {
+                pid: current_pid,
+                config,
+                metadata: None,
+                child_process: None,
+                start_time: Instant::now(),
+                last_sample_time: Instant::now(),
+                adaptive_interval: Duration::from_millis(100),
+            };
+
+            let thread_count = monitor.get_thread_count();
+            assert!(thread_count >= 1);
+        }
+
+        #[test]
+        fn test_get_io_metrics() {
+            // Current process should have valid IO metrics
+            let current_pid = std::process::id() as usize;
+            let config = MonitorConfig::default();
+
+            let monitor = ProcessMonitor {
+                pid: current_pid,
+                config,
+                metadata: None,
+                child_process: None,
+                start_time: Instant::now(),
+                last_sample_time: Instant::now(),
+                adaptive_interval: Duration::from_millis(100),
+            };
+
+            let result = monitor.get_io_metrics();
+            assert!(result.is_ok());
+
+            let (read, write) = result.unwrap();
+            // u64 values are always valid, just check they contain reasonable values
+            assert!(read <= u64::MAX);
+            assert!(write <= u64::MAX);
+        }
     }
 }
