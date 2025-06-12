@@ -22,6 +22,10 @@ pub enum DenetError {
     InvalidConfiguration(String),
     /// Platform-specific operation not supported
     PlatformNotSupported(String),
+    /// eBPF initialization or operation errors
+    EbpfInitError(String),
+    /// eBPF not supported on this platform
+    EbpfNotSupported(String),
     /// Generic error with message
     Other(String),
 }
@@ -36,6 +40,8 @@ impl fmt::Display for DenetError {
             DenetError::Serialization(err) => write!(f, "Serialization error: {}", err),
             DenetError::InvalidConfiguration(msg) => write!(f, "Invalid configuration: {}", msg),
             DenetError::PlatformNotSupported(msg) => write!(f, "Platform not supported: {}", msg),
+            DenetError::EbpfInitError(msg) => write!(f, "eBPF initialization error: {}", msg),
+            DenetError::EbpfNotSupported(msg) => write!(f, "eBPF not supported: {}", msg),
             DenetError::Other(msg) => write!(f, "Error: {}", msg),
         }
     }
@@ -95,6 +101,8 @@ impl From<DenetError> for pyo3::PyErr {
             DenetError::ProcessAccessDenied(_) => PyPermissionError::new_err(err.to_string()),
             DenetError::InvalidConfiguration(_) => PyValueError::new_err(err.to_string()),
             DenetError::PlatformNotSupported(_) => PyNotImplementedError::new_err(err.to_string()),
+            DenetError::EbpfInitError(_) => PyRuntimeError::new_err(err.to_string()),
+            DenetError::EbpfNotSupported(_) => PyNotImplementedError::new_err(err.to_string()),
             _ => PyRuntimeError::new_err(err.to_string()),
         }
     }

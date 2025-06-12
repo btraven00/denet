@@ -108,6 +108,15 @@ pub struct AggregatedMetrics {
     pub thread_count: usize,
     pub process_count: usize,
     pub uptime_secs: u64,
+    
+    /// eBPF profiling data (optional)
+    #[cfg(feature = "ebpf")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ebpf: Option<crate::ebpf::EbpfMetrics>,
+    
+    #[cfg(not(feature = "ebpf"))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ebpf: Option<serde_json::Value>,
 }
 
 impl AggregatedMetrics {
@@ -152,6 +161,7 @@ impl AggregatedMetrics {
             thread_count,
             process_count: metrics.len(),
             uptime_secs: max_uptime,
+            ebpf: None, // eBPF metrics are added separately
         }
     }
 }
@@ -175,6 +185,7 @@ impl Default for AggregatedMetrics {
             thread_count: 0,
             process_count: 0,
             uptime_secs: 0,
+            ebpf: None,
         }
     }
 }

@@ -1,0 +1,11 @@
+[Unit]
+Description=Set permissions on tracefs for eBPF access
+After=syslog.target network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c "mount -o remount,mode=755 /sys/kernel/debug && chmod -R g+rwx /sys/kernel/debug/tracing && chgrp -R tracing /sys/kernel/debug/tracing"
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

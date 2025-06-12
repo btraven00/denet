@@ -31,6 +31,10 @@ pub mod monitor;
 #[cfg(target_os = "linux")]
 pub mod cpu_sampler;
 
+// eBPF profiling (optional feature)
+#[cfg(feature = "ebpf")]
+pub mod ebpf;
+
 // Legacy process_monitor for backward compatibility
 // TODO: Remove after migration is complete
 pub mod process_monitor;

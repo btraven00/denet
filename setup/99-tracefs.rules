@@ -1,0 +1,23 @@
+# udev rules for tracefs permissions
+# This file allows non-root users in the 'tracing' group
+# to access the tracefs filesystem for eBPF operations
+
+# Make /sys/kernel/debug accessible with proper permissions
+SUBSYSTEM=="debug", KERNEL=="tracing", GROUP="tracing", MODE="0750"
+SUBSYSTEM=="debug", KERNEL=="debug", MODE="0755"
+
+# Set permissions for various tracepoint directories
+SUBSYSTEM=="debug", KERNEL=="tracing/events", GROUP="tracing", MODE="0750"
+SUBSYSTEM=="debug", KERNEL=="tracing/events/syscalls", GROUP="tracing", MODE="0750"
+
+# Allow access to specific syscall tracepoints commonly used by eBPF programs
+SUBSYSTEM=="debug", KERNEL=="tracing/events/syscalls/sys_enter_*", GROUP="tracing", MODE="0750"
+SUBSYSTEM=="debug", KERNEL=="tracing/events/syscalls/sys_exit_*", GROUP="tracing", MODE="0750"
+
+# Allow reading tracepoint IDs
+SUBSYSTEM=="debug", KERNEL=="tracing/events/syscalls/*/id", GROUP="tracing", MODE="0640"
+
+# Allow access to other commonly used tracepoints
+SUBSYSTEM=="debug", KERNEL=="tracing/events/raw_syscalls", GROUP="tracing", MODE="0750"
+SUBSYSTEM=="debug", KERNEL=="tracing/events/sched", GROUP="tracing", MODE="0750"
+SUBSYSTEM=="debug", KERNEL=="tracing/events/task", GROUP="tracing", MODE="0750"

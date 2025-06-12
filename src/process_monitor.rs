@@ -122,6 +122,12 @@ pub struct ProcessMonitor {
     io_baseline: Option<IoBaseline>,
     child_io_baselines: std::collections::HashMap<usize, ChildIoBaseline>,
     since_process_start: bool,
+    _include_children: bool,
+    _max_duration: Option<Duration>,
+    enable_ebpf: bool,
+    debug_mode: bool,
+    #[cfg(feature = "ebpf")]
+    ebpf_tracker: Option<crate::ebpf::SyscallTracker>,
     last_refresh_time: Instant,
     cpu_sampler: crate::cpu_sampler::CpuSampler,
 }
@@ -182,9 +188,15 @@ impl ProcessMonitor {
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards")
                 .as_millis() as u64,
+            _include_children: true,
+            _max_duration: None,
+            debug_mode: false,
             io_baseline: None,
             child_io_baselines: std::collections::HashMap::new(),
             since_process_start,
+            enable_ebpf: false,
+            #[cfg(feature = "ebpf")]
+            ebpf_tracker: None,
             last_refresh_time: now,
             #[cfg(target_os = "linux")]
             cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
@@ -241,7 +253,7 @@ impl ProcessMonitor {
         let now = Instant::now();
         Ok(Self {
             child: None,
-            pid,
+            pid: pid as usize,
             sys,
             base_interval,
             max_interval,
@@ -250,13 +262,148 @@ impl ProcessMonitor {
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards")
                 .as_millis() as u64,
+            _include_children: true,
+            _max_duration: None,
+            debug_mode: false,
             io_baseline: None,
             child_io_baselines: std::collections::HashMap::new(),
             since_process_start,
+            enable_ebpf: false,
+            #[cfg(feature = "ebpf")]
+            ebpf_tracker: None,
             last_refresh_time: now,
             #[cfg(target_os = "linux")]
             cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
         })
+    }
+
+    /// Set debug mode for verbose output
+    pub fn set_debug_mode(&mut self, debug: bool) {
+        self.debug_mode = debug;
+
+        #[cfg(feature = "ebpf")]
+        unsafe {
+            crate::ebpf::debug::set_debug_mode(debug);
+        }
+
+        if debug {
+            log::info!("Debug mode enabled - verbose output will be shown");
+        }
+    }
+
+    /// Enable eBPF profiling for this monitor
+    #[cfg(feature = "ebpf")]
+    pub fn enable_ebpf(&mut self) -> crate::error::Result<()> {
+        if !self.enable_ebpf {
+            log::info!("Attempting to enable eBPF profiling");
+            if self.debug_mode {
+                println!("DEBUG: Attempting to enable eBPF profiling");
+
+                // Print current process info
+                println!(
+                    "DEBUG: Process monitor running with PID: {}",
+                    std::process::id()
+                );
+                println!("DEBUG: Monitoring target PID: {}", self.pid);
+
+                // Check for eBPF feature compilation
+                println!("DEBUG: eBPF feature is enabled at compile time");
+            }
+
+            // Collect all PIDs in the process tree
+            let mut pids = vec![self.pid as u32];
+
+            // Add child PIDs
+            self.sys.refresh_processes(ProcessesToUpdate::All, true);
+            if let Some(_parent_proc) = self.sys.process(Pid::from_u32(self.pid as u32)) {
+                for (child_pid, _) in self.sys.processes() {
+                    if let Some(child_proc) = self.sys.process(*child_pid) {
+                        if let Some(parent_pid) = child_proc.parent() {
+                            if parent_pid == Pid::from_u32(self.pid as u32) {
+                                pids.push(child_pid.as_u32());
+                            }
+                        }
+                    }
+                }
+            }
+
+            if self.debug_mode {
+                println!(
+                    "DEBUG: Collected {} PIDs to monitor: {:?}",
+                    pids.len(),
+                    pids
+                );
+            }
+            log::info!("Collected {} PIDs to monitor", pids.len());
+
+            // Check system readiness for eBPF
+            if self.debug_mode {
+                let readiness_check = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("echo 'Checking eBPF prerequisites from process_monitor:'; \
+                        echo -n 'Kernel version: '; uname -r; \
+                        echo -n 'Debugfs mounted: '; mount | grep -q debugfs && echo 'YES' || echo 'NO'; \
+                        echo -n 'Tracefs accessible: '; [ -d /sys/kernel/debug/tracing ] && echo 'YES' || echo 'NO';")
+                    .output();
+
+                if let Ok(output) = readiness_check {
+                    let report = String::from_utf8_lossy(&output.stdout);
+                    println!("DEBUG: {}", report);
+                    log::info!("eBPF readiness: {}", report);
+                }
+            }
+
+            // Initialize eBPF tracker
+            match crate::ebpf::SyscallTracker::new(pids) {
+                Ok(tracker) => {
+                    self.ebpf_tracker = Some(tracker);
+                    self.enable_ebpf = true;
+                    log::info!("✅ eBPF profiling successfully enabled");
+                    if self.debug_mode {
+                        println!("DEBUG: eBPF profiling successfully enabled");
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    log::warn!("Failed to enable eBPF: {}", e);
+                    if self.debug_mode {
+                        println!("DEBUG: Failed to enable eBPF: {}", e);
+
+                        // Additional diagnostics
+                        if let Ok(output) = std::process::Command::new("sh")
+                            .arg("-c")
+                            .arg("dmesg | grep -i bpf | tail -5")
+                            .output()
+                        {
+                            let kernel_logs = String::from_utf8_lossy(&output.stdout);
+                            if !kernel_logs.trim().is_empty() {
+                                println!("DEBUG: Recent kernel BPF logs:\n{}", kernel_logs);
+                                log::warn!("Recent kernel BPF logs:\n{}", kernel_logs);
+                            }
+                        }
+                    }
+
+                    Err(e)
+                }
+            }
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Enable eBPF profiling for this monitor (no-op on non-eBPF builds)
+    #[cfg(not(feature = "ebpf"))]
+    pub fn enable_ebpf(&mut self) -> crate::error::Result<()> {
+        log::warn!("eBPF feature not enabled at compile time");
+        if self.debug_mode {
+            println!(
+                "DEBUG: eBPF feature not enabled at compile time. Cannot enable eBPF profiling."
+            );
+            println!("DEBUG: To enable eBPF support, rebuild with: cargo build --features ebpf");
+        }
+        Err(crate::error::DenetError::EbpfNotSupported(
+            "eBPF feature not enabled. Build with --features ebpf".to_string(),
+        ))
     }
 
     pub fn adaptive_interval(&self) -> Duration {
@@ -613,6 +760,7 @@ impl ProcessMonitor {
                 thread_count: parent.thread_count,
                 process_count: 1, // Parent
                 uptime_secs: parent.uptime_secs,
+                ebpf: None, // Will be populated below if eBPF is enabled
             };
 
             // Add child metrics
@@ -626,6 +774,42 @@ impl ProcessMonitor {
                 agg.net_tx_bytes += child.metrics.net_tx_bytes;
                 agg.thread_count += child.metrics.thread_count;
                 agg.process_count += 1;
+            }
+
+            // Collect eBPF metrics if enabled
+            #[cfg(feature = "ebpf")]
+            if self.enable_ebpf {
+                if let Some(ref mut tracker) = self.ebpf_tracker {
+                    // Update PIDs in case the process tree changed
+                    let all_pids: Vec<u32> = std::iter::once(self.pid as u32)
+                        .chain(child_pids.iter().map(|&pid| pid as u32))
+                        .collect();
+
+                    if let Err(e) = tracker.update_pids(all_pids) {
+                        log::warn!("Failed to update eBPF PIDs: {}", e);
+                    }
+
+                    // Get eBPF metrics with enhanced analysis
+                    let mut ebpf_metrics = tracker.get_metrics();
+
+                    // Add enhanced analysis if we have syscall data
+                    #[cfg(feature = "ebpf")]
+                    if let Some(ref mut syscalls) = ebpf_metrics.syscalls {
+                        let elapsed_time = (tree_ts_ms - self.t0_ms) as f64 / 1000.0;
+                        syscalls.analysis = Some(crate::ebpf::metrics::generate_syscall_analysis(
+                            syscalls,
+                            agg.cpu_usage,
+                            elapsed_time,
+                        ));
+                    }
+
+                    agg.ebpf = Some(ebpf_metrics);
+                }
+            }
+
+            #[cfg(not(feature = "ebpf"))]
+            {
+                // eBPF is already None from initialization
             }
 
             Some(agg)

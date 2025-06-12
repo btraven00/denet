@@ -55,6 +55,8 @@ pub struct MonitorConfig {
     pub include_children: bool,
     /// Maximum monitoring duration (None for unlimited)
     pub max_duration: Option<Duration>,
+    /// Enable eBPF profiling
+    pub enable_ebpf: bool,
 }
 
 impl Default for MonitorConfig {
@@ -65,6 +67,7 @@ impl Default for MonitorConfig {
             since_process_start: false,
             include_children: true,
             max_duration: None,
+            enable_ebpf: false,
         }
     }
 }
@@ -133,6 +136,7 @@ pub struct MonitorConfigBuilder {
     since_process_start: Option<bool>,
     include_children: Option<bool>,
     max_duration: Option<Duration>,
+    enable_ebpf: Option<bool>,
 }
 
 impl MonitorConfigBuilder {
@@ -177,6 +181,11 @@ impl MonitorConfigBuilder {
         }
         self
     }
+    
+    pub fn enable_ebpf(mut self, enable: bool) -> Self {
+        self.enable_ebpf = Some(enable);
+        self
+    }
 
     pub fn build(self) -> Result<MonitorConfig> {
         let config = MonitorConfig {
@@ -185,6 +194,7 @@ impl MonitorConfigBuilder {
             since_process_start: self.since_process_start.unwrap_or(false),
             include_children: self.include_children.unwrap_or(true),
             max_duration: self.max_duration,
+            enable_ebpf: self.enable_ebpf.unwrap_or(false),
         };
         config.validate()?;
         Ok(config)

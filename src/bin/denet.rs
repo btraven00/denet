@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+#[cfg(feature = "ebpf")]
+use denet::ebpf::debug;
 use denet::error::Result;
 use denet::monitor::{AggregatedMetrics, Metrics, Summary, SummaryGenerator};
 use denet::process_monitor::ProcessMonitor;
@@ -11,6 +13,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
+use tabled::{
+    builder::Builder,
+    settings::{object::Rows, Alignment, Modify, Style},
+};
 
 /// Dynamic Explorer of Nested Executions Tool (DENET)
 #[derive(Parser, Debug)]
@@ -59,6 +65,18 @@ struct Args {
     /// Write statistics to file on completion
     #[clap(long, value_name = "FILE")]
     stats: Option<PathBuf>,
+
+    /// Enable eBPF profiling (requires root privileges or CAP_BPF capability)
+    #[clap(long)]
+    enable_ebpf: bool,
+
+    /// Enable debug mode with verbose output (especially for eBPF diagnostics)
+    #[clap(long)]
+    debug: bool,
+
+    /// Disable polling - wait until process completion for pure event-driven collection
+    #[clap(long)]
+    no_polling: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -152,7 +170,7 @@ fn main() -> Result<()> {
                 args.since_process_start,
             ) {
                 Ok(m) => {
-                    if !args.quiet {
+                    if args.debug && !args.quiet {
                         println!("Monitoring process: {}", command.join(" ").cyan());
                     }
                     m
@@ -186,6 +204,52 @@ fn main() -> Result<()> {
             }
         }
     };
+
+    // Set debug mode if requested
+    if args.debug {
+        monitor.set_debug_mode(true);
+        if !args.quiet {
+            println!("Debug mode enabled - verbose output will be shown");
+        }
+    }
+
+    // Set debug mode for eBPF if requested
+    #[cfg(feature = "ebpf")]
+    {
+        if args.debug && !args.quiet {
+            println!("Debug mode enabled for eBPF profiling - verbose output will be shown");
+            // Set debug mode in the eBPF module
+            unsafe {
+                debug::set_debug_mode(args.debug);
+            }
+        } else {
+            unsafe {
+                debug::set_debug_mode(args.debug);
+            }
+        }
+    }
+
+    // Enable eBPF profiling if requested
+    if args.enable_ebpf {
+        if let Err(e) = monitor.enable_ebpf() {
+            if !args.quiet {
+                eprintln!("Warning: Failed to enable eBPF profiling: {}", e);
+                eprintln!("Hint: Try running with sudo or setting CAP_BPF capability:");
+                eprintln!("  sudo setcap cap_bpf+ep target/release/denet");
+
+                if args.debug {
+                    eprintln!("\nFor detailed diagnostics, run: cargo run --bin ebpf_diag --features ebpf");
+                    eprintln!("(Add --debug flag for even more verbose output)");
+                } else {
+                    eprintln!("Run with --debug flag for more detailed error information");
+                }
+
+                eprintln!("Continuing without eBPF profiling...");
+            }
+        } else if !args.quiet {
+            println!("eBPF profiling enabled");
+        }
+    }
 
     // Setup signal handling for clean shutdown
     let running = Arc::new(AtomicBool::new(true));
@@ -243,151 +307,188 @@ fn main() -> Result<()> {
         }
     }
 
-    // Monitoring loop
-    while monitor.is_running() && running.load(Ordering::SeqCst) {
-        // Check timeout
-        if let Some(timeout_duration) = timeout {
-            if start_time.elapsed() >= timeout_duration {
-                if !args.quiet {
-                    println!("\nTimeout reached after {} seconds", args.duration);
-                }
-                break;
-            }
+    // Check for no-polling mode
+    if args.no_polling {
+        if !args.quiet {
+            println!("🚀 Pure event-driven mode: eBPF collecting syscalls until completion...");
         }
 
-        if args.exclude_children {
-            // Monitor only the main process
-            if let Some(metrics) = monitor.sample_metrics() {
-                metrics_count += 1;
-
-                // Store metrics for final summary
-                results.push(metrics.clone());
-
-                // Format and display metrics
-                if args.json {
-                    let json = serde_json::to_string(&metrics).unwrap();
-                    if let Some(file) = &mut out_file {
-                        writeln!(file, "{}", json)?;
-                    }
+        // Simple wait loop without any output
+        while monitor.is_running() && running.load(Ordering::SeqCst) {
+            if let Some(timeout_duration) = timeout {
+                if start_time.elapsed() >= timeout_duration {
                     if !args.quiet {
-                        if update_in_place {
-                            // Clear line and print new content with spinner and elapsed time
-                            let spinner = progress_chars[progress_index % progress_chars.len()];
-                            let elapsed = start_time.elapsed().as_secs();
-                            print!(
-                                "\r{}\r{} [{}s] {}",
-                                " ".repeat(terminal_width.saturating_sub(1)),
-                                spinner.to_string().cyan(),
-                                elapsed.to_string().bright_black(),
-                                json
-                            );
-                            io::stdout().flush()?;
-                            needs_newline_on_exit = true;
-                            progress_index += 1;
-                        } else {
-                            println!("{}", json);
-                        }
+                        println!("\nTimeout reached after {} seconds", args.duration);
                     }
-                } else {
-                    let formatted = format_metrics(&metrics);
-                    if let Some(file) = &mut out_file {
-                        writeln!(file, "{}", serde_json::to_string(&metrics).unwrap())?;
-                    }
-                    if !args.quiet {
-                        if update_in_place {
-                            // Use compact format for in-place updates
-                            let formatted_compact = format_metrics_compact(&metrics);
-                            let spinner = progress_chars[progress_index % progress_chars.len()];
-                            let elapsed = start_time.elapsed().as_secs();
-                            print!(
-                                "\r{}\r{} [{}s] {}",
-                                " ".repeat(terminal_width.saturating_sub(1)),
-                                spinner.to_string().cyan(),
-                                elapsed.to_string().bright_black(),
-                                formatted_compact
-                            );
-                            io::stdout().flush()?;
-                            needs_newline_on_exit = true;
-                            progress_index += 1;
-                        } else {
-                            println!("{}", formatted);
-                        }
-                    }
+                    break;
                 }
             }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        // Generate final summary
+        if !args.quiet {
+            println!("✅ Process completed. Generating comprehensive summary...");
+        }
+
+        let final_tree_metrics = monitor.sample_tree_metrics();
+        if args.json {
+            let json = serde_json::to_string(&final_tree_metrics).unwrap();
+            println!("{}", json);
         } else {
-            // Monitor process tree (default behavior)
-            let tree_metrics = monitor.sample_tree_metrics();
-            if let Some(agg_metrics) = tree_metrics.aggregated.as_ref() {
-                metrics_count += 1;
-
-                // Store aggregated metrics for final summary
-                // Convert aggregated metrics to regular metrics for storage compatibility
-                let storage_metrics = convert_aggregated_to_metrics(agg_metrics);
-                results.push(storage_metrics);
-
-                // Also store for specialized aggregated stats
-                aggregated_metrics.push(agg_metrics.clone());
-
-                // Format and display tree metrics
-                if args.json {
-                    let json = serde_json::to_string(&tree_metrics).unwrap();
-                    if let Some(file) = &mut out_file {
-                        writeln!(file, "{}", json)?;
-                    }
+            if let Some(agg) = final_tree_metrics.aggregated {
+                results.push(convert_aggregated_to_metrics(&agg));
+                metrics_count = 1;
+            }
+        }
+    } else {
+        // Regular adaptive polling mode
+        while monitor.is_running() && running.load(Ordering::SeqCst) {
+            // Check timeout
+            if let Some(timeout_duration) = timeout {
+                if start_time.elapsed() >= timeout_duration {
                     if !args.quiet {
-                        if update_in_place {
-                            // For in-place updates, show just aggregated metrics
-                            let agg_json = serde_json::to_string(&agg_metrics).unwrap();
-                            let spinner = progress_chars[progress_index % progress_chars.len()];
-                            let elapsed = start_time.elapsed().as_secs();
-                            print!(
-                                "\r{}\r{} [{}s] {}",
-                                " ".repeat(terminal_width.saturating_sub(1)),
-                                spinner.to_string().cyan(),
-                                elapsed.to_string().bright_black(),
-                                agg_json
-                            );
-                            io::stdout().flush()?;
-                            needs_newline_on_exit = true;
-                            progress_index += 1;
-                        } else {
-                            println!("{}", json);
+                        println!("\nTimeout reached after {} seconds", args.duration);
+                    }
+                    break;
+                }
+            }
+
+            if args.exclude_children {
+                // Monitor only the main process
+                if let Some(metrics) = monitor.sample_metrics() {
+                    metrics_count += 1;
+
+                    // Store metrics for final summary
+                    results.push(metrics.clone());
+
+                    // Format and display metrics
+                    if args.json {
+                        let json = serde_json::to_string(&metrics).unwrap();
+                        if let Some(file) = &mut out_file {
+                            writeln!(file, "{}", json)?;
+                        }
+                        if !args.quiet {
+                            if update_in_place {
+                                // Clear line and print new content with spinner and elapsed time
+                                let spinner = progress_chars[progress_index % progress_chars.len()];
+                                let elapsed = start_time.elapsed().as_secs();
+                                print!(
+                                    "\r{}\r{} [{}s] {}",
+                                    " ".repeat(terminal_width.saturating_sub(1)),
+                                    spinner.to_string().cyan(),
+                                    elapsed.to_string().bright_black(),
+                                    json
+                                );
+                                io::stdout().flush()?;
+                                needs_newline_on_exit = true;
+                                progress_index += 1;
+                            } else {
+                                println!("{}", json);
+                            }
+                        }
+                    } else {
+                        let formatted = format_metrics(&metrics);
+                        if let Some(file) = &mut out_file {
+                            writeln!(file, "{}", serde_json::to_string(&metrics).unwrap())?;
+                        }
+                        if !args.quiet {
+                            if update_in_place {
+                                // Use compact format for in-place updates
+                                let formatted_compact = format_metrics_compact(&metrics);
+                                let spinner = progress_chars[progress_index % progress_chars.len()];
+                                let elapsed = start_time.elapsed().as_secs();
+                                print!(
+                                    "\r{}\r{} [{}s] {}",
+                                    " ".repeat(terminal_width.saturating_sub(1)),
+                                    spinner.to_string().cyan(),
+                                    elapsed.to_string().bright_black(),
+                                    formatted_compact
+                                );
+                                io::stdout().flush()?;
+                                needs_newline_on_exit = true;
+                                progress_index += 1;
+                            } else {
+                                println!("{}", formatted);
+                            }
                         }
                     }
-                } else {
-                    // Format and display tree metrics with parent and children
-                    let formatted = format_aggregated_metrics(agg_metrics);
-                    if let Some(file) = &mut out_file {
-                        writeln!(file, "{}", serde_json::to_string(&tree_metrics).unwrap())?;
-                    }
-                    if !args.quiet {
-                        if update_in_place {
-                            // Use compact format for in-place updates
-                            let formatted_compact = format_aggregated_metrics_compact(agg_metrics);
-                            let spinner = progress_chars[progress_index % progress_chars.len()];
-                            let elapsed = start_time.elapsed().as_secs();
-                            print!(
-                                "\r{}\r{} [{}s] {}",
-                                " ".repeat(terminal_width.saturating_sub(1)),
-                                spinner.to_string().cyan(),
-                                elapsed.to_string().bright_black(),
-                                formatted_compact
-                            );
-                            io::stdout().flush()?;
-                            needs_newline_on_exit = true;
-                            progress_index += 1;
-                        } else {
-                            println!("{}", formatted);
+                }
+            } else {
+                // Monitor process tree (default behavior)
+                let tree_metrics = monitor.sample_tree_metrics();
+                if let Some(agg_metrics) = tree_metrics.aggregated.as_ref() {
+                    metrics_count += 1;
+
+                    // Store aggregated metrics for final summary
+                    // Convert aggregated metrics to regular metrics for storage compatibility
+                    let storage_metrics = convert_aggregated_to_metrics(agg_metrics);
+                    results.push(storage_metrics);
+
+                    // Also store for specialized aggregated stats
+                    aggregated_metrics.push(agg_metrics.clone());
+
+                    // Format and display tree metrics
+                    if args.json {
+                        let json = serde_json::to_string(&tree_metrics).unwrap();
+                        if let Some(file) = &mut out_file {
+                            writeln!(file, "{}", json)?;
+                        }
+                        if !args.quiet {
+                            if update_in_place {
+                                // For in-place updates, show just aggregated metrics
+                                let agg_json = serde_json::to_string(&agg_metrics).unwrap();
+                                let spinner = progress_chars[progress_index % progress_chars.len()];
+                                let elapsed = start_time.elapsed().as_secs();
+                                print!(
+                                    "\r{}\r{} [{}s] {}",
+                                    " ".repeat(terminal_width.saturating_sub(1)),
+                                    spinner.to_string().cyan(),
+                                    elapsed.to_string().bright_black(),
+                                    agg_json
+                                );
+                                io::stdout().flush()?;
+                                needs_newline_on_exit = true;
+                                progress_index += 1;
+                            } else {
+                                println!("{}", json);
+                            }
+                        }
+                    } else {
+                        // Format and display tree metrics with parent and children
+                        let formatted = format_aggregated_metrics(agg_metrics);
+                        if let Some(file) = &mut out_file {
+                            writeln!(file, "{}", serde_json::to_string(&tree_metrics).unwrap())?;
+                        }
+                        if !args.quiet {
+                            if update_in_place {
+                                // Use compact format for in-place updates
+                                let formatted_compact =
+                                    format_aggregated_metrics_compact(agg_metrics);
+                                let spinner = progress_chars[progress_index % progress_chars.len()];
+                                let elapsed = start_time.elapsed().as_secs();
+                                print!(
+                                    "\r{}\r{} [{}s] {}",
+                                    " ".repeat(terminal_width.saturating_sub(1)),
+                                    spinner.to_string().cyan(),
+                                    elapsed.to_string().bright_black(),
+                                    formatted_compact
+                                );
+                                io::stdout().flush()?;
+                                needs_newline_on_exit = true;
+                                progress_index += 1;
+                            } else {
+                                println!("{}", formatted);
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Sleep for the adaptive interval
-        std::thread::sleep(monitor.adaptive_interval());
-    }
+            // Sleep for the adaptive interval
+            std::thread::sleep(monitor.adaptive_interval());
+        }
+    } // End of polling mode else block
 
     // Calculate summary
     let runtime = start_time.elapsed();
@@ -400,10 +501,17 @@ fn main() -> Result<()> {
         }
 
         println!(
-            "\nMonitoring complete after {:.1} seconds",
-            runtime.as_secs_f64()
+            "\n✅ {} {}",
+            "Monitoring complete after".green(),
+            format!("{:.1} seconds", runtime.as_secs_f64())
+                .cyan()
+                .bold()
         );
-        println!("Collected {} metric samples", metrics_count);
+        println!(
+            "📊 {} {}",
+            "Collected".green(),
+            format!("{} metric samples", metrics_count).cyan().bold()
+        );
 
         // If we wrote to a file, print the path
         if let Some(path) = &out_path {
@@ -560,33 +668,61 @@ fn format_bytes(bytes: u64) -> String {
 fn print_summary(metrics: &[Metrics], duration: f64) {
     let summary = Summary::from_metrics(metrics, duration);
 
-    println!("\n{}", "EXECUTION SUMMARY".bold());
-    println!("{}", "=================".bold());
-    println!("Duration: {:.2} seconds", summary.total_time_secs);
-    println!("Samples: {}", summary.sample_count);
-    println!("Max processes: {}", summary.max_processes);
-    println!("Max threads: {}", summary.max_threads);
-    println!(
-        "Peak memory usage: {} MB",
-        (summary.peak_mem_rss_kb as f64 / 1024.0).round()
-    );
-    println!("Average CPU usage: {:.1}%", summary.avg_cpu_usage);
-    println!(
-        "Total disk read: {}",
-        format_bytes(summary.total_disk_read_bytes)
-    );
-    println!(
-        "Total disk write: {}",
-        format_bytes(summary.total_disk_write_bytes)
-    );
-    println!(
-        "Total network received: {}",
-        format_bytes(summary.total_net_rx_bytes)
-    );
-    println!(
-        "Total network sent: {}",
-        format_bytes(summary.total_net_tx_bytes)
-    );
+    println!("\n{} {}", "📈", "EXECUTION SUMMARY".cyan().bold());
+
+    let mut builder = Builder::default();
+
+    // Two-column layout with metric names and values
+    builder.push_record(vec![
+        "⏱️  Duration",
+        &format!("{:.2} seconds", summary.total_time_secs),
+    ]);
+
+    builder.push_record(vec!["📊 Samples", &format!("{}", summary.sample_count)]);
+
+    builder.push_record(vec![
+        "🔄 Max Processes",
+        &format!("{}", summary.max_processes),
+    ]);
+
+    builder.push_record(vec!["🧵 Max Threads", &format!("{}", summary.max_threads)]);
+
+    builder.push_record(vec![
+        "💾 Peak Memory",
+        &format!("{} MB", (summary.peak_mem_rss_kb as f64 / 1024.0).round()),
+    ]);
+
+    builder.push_record(vec![
+        "⚡ Avg CPU Usage",
+        &format!("{:.1}%", summary.avg_cpu_usage),
+    ]);
+
+    builder.push_record(vec![
+        "📖 Disk Read",
+        &format_bytes(summary.total_disk_read_bytes),
+    ]);
+
+    builder.push_record(vec![
+        "💿 Disk Write",
+        &format_bytes(summary.total_disk_write_bytes),
+    ]);
+
+    builder.push_record(vec![
+        "📥 Network Received",
+        &format_bytes(summary.total_net_rx_bytes),
+    ]);
+
+    builder.push_record(vec![
+        "📤 Network Sent",
+        &format_bytes(summary.total_net_tx_bytes),
+    ]);
+
+    let mut table = builder.build();
+    table
+        .with(Style::modern_rounded())
+        .with(Modify::new(Rows::new(..)).with(Alignment::left()));
+
+    println!("{}", table);
 }
 
 /// Generate a summary from a JSON file with metrics
@@ -650,33 +786,62 @@ fn generate_summary_from_file(
                     )?;
                 } else {
                     // Otherwise print to stdout
-                    println!("\n{}", "FILE STATISTICS".bold());
-                    println!("{}", "===============".bold());
-                    println!("Duration: {:.2} seconds", summary.total_time_secs);
-                    println!("Samples: {}", summary.sample_count);
-                    println!("Max processes: {}", summary.max_processes);
-                    println!("Max threads: {}", summary.max_threads);
-                    println!(
-                        "Peak memory usage: {} MB",
-                        (summary.peak_mem_rss_kb as f64 / 1024.0).round()
-                    );
-                    println!("Average CPU usage: {:.1}%", summary.avg_cpu_usage);
-                    println!(
-                        "Total disk read: {}",
-                        format_bytes(summary.total_disk_read_bytes)
-                    );
-                    println!(
-                        "Total disk write: {}",
-                        format_bytes(summary.total_disk_write_bytes)
-                    );
-                    println!(
-                        "Total network received: {}",
-                        format_bytes(summary.total_net_rx_bytes)
-                    );
-                    println!(
-                        "Total network sent: {}",
-                        format_bytes(summary.total_net_tx_bytes)
-                    );
+                    println!("\n{} {}", "📊", "FILE STATISTICS".cyan().bold());
+
+                    let mut builder = Builder::default();
+
+                    // Two-column layout with metric names and values
+                    builder.push_record(vec![
+                        "⏱️  Duration",
+                        &format!("{:.2} seconds", summary.total_time_secs),
+                    ]);
+
+                    builder.push_record(vec!["📊 Samples", &format!("{}", summary.sample_count)]);
+
+                    builder.push_record(vec![
+                        "🔄 Max Processes",
+                        &format!("{}", summary.max_processes),
+                    ]);
+
+                    builder
+                        .push_record(vec!["🧵 Max Threads", &format!("{}", summary.max_threads)]);
+
+                    builder.push_record(vec![
+                        "💾 Peak Memory",
+                        &format!("{} MB", (summary.peak_mem_rss_kb as f64 / 1024.0).round()),
+                    ]);
+
+                    builder.push_record(vec![
+                        "⚡ Avg CPU Usage",
+                        &format!("{:.1}%", summary.avg_cpu_usage),
+                    ]);
+
+                    builder.push_record(vec![
+                        "📖 Disk Read",
+                        &format_bytes(summary.total_disk_read_bytes),
+                    ]);
+
+                    builder.push_record(vec![
+                        "💿 Disk Write",
+                        &format_bytes(summary.total_disk_write_bytes),
+                    ]);
+
+                    builder.push_record(vec![
+                        "📥 Network Received",
+                        &format_bytes(summary.total_net_rx_bytes),
+                    ]);
+
+                    builder.push_record(vec![
+                        "📤 Network Sent",
+                        &format_bytes(summary.total_net_tx_bytes),
+                    ]);
+
+                    let mut table = builder.build();
+                    table
+                        .with(Style::modern_rounded())
+                        .with(Modify::new(Rows::new(..)).with(Alignment::left()));
+
+                    println!("{}", table);
                 }
             }
             Ok(())
