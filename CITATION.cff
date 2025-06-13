@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "denet"
+version: "0.2.0"
+date-released: 2025-06-12
+authors:
+  - family-names: Traven
+    given-names: B
+repository-code: "https://github.com/btraven00/denet"
+url: "https://crates.io/crates/denet"
+abstract: "Denet is a Rust-based streaming process-monitoring tool providing detailed metrics on running processes (CPU, memory, I/O, thread usage)."
+keywords:
+  - Rust
+  - process monitoring
+  - streaming
+license: "GPL-3.0-or-later"

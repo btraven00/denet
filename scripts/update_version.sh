@@ -46,6 +46,19 @@ if ! grep -q "__version__" "$REPO_ROOT/python/denet/__init__.py"; then
     sed -i "0,/import/s/import.*/&\n\n__version__ = \"$NEW_VERSION\"/" "$REPO_ROOT/python/denet/__init__.py"
 fi
 
+# Update version in CITATION.cff if it exists
+if [ -f "$REPO_ROOT/CITATION.cff" ]; then
+    echo "Updating CITATION.cff..."
+    # Check if version is quoted
+    if grep -q "^version: \"" "$REPO_ROOT/CITATION.cff"; then
+        # Update quoted version
+        sed -i "s/^version: \".*\"$/version: \"$NEW_VERSION\"/" "$REPO_ROOT/CITATION.cff"
+    else
+        # Update unquoted version
+        sed -i "s/^version: .*$/version: $NEW_VERSION/" "$REPO_ROOT/CITATION.cff"
+    fi
+fi
+
 echo "Version updated to $NEW_VERSION"
 echo "Don't forget to commit these changes and create a tag:"
 echo "git commit -am \"Bump version to $NEW_VERSION\""
