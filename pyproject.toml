@@ -33,7 +33,8 @@ ruff = ">=0.1.0"
 
 [tool.pixi.tasks]
 build = { cmd = "maturin build --release" }
-publish-pypi = { cmd = "maturin publish --skip-existing" }
+
+
 develop = { cmd = "./scripts/build_and_install.sh" }
 test = { cmd = "python -m pytest tests/python/" }
 test-cov = { cmd = "python -m pytest tests/python/ --cov=denet --cov-report=xml --cov-branch" }
@@ -56,6 +57,10 @@ lint-all = { cmd = "cargo clippy -- -D warnings && ruff check --force-exclude py
 
 # Comprehensive fix for all code (Rust + Python)
 fix-all = { cmd = "cargo fmt --all && ruff format --force-exclude python/ tests/ && ruff format tests/python/ python/denet/ && ruff check --fix --force-exclude python/ tests/ && ruff check --fix tests/python/ python/denet/" }
+
+# Publish to PyPI, crates.io
+publish-pypi = { cmd = "maturin publish --skip-existing" }
+publish-crates = { cmd = "cargo publish" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
