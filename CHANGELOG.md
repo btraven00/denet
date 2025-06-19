@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/btraven00/denet/compare/v0.3.0...v0.3.1) (2025-06-19)
+
+
+### Bug Fixes
+
+* **docs:** bump the version internally ([2ed414e](https://github.com/btraven00/denet/commit/2ed414e87e3fec3ee1d1d09fca8310653a629986))
+
 ## [0.3.0](https://github.com/btraven00/denet/compare/v0.2.1...v0.3.0) (2025-06-19)
 
 
