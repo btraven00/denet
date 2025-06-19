@@ -33,16 +33,16 @@ pub enum DenetError {
 impl fmt::Display for DenetError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DenetError::Io(err) => write!(f, "I/O error: {}", err),
-            DenetError::ProcessNotFound(pid) => write!(f, "Process not found: {}", pid),
-            DenetError::ProcessAccessDenied(pid) => write!(f, "Access denied for process: {}", pid),
-            DenetError::SystemTime(err) => write!(f, "System time error: {}", err),
-            DenetError::Serialization(err) => write!(f, "Serialization error: {}", err),
-            DenetError::InvalidConfiguration(msg) => write!(f, "Invalid configuration: {}", msg),
-            DenetError::PlatformNotSupported(msg) => write!(f, "Platform not supported: {}", msg),
-            DenetError::EbpfInitError(msg) => write!(f, "eBPF initialization error: {}", msg),
-            DenetError::EbpfNotSupported(msg) => write!(f, "eBPF not supported: {}", msg),
-            DenetError::Other(msg) => write!(f, "Error: {}", msg),
+            DenetError::Io(err) => write!(f, "I/O error: {err}"),
+            DenetError::ProcessNotFound(pid) => write!(f, "Process not found: {pid}"),
+            DenetError::ProcessAccessDenied(pid) => write!(f, "Access denied for process: {pid}"),
+            DenetError::SystemTime(err) => write!(f, "System time error: {err}"),
+            DenetError::Serialization(err) => write!(f, "Serialization error: {err}"),
+            DenetError::InvalidConfiguration(msg) => write!(f, "Invalid configuration: {msg}"),
+            DenetError::PlatformNotSupported(msg) => write!(f, "Platform not supported: {msg}"),
+            DenetError::EbpfInitError(msg) => write!(f, "eBPF initialization error: {msg}"),
+            DenetError::EbpfNotSupported(msg) => write!(f, "eBPF not supported: {msg}"),
+            DenetError::Other(msg) => write!(f, "Error: {msg}"),
         }
     }
 }

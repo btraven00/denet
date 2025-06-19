@@ -79,7 +79,7 @@ fn compile_ebpf_programs() {
 
         // Only compile if source file exists
         if !src_path.exists() {
-            println!("cargo:warning=Creating placeholder for {}", program);
+            println!("cargo:warning=Creating placeholder for {program}");
             create_placeholder_ebpf_program(&src_path);
         }
 
@@ -108,12 +108,12 @@ fn compile_ebpf_programs() {
             Ok(output) => {
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    panic!("Failed to compile {}: {}", program, stderr);
+                    panic!("Failed to compile {program}: {stderr}");
                 }
-                println!("cargo:warning=✓ Compiled {} -> {}", program, obj_name);
+                println!("cargo:warning=✓ Compiled {program} -> {obj_name}");
             }
             Err(e) => {
-                panic!("Failed to run clang for {}: {}", program, e);
+                panic!("Failed to run clang for {program}: {e}");
             }
         }
 

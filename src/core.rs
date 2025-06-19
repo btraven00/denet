@@ -136,7 +136,7 @@ impl ProcessMonitor {
     fn process_exists(pid: usize) -> bool {
         #[cfg(target_os = "linux")]
         {
-            std::path::Path::new(&format!("/proc/{}", pid)).exists()
+            std::path::Path::new(&format!("/proc/{pid}")).exists()
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -286,7 +286,7 @@ pub fn run_monitor(cmd: Vec<String>, config: DenetConfig) -> Result<()> {
         if let Some(metrics) = monitor.sample_metrics() {
             let json = serde_json::to_string(&metrics)?;
             if !config.output.quiet {
-                println!("{}", json);
+                println!("{json}");
             }
         }
 

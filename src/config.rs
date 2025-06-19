@@ -25,8 +25,7 @@ impl std::str::FromStr for OutputFormat {
             "jsonl" | "jsonlines" => Ok(OutputFormat::JsonLines),
             "csv" => Ok(OutputFormat::Csv),
             _ => Err(DenetError::InvalidConfiguration(format!(
-                "Unknown output format: {}",
-                s
+                "Unknown output format: {s}"
             ))),
         }
     }

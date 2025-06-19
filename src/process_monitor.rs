@@ -14,7 +14,7 @@ use sysinfo::{self, Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 pub(crate) fn get_thread_count(_pid: usize) -> usize {
     #[cfg(target_os = "linux")]
     {
-        let task_dir = format!("/proc/{}/task", _pid);
+        let task_dir = format!("/proc/{_pid}/task");
         match std::fs::read_dir(task_dir) {
             Ok(entries) => entries.count(),
             Err(_) => 0,
@@ -138,7 +138,7 @@ pub type ProcessResult<T> = std::result::Result<T, std::io::Error>;
 // Helper function to convert IO errors to Python errors when needed
 #[cfg(feature = "python")]
 pub fn io_err_to_py_err(err: std::io::Error) -> pyo3::PyErr {
-    pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {}", err))
+    pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {err}"))
 }
 
 impl ProcessMonitor {
@@ -169,7 +169,7 @@ impl ProcessMonitor {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()?;
-        let pid = child.id() as usize;
+        let pid = child.id();
 
         // Use minimal system initialization - avoid expensive system-wide scans
         let mut sys = System::new();
@@ -179,7 +179,7 @@ impl ProcessMonitor {
         let now = Instant::now();
         Ok(Self {
             child: Some(child),
-            pid,
+            pid: pid.try_into().unwrap(),
             sys,
             base_interval,
             max_interval,
@@ -250,14 +250,14 @@ impl ProcessMonitor {
         if !process_found {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("Process with PID {} not found", pid),
+                format!("Process with PID {pid} not found"),
             ));
         }
 
         let now = Instant::now();
         Ok(Self {
             child: None,
-            pid: pid as usize,
+            pid,
             sys,
             base_interval,
             max_interval,
@@ -391,6 +391,7 @@ impl ProcessMonitor {
                 }
             }
         } else {
+            // Already enabled, just return success
             Ok(())
         }
     }
@@ -405,6 +406,8 @@ impl ProcessMonitor {
             );
             println!("DEBUG: To enable eBPF support, rebuild with: cargo build --features ebpf");
         }
+        // Set the flag to false to ensure consistent behavior
+        self.enable_ebpf = false;
         Err(crate::error::DenetError::EbpfNotSupported(
             "eBPF feature not enabled. Build with --features ebpf".to_string(),
         ))
@@ -912,7 +915,7 @@ impl ProcessMonitor {
     #[cfg(target_os = "linux")]
     fn get_process_cpu_core(pid: usize) -> Option<u32> {
         // Read /proc/[pid]/stat to get the last CPU the process ran on
-        let stat_path = format!("/proc/{}/stat", pid);
+        let stat_path = format!("/proc/{pid}/stat");
         if let Ok(contents) = std::fs::read_to_string(&stat_path) {
             // The CPU field is the 39th field in /proc/[pid]/stat
             // Format: pid (comm) state ppid pgrp session tty_nr tpgid flags...

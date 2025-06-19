@@ -232,8 +232,7 @@ impl PyProcessMonitor {
                     // Handle timeout - kill the process
                     let _ = process.call_method("kill", (), None);
                     return Err(pyo3::exceptions::PyTimeoutError::new_err(format!(
-                        "Process timed out after {}s",
-                        timeout_secs
+                        "Process timed out after {timeout_secs}s"
                     )));
                 }
             }
@@ -276,14 +275,14 @@ impl PyProcessMonitor {
                 if let Some(file) = &mut file_handle {
                     match self.output_config.format {
                         OutputFormat::JsonLines => {
-                            writeln!(file, "{}", json).map_err(io_err_to_py_err)?;
+                            writeln!(file, "{json}").map_err(io_err_to_py_err)?;
                         }
                         _ => {
-                            writeln!(file, "{}", json).map_err(io_err_to_py_err)?;
+                            writeln!(file, "{json}").map_err(io_err_to_py_err)?;
                         }
                     }
                 } else if !self.output_config.quiet {
-                    println!("{}", json);
+                    println!("{json}");
                 }
             }
             sleep(self.inner.adaptive_interval());
@@ -313,7 +312,7 @@ impl PyProcessMonitor {
 
                 let json = serde_json::to_string(&metrics)
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-                writeln!(file, "{}", json).map_err(io_err_to_py_err)?;
+                writeln!(file, "{json}").map_err(io_err_to_py_err)?;
             }
         }
 
@@ -394,7 +393,7 @@ impl PyProcessMonitor {
                 for metrics in &self.samples {
                     let json = serde_json::to_string(&metrics)
                         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-                    writeln!(file, "{}", json).map_err(io_err_to_py_err)?;
+                    writeln!(file, "{json}").map_err(io_err_to_py_err)?;
                 }
             }
         }

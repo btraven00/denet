@@ -29,6 +29,7 @@ python = "==3.12"
 maturin = "==1.8.6"
 pytest = ">=7.0.0"
 pytest-cov = ">=4.1.0"
+pytest-xdist = ">=3.7.0,<4"
 ruff = ">=0.1.0"
 
 [tool.pixi.tasks]
@@ -36,7 +37,7 @@ build = { cmd = "maturin build --release" }
 
 
 develop = { cmd = "./scripts/build_and_install.sh" }
-test = { cmd = "python -m pytest tests/python/" }
+test = { cmd = "python -m pytest -n 4 tests/python/" }
 test-cov = { cmd = "python -m pytest tests/python/ --cov=denet --cov-report=xml --cov-branch" }
 test-rust = { cmd = "cargo test --no-default-features" }
 test-all = { cmd = "cargo test --no-default-features && python -m pytest tests/python/" }
@@ -55,8 +56,14 @@ rust-fmt = { cmd = "cargo fmt --all" }
 # Comprehensive lint check for all code (Rust + Python)
 lint-all = { cmd = "cargo clippy -- -D warnings && ruff check --force-exclude python/ tests/ && ruff check tests/python/ python/denet/" }
 
+# Clippy check for diagnosing issues without fixing (works on stable Rust)
+clippy-check = { cmd = "cargo clippy -- -D warnings" }
+
+# Clippy fix (requires nightly Rust)
+clippy-fix = { cmd = "RUSTUP_TOOLCHAIN=nightly cargo clippy --fix -Z unstable-options --allow-dirty -- -D warnings" }
+
 # Comprehensive fix for all code (Rust + Python)
-fix-all = { cmd = "cargo fmt --all && ruff format --force-exclude python/ tests/ && ruff format tests/python/ python/denet/ && ruff check --fix --force-exclude python/ tests/ && ruff check --fix tests/python/ python/denet/" }
+fix-all = { cmd = "cargo fmt --all && ruff format --force-exclude python/ tests/ && ruff format tests/python/ python/denet/ && ruff check --fix --force-exclude python/ tests/ && ruff check --fix tests/python/ python/denet/ && RUSTUP_TOOLCHAIN=nightly cargo clippy --fix -Z unstable-options --allow-dirty -- -D warnings" }
 
 # Publish to PyPI, crates.io
 publish-pypi = { cmd = "maturin publish --skip-existing" }

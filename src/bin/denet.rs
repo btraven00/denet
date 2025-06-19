@@ -140,7 +140,7 @@ fn main() -> Result<()> {
 
     let mut out_file = out_path.as_ref().or(default_out_path.as_ref()).map(|path| {
         File::create(path).unwrap_or_else(|err| {
-            eprintln!("Error creating output file: {}", err);
+            eprintln!("Error creating output file: {err}");
             exit(1);
         })
     });
@@ -148,7 +148,7 @@ fn main() -> Result<()> {
     // Create stats output file if specified
     let _stats_file = args.stats.as_ref().map(|path| {
         File::create(path).unwrap_or_else(|err| {
-            eprintln!("Error creating stats output file: {}", err);
+            eprintln!("Error creating stats output file: {err}");
             exit(1);
         })
     });
@@ -176,7 +176,7 @@ fn main() -> Result<()> {
                     m
                 }
                 Err(err) => {
-                    eprintln!("Error starting command: {}", err);
+                    eprintln!("Error starting command: {err}");
                     exit(1);
                 }
             }
@@ -198,7 +198,7 @@ fn main() -> Result<()> {
                     m
                 }
                 Err(err) => {
-                    eprintln!("Error attaching to process: {}", err);
+                    eprintln!("Error attaching to process: {err}");
                     exit(1);
                 }
             }
@@ -233,7 +233,7 @@ fn main() -> Result<()> {
     if args.enable_ebpf {
         if let Err(e) = monitor.enable_ebpf() {
             if !args.quiet {
-                eprintln!("Warning: Failed to enable eBPF profiling: {}", e);
+                eprintln!("Warning: Failed to enable eBPF profiling: {e}");
                 eprintln!("Hint: Try running with sudo or setting CAP_BPF capability:");
                 eprintln!("  sudo setcap cap_bpf+ep target/release/denet");
 
@@ -300,10 +300,10 @@ fn main() -> Result<()> {
     if let Some(metadata_ref) = &metadata {
         let metadata_json = serde_json::to_string(&metadata_ref).unwrap();
         if let Some(file) = &mut out_file {
-            writeln!(file, "{}", metadata_json)?;
+            writeln!(file, "{metadata_json}")?;
         }
         if args.json && !args.quiet {
-            println!("{}", metadata_json);
+            println!("{metadata_json}");
         }
     }
 
@@ -334,12 +334,10 @@ fn main() -> Result<()> {
         let final_tree_metrics = monitor.sample_tree_metrics();
         if args.json {
             let json = serde_json::to_string(&final_tree_metrics).unwrap();
-            println!("{}", json);
-        } else {
-            if let Some(agg) = final_tree_metrics.aggregated {
-                results.push(convert_aggregated_to_metrics(&agg));
-                metrics_count = 1;
-            }
+            println!("{json}");
+        } else if let Some(agg) = final_tree_metrics.aggregated {
+            results.push(convert_aggregated_to_metrics(&agg));
+            metrics_count = 1;
         }
     } else {
         // Regular adaptive polling mode
@@ -366,7 +364,7 @@ fn main() -> Result<()> {
                     if args.json {
                         let json = serde_json::to_string(&metrics).unwrap();
                         if let Some(file) = &mut out_file {
-                            writeln!(file, "{}", json)?;
+                            writeln!(file, "{json}")?;
                         }
                         if !args.quiet {
                             if update_in_place {
@@ -384,7 +382,7 @@ fn main() -> Result<()> {
                                 needs_newline_on_exit = true;
                                 progress_index += 1;
                             } else {
-                                println!("{}", json);
+                                println!("{json}");
                             }
                         }
                     } else {
@@ -409,7 +407,7 @@ fn main() -> Result<()> {
                                 needs_newline_on_exit = true;
                                 progress_index += 1;
                             } else {
-                                println!("{}", formatted);
+                                println!("{formatted}");
                             }
                         }
                     }
@@ -432,7 +430,7 @@ fn main() -> Result<()> {
                     if args.json {
                         let json = serde_json::to_string(&tree_metrics).unwrap();
                         if let Some(file) = &mut out_file {
-                            writeln!(file, "{}", json)?;
+                            writeln!(file, "{json}")?;
                         }
                         if !args.quiet {
                             if update_in_place {
@@ -451,7 +449,7 @@ fn main() -> Result<()> {
                                 needs_newline_on_exit = true;
                                 progress_index += 1;
                             } else {
-                                println!("{}", json);
+                                println!("{json}");
                             }
                         }
                     } else {
@@ -478,7 +476,7 @@ fn main() -> Result<()> {
                                 needs_newline_on_exit = true;
                                 progress_index += 1;
                             } else {
-                                println!("{}", formatted);
+                                println!("{formatted}");
                             }
                         }
                     }
@@ -510,7 +508,7 @@ fn main() -> Result<()> {
         println!(
             "📊 {} {}",
             "Collected".green(),
-            format!("{} metric samples", metrics_count).cyan().bold()
+            format!("{metrics_count} metric samples").cyan().bold()
         );
 
         // If we wrote to a file, print the path
@@ -544,7 +542,7 @@ fn format_metrics(metrics: &Metrics) -> String {
     format!(
         "CPU: {} | Memory: {} | Threads: {} | Disk: {} rd, {} wr | Net: {} rx, {} tx | Uptime: {}s",
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
-        format!("{:.1} MB", mem_mb).color(mem_color),
+        format!("{mem_mb:.1} MB").color(mem_color),
         metrics.thread_count,
         format_bytes(metrics.disk_read_bytes).cyan(),
         format_bytes(metrics.disk_write_bytes).cyan(),
@@ -571,7 +569,7 @@ fn format_metrics_compact(metrics: &Metrics) -> String {
     format!(
         "CPU {} | Mem {} | Threads {} | Disk {} rd, {} wr | Net {} rx, {} tx",
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
-        format!("{:.0}M", mem_mb).color(mem_color),
+        format!("{mem_mb:.0}M").color(mem_color),
         metrics.thread_count,
         format_bytes(metrics.disk_read_bytes).cyan(),
         format_bytes(metrics.disk_write_bytes).cyan(),
@@ -598,7 +596,7 @@ fn format_aggregated_metrics(metrics: &AggregatedMetrics) -> String {
         "Tree ({} procs): CPU: {} | Memory: {} | Threads: {} | Disk: {} rd, {} wr | Net: {} rx, {} tx | Uptime: {}s",
         metrics.process_count,
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
-        format!("{:.1} MB", mem_mb).color(mem_color),
+        format!("{mem_mb:.1} MB").color(mem_color),
         metrics.thread_count,
         format_bytes(metrics.disk_read_bytes).cyan(),
         format_bytes(metrics.disk_write_bytes).cyan(),
@@ -626,7 +624,7 @@ fn format_aggregated_metrics_compact(metrics: &AggregatedMetrics) -> String {
         "Tree({}): CPU {} | Mem {} | Threads {} | Disk {} rd, {} wr | Net {} rx, {} tx",
         metrics.process_count,
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
-        format!("{:.0}M", mem_mb).color(mem_color),
+        format!("{mem_mb:.0}M").color(mem_color),
         metrics.thread_count,
         format_bytes(metrics.disk_read_bytes).cyan(),
         format_bytes(metrics.disk_write_bytes).cyan(),
@@ -653,7 +651,7 @@ fn convert_aggregated_to_metrics(agg: &AggregatedMetrics) -> Metrics {
 
 fn format_bytes(bytes: u64) -> String {
     if bytes < 1024 {
-        format!("{}B", bytes)
+        format!("{bytes}B")
     } else if bytes < 1024 * 1024 {
         format!("{:.1}KB", bytes as f64 / 1024.0)
     } else if bytes < 1024 * 1024 * 1024 {
@@ -668,7 +666,7 @@ fn format_bytes(bytes: u64) -> String {
 fn print_summary(metrics: &[Metrics], duration: f64) {
     let summary = Summary::from_metrics(metrics, duration);
 
-    println!("\n{} {}", "📈", "EXECUTION SUMMARY".cyan().bold());
+    println!("\n📈 {}", "EXECUTION SUMMARY".cyan().bold());
 
     let mut builder = Builder::default();
 
@@ -722,7 +720,7 @@ fn print_summary(metrics: &[Metrics], duration: f64) {
         .with(Style::modern_rounded())
         .with(Modify::new(Rows::new(..)).with(Alignment::left()));
 
-    println!("{}", table);
+    println!("{table}");
 }
 
 /// Generate a summary from a JSON file with metrics
@@ -743,10 +741,10 @@ fn generate_summary_from_file(
                 // If out file is specified, write JSON to the file
                 if let Some(out_path) = out_file {
                     let mut file = File::create(out_path)?;
-                    writeln!(file, "{}", json)?;
+                    writeln!(file, "{json}")?;
                 } else {
                     // Otherwise print to stdout
-                    println!("{}", json);
+                    println!("{json}");
                 }
             } else {
                 // If out file is specified, write human-readable output to the file
@@ -786,7 +784,7 @@ fn generate_summary_from_file(
                     )?;
                 } else {
                     // Otherwise print to stdout
-                    println!("\n{} {}", "📊", "FILE STATISTICS".cyan().bold());
+                    println!("\n📊 {}", "FILE STATISTICS".cyan().bold());
 
                     let mut builder = Builder::default();
 
@@ -841,13 +839,13 @@ fn generate_summary_from_file(
                         .with(Style::modern_rounded())
                         .with(Modify::new(Rows::new(..)).with(Alignment::left()));
 
-                    println!("{}", table);
+                    println!("{table}");
                 }
             }
             Ok(())
         }
         Err(e) => {
-            eprintln!("Error processing metrics file: {}", e);
+            eprintln!("Error processing metrics file: {e}");
             Err(e)
         }
     }

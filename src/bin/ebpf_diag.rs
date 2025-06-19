@@ -394,6 +394,7 @@ fn main() {
         exit(1);
     }
 
+    #[cfg(feature = "ebpf")]
     // Run checks
     let perms_ok = check_permissions();
     let kernel_ok = check_kernel_support();
@@ -407,9 +408,14 @@ fn main() {
         false
     };
 
+    #[cfg(feature = "ebpf")]
     // Generate final report
     let success = generate_report(perms_ok, kernel_ok, fs_ok, load_ok);
 
+    #[cfg(feature = "ebpf")]
     // Exit with appropriate code
     exit(if success { 0 } else { 1 });
+
+    #[cfg(not(feature = "ebpf"))]
+    unreachable!(); // This should never be reached as we exit(1) earlier
 }

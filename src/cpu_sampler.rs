@@ -89,13 +89,13 @@ impl CpuSampler {
         let process = Process::new(pid as i32).map_err(|e| {
             std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("Process not found: {}", e),
+                format!("Process not found: {e}"),
             )
         })?;
 
         let stat = process
             .stat()
-            .map_err(|e| std::io::Error::other(format!("Failed to read process stat: {}", e)))?;
+            .map_err(|e| std::io::Error::other(format!("Failed to read process stat: {e}")))?;
 
         // For a single measurement, we can't calculate delta, so return approximate CPU usage
         let total_time = stat.utime + stat.stime;
@@ -170,14 +170,14 @@ impl CpuSampler {
         let process = Process::new(pid as i32).map_err(|e| {
             Error::new(
                 ErrorKind::NotFound,
-                format!("Failed to access process {}: {}", pid, e),
+                format!("Failed to access process {pid}: {e}"),
             )
         })?;
 
         let stat = process.stat().map_err(|e| {
             Error::new(
                 ErrorKind::InvalidData,
-                format!("Failed to read process stats: {}", e),
+                format!("Failed to read process stats: {e}"),
             )
         })?;
 
