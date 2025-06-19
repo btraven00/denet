@@ -112,6 +112,138 @@ impl PyProcessMonitor {
         })
     }
 
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (cmd, stdout_file=None, stderr_file=None, timeout=None, base_interval_ms=100, max_interval_ms=1000, store_in_memory=true, output_file=None, output_format="jsonl", since_process_start=false, pause_for_attachment=true, quiet=false))]
+    fn execute_with_monitoring(
+        py: Python,
+        cmd: Vec<String>,
+        stdout_file: Option<String>,
+        stderr_file: Option<String>,
+        timeout: Option<f64>,
+        base_interval_ms: u64,
+        max_interval_ms: u64,
+        store_in_memory: bool,
+        output_file: Option<String>,
+        output_format: &str,
+        since_process_start: bool,
+        pause_for_attachment: bool,
+        quiet: bool,
+    ) -> PyResult<(i32, PyProcessMonitor)> {
+        use std::fs::OpenOptions;
+        use std::time::Duration;
+
+        // Import Python modules for subprocess and signal handling
+        let subprocess = py.import_bound("subprocess")?;
+        let os = py.import_bound("os")?;
+        let signal = py.import_bound("signal")?;
+        let _time = py.import_bound("time")?;
+
+        // Prepare file handles for redirection
+        let stdout_arg = if let Some(path) = &stdout_file {
+            let file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(path)
+                .map_err(io_err_to_py_err)?;
+            Some(file)
+        } else {
+            None
+        };
+
+        let stderr_arg = if let Some(path) = &stderr_file {
+            let file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(path)
+                .map_err(io_err_to_py_err)?;
+            Some(file)
+        } else {
+            None
+        };
+
+        // Create subprocess using Python's subprocess module for better signal control
+        let popen_kwargs = pyo3::types::PyDict::new_bound(py);
+        popen_kwargs.set_item("start_new_session", true)?;
+
+        if stdout_arg.is_some() {
+            popen_kwargs.set_item("stdout", stdout_file.as_ref().unwrap())?;
+        }
+        if stderr_arg.is_some() {
+            popen_kwargs.set_item("stderr", stderr_file.as_ref().unwrap())?;
+        }
+
+        let process = subprocess.call_method("Popen", (cmd.clone(),), Some(&popen_kwargs))?;
+        let pid: i32 = process.getattr("pid")?.extract()?;
+
+        // Immediately pause the process if requested
+        if pause_for_attachment {
+            let sigstop = signal.getattr("SIGSTOP")?;
+            os.call_method("kill", (pid, sigstop), None)?;
+        }
+
+        // Create output configuration
+        let output_config = if let Some(path) = output_file {
+            OutputConfig::builder()
+                .output_file(path)
+                .format_str(output_format)?
+                .store_in_memory(store_in_memory)
+                .quiet(quiet)
+                .build()
+        } else {
+            OutputConfig::builder()
+                .format_str(output_format)?
+                .store_in_memory(store_in_memory)
+                .quiet(quiet)
+                .build()
+        };
+
+        // Create monitor for the process
+        let inner = ProcessMonitor::from_pid_with_options(
+            pid as usize,
+            Duration::from_millis(base_interval_ms),
+            Duration::from_millis(max_interval_ms),
+            since_process_start,
+        )
+        .map_err(io_err_to_py_err)?;
+
+        let monitor = PyProcessMonitor {
+            inner,
+            samples: Vec::new(),
+            output_config,
+        };
+
+        // Resume the process if it was paused
+        if pause_for_attachment {
+            let sigcont = signal.getattr("SIGCONT")?;
+            os.call_method("kill", (pid, sigcont), None)?;
+        }
+
+        // Wait for process completion with timeout
+        let exit_code = if let Some(timeout_secs) = timeout {
+            let timeout_dict = pyo3::types::PyDict::new_bound(py);
+            timeout_dict.set_item("timeout", timeout_secs)?;
+
+            match process.call_method("wait", (), Some(&timeout_dict)) {
+                Ok(code) => code.extract::<i32>()?,
+                Err(_e) => {
+                    // Handle timeout - kill the process
+                    let _ = process.call_method("kill", (), None);
+                    return Err(pyo3::exceptions::PyTimeoutError::new_err(format!(
+                        "Process timed out after {}s",
+                        timeout_secs
+                    )));
+                }
+            }
+        } else {
+            process.call_method("wait", (), None)?.extract::<i32>()?
+        };
+
+        Ok((exit_code, monitor))
+    }
+
     fn run(&mut self) -> PyResult<()> {
         use std::fs::OpenOptions;
         use std::io::Write;

@@ -1,6 +1,7 @@
 env/
 target/
 scratch/
+python/denet/*.so
 
 __pycache__/*
 
