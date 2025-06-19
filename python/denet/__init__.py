@@ -444,76 +444,75 @@ def execute_with_monitoring(
             stderr_handle = open(stderr_file, "w")
 
         # 1. Create the process
-        process = subprocess.Popen(
+        with subprocess.Popen(
             cmd,
             stdout=stdout_handle or subprocess.PIPE,
             stderr=stderr_handle or subprocess.PIPE,
             text=True,
             start_new_session=True,  # Isolate the process group
-        )
+        ) as process:
+            # 2. Immediately pause the process if requested
+            if pause_for_attachment:
+                os.kill(process.pid, signal.SIGSTOP)
 
-        # 2. Immediately pause the process if requested
-        if pause_for_attachment:
-            os.kill(process.pid, signal.SIGSTOP)
+            # 3. Attach monitoring while process is frozen (or running if pause disabled)
+            monitor = ProcessMonitor.from_pid(
+                pid=process.pid,
+                base_interval_ms=base_interval_ms,
+                max_interval_ms=max_interval_ms,
+                since_process_start=since_process_start,
+                output_file=output_file,
+                output_format=output_format,
+                store_in_memory=store_in_memory,
+                quiet=quiet,
+            )
 
-        # 3. Attach monitoring while process is frozen (or running if pause disabled)
-        monitor = ProcessMonitor.from_pid(
-            pid=process.pid,
-            base_interval_ms=base_interval_ms,
-            max_interval_ms=max_interval_ms,
-            since_process_start=since_process_start,
-            output_file=output_file,
-            output_format=output_format,
-            store_in_memory=store_in_memory,
-            quiet=quiet,
-        )
+            # 4. Resume the process if it was paused
+            if pause_for_attachment:
+                os.kill(process.pid, signal.SIGCONT)
 
-        # 4. Resume the process if it was paused
-        if pause_for_attachment:
-            os.kill(process.pid, signal.SIGCONT)
+            # 5. Start monitoring in a separate thread
+            monitoring_active = threading.Event()
+            monitoring_active.set()
 
-        # 5. Start monitoring in a separate thread
-        monitoring_active = threading.Event()
-        monitoring_active.set()
+            def monitoring_loop():
+                """Run monitoring loop in separate thread"""
+                while monitoring_active.is_set() and monitor.is_running():
+                    try:
+                        monitor.sample_once()
+                        time.sleep(base_interval_ms / 1000.0)
+                    except Exception:
+                        # Process might have ended, stop monitoring
+                        break
 
-        def monitoring_loop():
-            """Run monitoring loop in separate thread"""
-            while monitoring_active.is_set() and monitor.is_running():
-                try:
-                    monitor.sample_once()
-                    time.sleep(base_interval_ms / 1000.0)
-                except Exception:
-                    # Process might have ended, stop monitoring
-                    break
+            monitor_thread = threading.Thread(target=monitoring_loop, daemon=True)
+            monitor_thread.start()
 
-        monitor_thread = threading.Thread(target=monitoring_loop, daemon=True)
-        monitor_thread.start()
-
-        try:
-            # 6. Wait for completion with timeout
-            exit_code = process.wait(timeout=timeout)
-
-            # Stop monitoring
-            monitoring_active.clear()
-            monitor_thread.join(timeout=1.0)  # Give thread time to finish
-
-            return exit_code, monitor
-
-        except subprocess.TimeoutExpired:
-            # Cleanup: stop monitoring and kill process
-            monitoring_active.clear()
-
-            # Kill the process and its children (since we used start_new_session=True)
             try:
-                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                time.sleep(0.1)  # Give it a moment to terminate gracefully
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            except ProcessLookupError:
-                # Process already died
-                pass
+                # 6. Wait for completion with timeout
+                exit_code = process.wait(timeout=timeout)
 
-            monitor_thread.join(timeout=1.0)
-            raise
+                # Stop monitoring
+                monitoring_active.clear()
+                monitor_thread.join(timeout=1.0)  # Give thread time to finish
+
+                return exit_code, monitor
+
+            except subprocess.TimeoutExpired:
+                # Cleanup: stop monitoring and kill process
+                monitoring_active.clear()
+
+                # Kill the process and its children (since we used start_new_session=True)
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                    time.sleep(0.1)  # Give it a moment to terminate gracefully
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    # Process already died
+                    pass
+
+                monitor_thread.join(timeout=1.0)
+                raise
 
     finally:
         # Close file handles
