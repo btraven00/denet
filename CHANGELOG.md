@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0](https://github.com/btraven00/denet/compare/v0.2.1...v0.3.0) (2025-06-19)
+
+
+### Features
+
+* add eBPF profiling integration for syscall tracking ([42a428d](https://github.com/btraven00/denet/commit/42a428d0e2d67c7bbf8a8440f90aeefe5f96b8da))
+* implement execute_with_monitoring with signal-based process control ([a2410b4](https://github.com/btraven00/denet/commit/a2410b4f33c6de10a5526990e075e15554de3237))
+
+
+### Bug Fixes
+
+* **perf:** optimize ProcessMonitor initialization by avoiding expensive system-wide scans ([1bed5ad](https://github.com/btraven00/denet/commit/1bed5ad33af702d59403d0f1f5907738df40874c))
+* **tests:** fix tests and build issues, convert to pytest ([f76db7f](https://github.com/btraven00/denet/commit/f76db7fe3fa8426b099bbe607582da870cb40264))
+* update adaptive sampling test expectations to account for sampling overhead ([b01ce33](https://github.com/btraven00/denet/commit/b01ce3356332546d42f53ac4f3838dd0d2a92b6c))
+
 ## 0.2.1 (2025-06-13)
 
 ### Code Refactoring
