@@ -181,7 +181,7 @@ impl MonitorConfigBuilder {
         }
         self
     }
-    
+
     pub fn enable_ebpf(mut self, enable: bool) -> Self {
         self.enable_ebpf = Some(enable);
         self

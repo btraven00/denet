@@ -108,12 +108,12 @@ pub struct AggregatedMetrics {
     pub thread_count: usize,
     pub process_count: usize,
     pub uptime_secs: u64,
-    
+
     /// eBPF profiling data (optional)
     #[cfg(feature = "ebpf")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ebpf: Option<crate::ebpf::EbpfMetrics>,
-    
+
     #[cfg(not(feature = "ebpf"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ebpf: Option<serde_json::Value>,

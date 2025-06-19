@@ -439,9 +439,9 @@ def execute_with_monitoring(
 
     try:
         if stdout_file:
-            stdout_handle = open(stdout_file, 'w')
+            stdout_handle = open(stdout_file, "w")
         if stderr_file:
-            stderr_handle = open(stderr_file, 'w')
+            stderr_handle = open(stderr_file, "w")
 
         # 1. Create the process
         process = subprocess.Popen(
@@ -449,7 +449,7 @@ def execute_with_monitoring(
             stdout=stdout_handle or subprocess.PIPE,
             stderr=stderr_handle or subprocess.PIPE,
             text=True,
-            start_new_session=True  # Isolate the process group
+            start_new_session=True,  # Isolate the process group
         )
 
         # 2. Immediately pause the process if requested
@@ -465,7 +465,7 @@ def execute_with_monitoring(
             output_file=output_file,
             output_format=output_format,
             store_in_memory=store_in_memory,
-            quiet=quiet
+            quiet=quiet,
         )
 
         # 4. Resume the process if it was paused
