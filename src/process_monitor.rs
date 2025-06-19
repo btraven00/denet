@@ -171,9 +171,9 @@ impl ProcessMonitor {
             .spawn()?;
         let pid = child.id() as usize;
 
-        let mut sys = System::new_all();
-        // Initialize the system with process information
-        sys.refresh_all();
+        // Use minimal system initialization - avoid expensive system-wide scans
+        let mut sys = System::new();
+        // Only refresh CPU info once at startup
         sys.refresh_cpu_all();
 
         let now = Instant::now();
@@ -219,24 +219,31 @@ impl ProcessMonitor {
         max_interval: Duration,
         since_process_start: bool,
     ) -> ProcessResult<Self> {
-        // Check if the process exists
-        let mut sys = System::new_all();
-        // Initialize the system with process information
-        sys.refresh_all();
+        // Use minimal system initialization - avoid expensive system-wide scans
+        let mut sys = System::new();
+        // Only refresh CPU info once at startup
         sys.refresh_cpu_all();
 
-        // Try multiple refreshes instead of sleeping
-        let mut retries = 3;
-        let mut process_found = false;
+        // Check if the specific process exists - much faster than system-wide scan
         let pid_sys = Pid::from_u32(pid as u32);
 
+        // Try to refresh just this process instead of all processes
+        let mut retries = 3;
+        let mut process_found = false;
+
         while retries > 0 && !process_found {
-            sys.refresh_processes(ProcessesToUpdate::All, true);
+            // Only refresh the specific process we care about
+            sys.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&[pid_sys]),
+                true,
+                ProcessRefreshKind::everything(),
+            );
             if sys.process(pid_sys).is_some() {
                 process_found = true;
             } else {
                 retries -= 1;
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                // Shorter sleep since we're doing targeted refresh
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
 
@@ -246,9 +253,6 @@ impl ProcessMonitor {
                 format!("Process with PID {} not found", pid),
             ));
         }
-
-        // Initialize the system with process information
-        sys.refresh_all();
 
         let now = Instant::now();
         Ok(Self {
