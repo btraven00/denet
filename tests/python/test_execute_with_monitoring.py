@@ -3,10 +3,12 @@ import os
 import subprocess
 import tempfile
 import time
-import pytest
 
+import pytest
 import denet
+
 from denet import execute_with_monitoring
+from tests.python.test_helpers import extract_metrics_from_sample
 
 
 def test_basic_functionality():
@@ -123,8 +125,9 @@ len(data)
     # Check for memory data
     if samples:
         sample_data = json.loads(samples[0]) if isinstance(samples[0], str) else samples[0]
-        assert "mem_rss_kb" in sample_data
-        assert sample_data["mem_rss_kb"] > 0
+        metrics = extract_metrics_from_sample(sample_data)
+        assert "mem_rss_kb" in metrics
+        assert metrics["mem_rss_kb"] > 0
 
 
 def test_timeout_functionality():

@@ -5,6 +5,7 @@ import time
 import unittest
 
 import denet
+from tests.python.test_helpers import extract_metrics_from_sample
 
 
 class TestDecoratorInterface(unittest.TestCase):
@@ -26,8 +27,11 @@ class TestDecoratorInterface(unittest.TestCase):
         for metric in metrics:
             if all(key in metric for key in ["pid", "cmd", "executable", "t0_ms"]):
                 continue
-            self.assertIn("cpu_usage", metric)
-            self.assertIn("mem_rss_kb", metric)
+
+            # Extract metrics handling both old and new format
+            metric_data = extract_metrics_from_sample(metric)
+            self.assertIn("cpu_usage", metric_data)
+            self.assertIn("mem_rss_kb", metric_data)
             break
         else:
             self.fail("No valid metrics found in response")
@@ -61,7 +65,8 @@ class TestDecoratorInterface(unittest.TestCase):
                     # Skip metadata line (has pid, cmd, executable, t0_ms)
                     if all(key in data for key in ["pid", "cmd", "executable", "t0_ms"]):
                         continue
-                    self.assertIn("cpu_usage", data)
+                    metrics = extract_metrics_from_sample(data)
+                    self.assertIn("cpu_usage", metrics)
                     metrics_found = True
                     break
                 self.assertTrue(metrics_found, "No metrics data found in output file")
@@ -84,7 +89,11 @@ class TestDecoratorInterface(unittest.TestCase):
         self.assertGreater(len(metrics), 1)
 
         # Check timestamps to see intervals
-        timestamps = [m["ts_ms"] for m in metrics]
+        timestamps = []
+        for m in metrics:
+            if isinstance(m, str):
+                m = json.loads(m)
+            timestamps.append(m.get("ts_ms", extract_metrics_from_sample(m).get("ts_ms")))
         self.assertGreater(len(timestamps), 1)
 
     def test_decorator_with_args(self):
@@ -110,10 +119,18 @@ class TestContextManagerInterface(unittest.TestCase):
         self.assertGreater(len(samples), 0)
         # Find and check first non-metadata sample
         for sample in samples:
-            if all(key in sample for key in ["pid", "cmd", "executable", "t0_ms"]):
+            if isinstance(sample, str):
+                sample_data = json.loads(sample)
+            else:
+                sample_data = sample
+
+            if all(key in sample_data for key in ["pid", "cmd", "executable", "t0_ms"]):
                 continue
-            self.assertIn("cpu_usage", sample)
-            self.assertIn("mem_rss_kb", sample)
+
+            # Extract metrics handling both old and new format
+            metric_data = extract_metrics_from_sample(sample_data)
+            self.assertIn("cpu_usage", metric_data)
+            self.assertIn("mem_rss_kb", metric_data)
             break
         else:
             self.fail("No valid metrics found in samples")
@@ -146,7 +163,8 @@ class TestContextManagerInterface(unittest.TestCase):
                     # Skip metadata line (has pid, cmd, executable, t0_ms)
                     if all(key in data for key in ["pid", "cmd", "executable", "t0_ms"]):
                         continue
-                    self.assertIn("cpu_usage", data)
+                    metrics = extract_metrics_from_sample(data)
+                    self.assertIn("cpu_usage", metrics)
                     metrics_found = True
                     break
                 self.assertTrue(metrics_found, "No metrics data found in output file")
@@ -169,6 +187,7 @@ class TestContextManagerInterface(unittest.TestCase):
         # Verify summary has expected fields
         self.assertIn("avg_cpu_usage", summary)
         self.assertIn("peak_mem_rss_kb", summary)
+        self.assertIn("max_processes", summary)
 
     def test_context_manager_save_samples(self):
         """Test saving samples from context manager"""

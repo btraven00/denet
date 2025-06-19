@@ -43,10 +43,11 @@ cargo install denet  # Rust binary
 
 ### Understanding CPU Utilization
 
-CPU usage is reported in a `top`-compatible format where 100% represents one fully utilized CPU core:
-- 100% = one core fully utilized
-- 400% = four cores fully utilized
-- Child processes are tracked separately and aggregated for total resource usage
+# CPU usage is reported in a `top`-compatible format where 100% represents one fully utilized CPU core:
+# - 100% = one core fully utilized
+# - 400% = four cores fully utilized
+# - Child processes are tracked separately and aggregated for total resource usage
+# - Process trees are monitored by default, tracking all child processes spawned by the main process
 
 This is consistent with standard tools like `top` and `htop`. For example, a process using 3 CPU cores at full capacity will show 300% CPU usage, regardless of how many cores your system has.
 
@@ -79,6 +80,9 @@ denet --quiet --json --out metrics.jsonl run python script.py
 
 # Monitor a CPU-intensive workload (shows aggregated metrics for all children)
 denet run python cpu_intensive_script.py
+
+# Disable child process monitoring (only track the parent process)
+denet --no-include-children run python multi_process_script.py
 ```
 
 ### Python API
@@ -95,7 +99,8 @@ monitor = denet.ProcessMonitor(
     base_interval_ms=100,    # Start sampling every 100ms
     max_interval_ms=1000,    # Sample at most every 1000ms
     store_in_memory=True,    # Keep samples in memory
-    output_file=None         # Optional file output
+    output_file=None,        # Optional file output
+    include_children=True    # Monitor child processes (default True)
 )
 
 # Let the monitor run automatically until the process completes
@@ -113,6 +118,7 @@ print(f"Average CPU usage: {summary['avg_cpu_usage']}%")
 print(f"Peak memory: {summary['peak_mem_rss_kb']/1024:.2f} MB")
 print(f"Total time: {summary['total_time_secs']:.2f} seconds")
 print(f"Sample count: {summary['sample_count']}")
+print(f"Max processes: {summary['max_processes']}")
 
 # Save samples to different formats
 monitor.save_samples("metrics.jsonl")          # Default JSONL
@@ -138,7 +144,8 @@ import denet
     base_interval_ms=100,
     max_interval_ms=1000,
     output_file="profile_results.jsonl",
-    store_in_memory=True     # Store samples in memory (default)
+    store_in_memory=True,    # Store samples in memory (default)
+    include_children=True    # Monitor child processes (default True)
 )
 def expensive_calculation():
     # Long-running calculation
@@ -170,7 +177,8 @@ with denet.monitor(
     base_interval_ms=100,
     max_interval_ms=1000,
     output_file=None,         # Optional file output
-    store_in_memory=True      # Store samples in memory (default)
+    store_in_memory=True,     # Store samples in memory (default)
+    include_children=True     # Monitor child processes (default True)
 ) as mon:
     # Code to profile
     for i in range(5):

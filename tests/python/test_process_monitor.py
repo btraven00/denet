@@ -5,6 +5,8 @@ import time
 import unittest
 
 import denet
+from denet import ProcessMonitor
+from tests.python.test_helpers import extract_metrics_from_sample, check_sample_has_metrics
 
 
 class TestProcessMonitor(unittest.TestCase):
@@ -30,8 +32,9 @@ class TestProcessMonitor(unittest.TestCase):
         # Verify samples are valid JSON
         for sample in samples:
             data = json.loads(sample)
-            self.assertIn("cpu_usage", data)
-            self.assertIn("mem_rss_kb", data)
+            metrics = extract_metrics_from_sample(data)
+            self.assertIn("cpu_usage", metrics)
+            self.assertIn("mem_rss_kb", metrics)
 
     def test_file_output(self):
         """Test direct file output option"""
@@ -70,7 +73,8 @@ class TestProcessMonitor(unittest.TestCase):
                     # Skip metadata line (has pid, cmd, executable, t0_ms)
                     if all(key in data for key in ["pid", "cmd", "executable", "t0_ms"]):
                         continue
-                    self.assertIn("cpu_usage", data)
+                    metrics = extract_metrics_from_sample(data)
+                    self.assertIn("cpu_usage", metrics)
                     metrics_found = True
 
                 # Ensure we found at least one metrics line
@@ -130,7 +134,8 @@ class TestProcessMonitor(unittest.TestCase):
         data = json.loads(sample_json)
         # Skip check if this is metadata
         if not all(key in data for key in ["pid", "cmd", "executable", "t0_ms"]):
-            self.assertIn("cpu_usage", data)
+            metrics = extract_metrics_from_sample(data)
+            self.assertIn("cpu_usage", metrics)
 
     def test_summary_generation(self):
         """Test that summary is generated correctly from stored samples"""
@@ -181,7 +186,8 @@ class TestProcessMonitor(unittest.TestCase):
                 self.assertGreater(len(lines), 0)
                 for line in lines:
                     data = json.loads(line)
-                    self.assertIn("cpu_usage", data)
+                    metrics = extract_metrics_from_sample(data)
+                    self.assertIn("cpu_usage", metrics)
         finally:
             if os.path.exists(jsonl_file):
                 os.unlink(jsonl_file)
@@ -204,7 +210,8 @@ class TestProcessMonitor(unittest.TestCase):
                     # Skip metadata items
                     if all(key in item for key in ["pid", "cmd", "executable", "t0_ms"]):
                         continue
-                    self.assertIn("cpu_usage", item)
+                    metrics = extract_metrics_from_sample(item)
+                    self.assertIn("cpu_usage", metrics)
                     metrics_found = True
 
                 # Ensure we found at least one metrics item

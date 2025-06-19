@@ -6,6 +6,8 @@ import threading
 import time
 from collections.abc import Callable
 
+from tests.python.test_helpers import extract_metrics_from_sample
+
 
 # For our pure Python implementation of the context manager and decorator
 class Monitor:
@@ -250,7 +252,8 @@ def test_phase1():
             assert len(lines) > 0, "No JSON lines in output file"
             for line in lines:
                 data = json.loads(line)
-                assert "cpu_usage" in data, "Missing cpu_usage field"
+                metrics = extract_metrics_from_sample(data)
+                assert "cpu_usage" in metrics, "Missing cpu_usage field"
 
         print(f"File output successful with {len(lines)} lines")
     finally:

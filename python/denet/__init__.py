@@ -213,12 +213,14 @@ class Monitor:
         output_file: str | None = None,
         output_format: str = "jsonl",
         store_in_memory: bool = True,
+        include_children: bool = True,
     ):
         self.base_interval_ms = base_interval_ms
         self.max_interval_ms = max_interval_ms
         self.output_file = output_file
         self.output_format = output_format
         self.store_in_memory = store_in_memory
+        self.include_children = include_children
         self.pid = os.getpid()
         self.samples = []
         self.monitoring = False
@@ -239,6 +241,7 @@ class Monitor:
                             max_interval_ms=self.max_interval_ms,
                             output_file=None,
                             store_in_memory=False,
+                            include_children=self.include_children,
                         )
                         metrics_json = tmp_monitor.sample_once()
                         if metrics_json is not None:
@@ -283,17 +286,73 @@ class Monitor:
         if not self.samples:
             return "{}"
 
+        # Parse JSON samples first
+        parsed_samples = []
+        for sample in self.samples:
+            # If it's already a string, parse it into a Python object
+            if isinstance(sample, str):
+                try:
+                    parsed_samples.append(json.loads(sample))
+                except json.JSONDecodeError:
+                    continue  # Skip invalid JSON
+            else:
+                parsed_samples.append(sample)  # Already a Python object
+
+        if not parsed_samples:
+            return "{}"
+
         # Calculate elapsed time
-        if len(self.samples) > 1:
-            elapsed = (self.samples[-1]["ts_ms"] - self.samples[0]["ts_ms"]) / 1000.0
+        if len(parsed_samples) > 1:
+            elapsed = (parsed_samples[-1]["ts_ms"] - parsed_samples[0]["ts_ms"]) / 1000.0
         else:
             elapsed = 0.0
 
-        # Convert samples to JSON strings
-        metrics_json = [json.dumps(sample) for sample in self.samples]
+        # Prepare metrics for aggregation
+        metrics_json = []
+        for sample in parsed_samples:
+            # Skip metadata samples
+            if all(key in sample for key in ["pid", "cmd", "executable", "t0_ms"]):
+                continue
 
-        # Use the existing summary generation logic
-        return generate_summary_from_metrics_json(metrics_json, elapsed)
+            if "aggregated" in sample:
+                # This is an aggregated sample - extract just the aggregated metrics
+                agg_metric = sample["aggregated"]
+                # Ensure process_count is preserved if present
+                if "process_count" not in agg_metric and "children" in sample:
+                    # Compute process count as parent (if exists) + children
+                    process_count = len(sample.get("children", []))
+                    if sample.get("parent") is not None:
+                        process_count += 1
+                    agg_metric["process_count"] = process_count
+
+                metrics_json.append(json.dumps(agg_metric))
+            elif "process_count" in sample:
+                # This is already an aggregated metrics sample
+                metrics_json.append(json.dumps(sample))
+            elif all(key in sample for key in ["cpu_usage", "mem_rss_kb"]):
+                # This is an individual process metrics sample
+                metrics_json.append(json.dumps(sample))
+
+        # If we found aggregated metrics, create a manual summary that includes process_count
+        if any("process_count" in json.loads(m) for m in metrics_json if json.loads(m).get("process_count", 0) > 1):
+            # Calculate max processes from all aggregated metrics
+            max_processes = max(
+                (json.loads(m).get("process_count", 1) for m in metrics_json if "process_count" in json.loads(m)),
+                default=1,
+            )
+
+            # Get the summary from the Rust code
+            summary_json = generate_summary_from_metrics_json(metrics_json, elapsed)
+            summary = json.loads(summary_json)
+
+            # Overwrite the max_processes field with our calculated value
+            summary["max_processes"] = max_processes
+
+            # Convert back to JSON
+            return json.dumps(summary)
+        else:
+            # Use the existing summary generation logic
+            return generate_summary_from_metrics_json(metrics_json, elapsed)
 
     def clear_samples(self):
         self.samples = []
@@ -355,6 +414,7 @@ def monitor(
     output_file: str | None = None,
     output_format: str = "jsonl",
     store_in_memory: bool = True,
+    include_children: bool = True,
 ):
     """
     Context manager for monitoring the current process.
@@ -365,6 +425,7 @@ def monitor(
         output_file: Optional file path to write samples directly
         output_format: Format for file output ('jsonl', 'json', 'csv')
         store_in_memory: Whether to keep samples in memory
+        include_children: Whether to monitor child processes (default True)
 
     Returns:
         A context manager that provides monitoring capabilities
@@ -375,6 +436,7 @@ def monitor(
         output_file=output_file,
         output_format=output_format,
         store_in_memory=store_in_memory,
+        include_children=include_children,
     )
 
 
@@ -391,6 +453,7 @@ def execute_with_monitoring(
     since_process_start: bool = False,
     pause_for_attachment: bool = True,
     quiet: bool = False,
+    include_children: bool = True,
 ) -> Tuple[int, "ProcessMonitor"]:
     """
     Execute a command with monitoring from the very start using signal-based process control.
@@ -415,6 +478,7 @@ def execute_with_monitoring(
         since_process_start: Whether to measure from process start vs monitor start
         pause_for_attachment: Whether to use signal-based pausing (set False to disable)
         quiet: Whether to suppress output
+        include_children: Whether to monitor child processes (default True)
 
     Returns:
         Tuple of (exit_code, monitor)
@@ -465,6 +529,7 @@ def execute_with_monitoring(
                 output_format=output_format,
                 store_in_memory=store_in_memory,
                 quiet=quiet,
+                include_children=include_children,
             )
 
             # 4. Resume the process if it was paused

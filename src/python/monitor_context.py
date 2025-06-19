@@ -1,10 +1,11 @@
 class MonitorContextManager:
-    def __init__(self, base_interval_ms, max_interval_ms, output_file, output_format, store_in_memory):
+    def __init__(self, base_interval_ms, max_interval_ms, output_file, output_format, store_in_memory, include_children):
         self.base_interval_ms = base_interval_ms
         self.max_interval_ms = max_interval_ms
         self.output_file = output_file
         self.output_format = output_format
         self.store_in_memory = store_in_memory
+        self.include_children = include_children
         self.monitoring = False
         self.thread = None
         self.samples = []
@@ -29,7 +30,8 @@ class MonitorContextManager:
                             base_interval_ms=self.base_interval_ms,
                             max_interval_ms=self.max_interval_ms,
                             output_file=None,
-                            store_in_memory=False
+                            store_in_memory=False,
+                            include_children=self.include_children
                         )
                         try:
                             metrics_json = tmp_monitor.sample_once()
@@ -81,7 +83,26 @@ class MonitorContextManager:
         # Use the existing summary generation logic
         try:
             from denet import generate_summary_from_metrics_json
-            return generate_summary_from_metrics_json(metrics_json, elapsed)
+
+            # If we have aggregated metrics with process counts, handle them specially
+            if any("process_count" in json.loads(m) for m in metrics_json if json.loads(m).get("process_count", 0) > 1):
+                # Calculate max processes from all aggregated metrics
+                max_processes = max(
+                    (json.loads(m).get("process_count", 1) for m in metrics_json if "process_count" in json.loads(m)),
+                    default=1
+                )
+
+                # Get the summary from the Rust code
+                summary_json = generate_summary_from_metrics_json(metrics_json, elapsed)
+                summary = json.loads(summary_json)
+
+                # Overwrite the max_processes field with our calculated value
+                summary["max_processes"] = max_processes
+
+                # Convert back to JSON
+                return json.dumps(summary)
+            else:
+                return generate_summary_from_metrics_json(metrics_json, elapsed)
         except ImportError:
             # Fallback if the function is not available
             return json.dumps({
@@ -128,4 +149,4 @@ class MonitorContextManager:
                     f.write(json.dumps(sample) + '\n')
 
 # Create and return an instance of the context manager
-MonitorContextManager(base_interval_ms, max_interval_ms, output_file, output_format, store_in_memory)
+MonitorContextManager(base_interval_ms, max_interval_ms, output_file, output_format, store_in_memory, include_children)

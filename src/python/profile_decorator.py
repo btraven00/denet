@@ -23,7 +23,8 @@ def wrapper(*args, **kwargs):
                         base_interval_ms=base_interval_ms,
                         max_interval_ms=max_interval_ms,
                         output_file=None,  # We'll handle file output separately
-                        store_in_memory=False
+                        store_in_memory=False,
+                        include_children=include_children
                     )
                     try:
                         metrics_json = tmp_monitor.sample_once()
@@ -60,6 +61,16 @@ def wrapper(*args, **kwargs):
             try:
                 with open(output_file, 'r') as f:
                     samples = [json.loads(line) for line in f if line.strip()]
+
+                # Check for aggregated metrics with process counts and calculate max processes
+                if any("process_count" in s for s in samples if s.get("process_count", 0) > 1):
+                    # Extract max process count for accurate reporting
+                    max_processes = max((s.get("process_count", 1) for s in samples
+                                        if "process_count" in s), default=1)
+                    # Make sure this gets reported in the final stats
+                    for s in samples:
+                        if "process_count" not in s:
+                            s["process_count"] = max_processes
             except Exception:
                 pass  # Ignore file read errors
 

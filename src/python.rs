@@ -5,7 +5,7 @@
 
 use crate::config::{OutputConfig, OutputFormat};
 use crate::error::DenetError;
-use crate::monitor::{Metrics, Summary, SummaryGenerator};
+use crate::monitor::{Summary, SummaryGenerator};
 use crate::process_monitor::{io_err_to_py_err, ProcessMonitor};
 
 use pyo3::prelude::*;
@@ -16,14 +16,14 @@ use std::time::Duration;
 #[pyclass(name = "ProcessMonitor")]
 struct PyProcessMonitor {
     inner: ProcessMonitor,
-    samples: Vec<Metrics>,
+    samples: Vec<String>,
     output_config: OutputConfig,
 }
 
 #[pymethods]
 impl PyProcessMonitor {
     #[new]
-    #[pyo3(signature = (cmd, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false))]
+    #[pyo3(signature = (cmd, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         cmd: Vec<String>,
@@ -34,6 +34,7 @@ impl PyProcessMonitor {
         output_format: &str,
         store_in_memory: bool,
         quiet: bool,
+        include_children: bool,
     ) -> PyResult<Self> {
         let output_config = OutputConfig::builder()
             .format_str(output_format)?
@@ -52,13 +53,16 @@ impl PyProcessMonitor {
             output_config
         };
 
-        let inner = ProcessMonitor::new_with_options(
+        let mut inner = ProcessMonitor::new_with_options(
             cmd,
             Duration::from_millis(base_interval_ms),
             Duration::from_millis(max_interval_ms),
             since_process_start,
         )
         .map_err(io_err_to_py_err)?;
+
+        // Enable child process monitoring if requested
+        inner.set_include_children(include_children);
 
         Ok(PyProcessMonitor {
             inner,
@@ -69,7 +73,7 @@ impl PyProcessMonitor {
 
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (pid, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false))]
+    #[pyo3(signature = (pid, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true))]
     fn from_pid(
         pid: usize,
         base_interval_ms: u64,
@@ -79,6 +83,7 @@ impl PyProcessMonitor {
         output_format: &str,
         store_in_memory: bool,
         quiet: bool,
+        include_children: bool,
     ) -> PyResult<Self> {
         let output_config = OutputConfig::builder()
             .format_str(output_format)?
@@ -97,13 +102,16 @@ impl PyProcessMonitor {
             output_config
         };
 
-        let inner = ProcessMonitor::from_pid_with_options(
+        let mut inner = ProcessMonitor::from_pid_with_options(
             pid,
             Duration::from_millis(base_interval_ms),
             Duration::from_millis(max_interval_ms),
             since_process_start,
         )
         .map_err(io_err_to_py_err)?;
+
+        // Enable child process monitoring if requested
+        inner.set_include_children(include_children);
 
         Ok(PyProcessMonitor {
             inner,
@@ -114,7 +122,7 @@ impl PyProcessMonitor {
 
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (cmd, stdout_file=None, stderr_file=None, timeout=None, base_interval_ms=100, max_interval_ms=1000, store_in_memory=true, output_file=None, output_format="jsonl", since_process_start=false, pause_for_attachment=true, quiet=false))]
+    #[pyo3(signature = (cmd, stdout_file=None, stderr_file=None, timeout=None, base_interval_ms=100, max_interval_ms=1000, store_in_memory=true, output_file=None, output_format="jsonl", since_process_start=false, pause_for_attachment=true, quiet=false, include_children=true))]
     fn execute_with_monitoring(
         py: Python,
         cmd: Vec<String>,
@@ -129,6 +137,7 @@ impl PyProcessMonitor {
         since_process_start: bool,
         pause_for_attachment: bool,
         quiet: bool,
+        include_children: bool,
     ) -> PyResult<(i32, PyProcessMonitor)> {
         use std::fs::OpenOptions;
         use std::time::Duration;
@@ -201,13 +210,16 @@ impl PyProcessMonitor {
         };
 
         // Create monitor for the process
-        let inner = ProcessMonitor::from_pid_with_options(
+        let mut inner = ProcessMonitor::from_pid_with_options(
             pid as usize,
             Duration::from_millis(base_interval_ms),
             Duration::from_millis(max_interval_ms),
             since_process_start,
         )
         .map_err(io_err_to_py_err)?;
+
+        // Set include_children flag
+        inner.set_include_children(include_children);
 
         let monitor = PyProcessMonitor {
             inner,
@@ -268,7 +280,10 @@ impl PyProcessMonitor {
 
                 // Store in memory if enabled
                 if self.output_config.store_in_memory {
-                    self.samples.push(metrics);
+                    // Convert metrics to JSON string and store
+                    if let Ok(json) = serde_json::to_string(&metrics) {
+                        self.samples.push(json);
+                    }
                 }
 
                 // Write to file if output_file is specified
@@ -294,30 +309,44 @@ impl PyProcessMonitor {
         use std::fs::OpenOptions;
         use std::io::Write;
 
-        let metrics_opt = self.inner.sample_metrics();
-
-        if let Some(metrics) = &metrics_opt {
-            // Store in memory if enabled
-            if self.output_config.store_in_memory {
-                self.samples.push(metrics.clone());
-            }
-
-            // Write to file if output_file is specified
-            if let Some(path) = &self.output_config.output_file {
-                let mut file = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                    .map_err(io_err_to_py_err)?;
-
-                let json = serde_json::to_string(&metrics)
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-                writeln!(file, "{json}").map_err(io_err_to_py_err)?;
-            }
+        // First check if the process is running
+        if !self.inner.is_running() {
+            return Ok(None);
         }
 
-        // Return JSON string for backward compatibility
-        Ok(metrics_opt.and_then(|metrics| serde_json::to_string(&metrics).ok()))
+        // Decide which sampling method to use based on include_children setting
+        let metrics_json = if self.inner.get_include_children() {
+            // Sample the metrics including child processes
+            let tree_metrics = self.inner.sample_tree_metrics();
+            serde_json::to_string(&tree_metrics)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
+        } else {
+            // Sample only the parent process
+            match self.inner.sample_metrics() {
+                Some(metrics) => serde_json::to_string(&metrics)
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?,
+                None => return Ok(None),
+            }
+        };
+
+        // Store in memory if enabled
+        if self.output_config.store_in_memory {
+            self.samples.push(metrics_json.clone());
+        }
+
+        // Write to file if output_file is specified
+        if let Some(path) = &self.output_config.output_file {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .map_err(io_err_to_py_err)?;
+
+            writeln!(file, "{metrics_json}").map_err(io_err_to_py_err)?;
+        }
+
+        // Return the metrics JSON
+        Ok(Some(metrics_json))
     }
 
     fn is_running(&mut self) -> PyResult<bool> {
@@ -336,10 +365,8 @@ impl PyProcessMonitor {
     }
 
     fn get_samples(&self) -> Vec<String> {
-        self.samples
-            .iter()
-            .filter_map(|m| serde_json::to_string(m).ok())
-            .collect()
+        // Samples are already stored as strings, just clone them
+        self.samples.clone()
     }
 
     fn clear_samples(&mut self) {
@@ -359,8 +386,8 @@ impl PyProcessMonitor {
 
         match output_format {
             OutputFormat::Json => {
-                let json_array = serde_json::to_string(&self.samples)
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                // Create a JSON array from the string samples
+                let json_array = format!("[{}]", self.samples.join(","));
                 file.write_all(json_array.as_bytes())
                     .map_err(io_err_to_py_err)?;
             }
@@ -370,29 +397,60 @@ impl PyProcessMonitor {
                     .map_err(io_err_to_py_err)?;
 
                 // Write data rows
-                for metrics in &self.samples {
-                    writeln!(
-                        file,
-                        "{},{},{},{},{},{},{},{},{},{}",
-                        metrics.ts_ms,
-                        metrics.cpu_usage,
-                        metrics.mem_rss_kb,
-                        metrics.mem_vms_kb,
-                        metrics.disk_read_bytes,
-                        metrics.disk_write_bytes,
-                        metrics.net_rx_bytes,
-                        metrics.net_tx_bytes,
-                        metrics.thread_count,
-                        metrics.uptime_secs
-                    )
-                    .map_err(io_err_to_py_err)?;
+                for metrics_json in &self.samples {
+                    // Parse each JSON string to extract values
+                    if let Ok(metrics) = serde_json::from_str::<serde_json::Value>(metrics_json) {
+                        // Extract values with fallbacks to 0
+                        let ts_ms = metrics.get("ts_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let cpu_usage = metrics
+                            .get("cpu_usage")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
+                        let mem_rss_kb = metrics
+                            .get("mem_rss_kb")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let mem_vms_kb = metrics
+                            .get("mem_vms_kb")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let disk_read_bytes = metrics
+                            .get("disk_read_bytes")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let disk_write_bytes = metrics
+                            .get("disk_write_bytes")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let net_rx_bytes = metrics
+                            .get("net_rx_bytes")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let net_tx_bytes = metrics
+                            .get("net_tx_bytes")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let thread_count = metrics
+                            .get("thread_count")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let uptime_secs = metrics
+                            .get("uptime_secs")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+
+                        writeln!(
+                            file,
+                            "{ts_ms},{cpu_usage},{mem_rss_kb},{mem_vms_kb},{disk_read_bytes},{disk_write_bytes},{net_rx_bytes},{net_tx_bytes},{thread_count},{uptime_secs}"
+                        )
+                        .map_err(io_err_to_py_err)?;
+                    }
                 }
             }
             OutputFormat::JsonLines => {
                 // Default to jsonl (one JSON object per line)
-                for metrics in &self.samples {
-                    let json = serde_json::to_string(&metrics)
-                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                // The samples are already JSON strings, so just write them
+                for json in &self.samples {
                     writeln!(file, "{json}").map_err(io_err_to_py_err)?;
                 }
             }
@@ -407,14 +465,29 @@ impl PyProcessMonitor {
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()));
         }
 
-        // Calculate elapsed time from first to last sample
-        let first = &self.samples[0];
-        let last = &self.samples[self.samples.len() - 1];
-        let elapsed_time = (last.ts_ms - first.ts_ms) as f64 / 1000.0;
+        // Use the specialized function to generate summary from JSON strings
+        // This matches what we're doing in the Python Monitor.get_summary() method
+        let elapsed = if self.samples.len() > 1 {
+            // Parse first and last sample to get timestamps
+            let first: serde_json::Value = serde_json::from_str(&self.samples[0])
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+            let last: serde_json::Value =
+                serde_json::from_str(&self.samples[self.samples.len() - 1])
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        let summary = Summary::from_metrics(&self.samples, elapsed_time);
-        serde_json::to_string(&summary)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+            let first_ts = first.get("ts_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+            let last_ts = last.get("ts_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+
+            (last_ts as f64 - first_ts as f64) / 1000.0
+        } else {
+            0.0
+        };
+
+        // Use the existing function to generate summary from metrics JSON
+        let result = generate_summary_from_metrics_json(self.samples.clone(), elapsed)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        Ok(result)
     }
 }
 
@@ -492,7 +565,8 @@ fn profile<'a>(
     max_interval_ms = 1000,
     output_file = None,
     output_format = "jsonl",
-    store_in_memory = true
+    store_in_memory = true,
+    include_children = true
 ))]
 fn monitor<'a>(
     py: Python<'a>,
@@ -501,6 +575,7 @@ fn monitor<'a>(
     output_file: Option<String>,
     output_format: &str,
     store_in_memory: bool,
+    include_children: bool,
 ) -> PyResult<Bound<'a, PyAny>> {
     use pyo3::types::PyDict;
     let locals = PyDict::new_bound(py);
@@ -509,6 +584,7 @@ fn monitor<'a>(
     locals.set_item("output_file", output_file)?;
     locals.set_item("output_format", output_format)?;
     locals.set_item("store_in_memory", store_in_memory)?;
+    locals.set_item("include_children", include_children)?;
     locals.set_item("ProcessMonitor", py.get_type_bound::<PyProcessMonitor>())?;
 
     py.eval_bound(
