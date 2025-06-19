@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/btraven00/denet/compare/v0.3.1...v0.3.2) (2025-06-19)
+
+
+### Bug Fixes
+
+* **python:** expose child process monitoring ([7033251](https://github.com/btraven00/denet/commit/70332513a5cf20208601f6a418946f8873387548))
+
 ## [0.3.1](https://github.com/btraven00/denet/compare/v0.3.0...v0.3.1) (2025-06-19)
 
 
