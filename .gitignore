@@ -1,4 +1,7 @@
 env/
+result
+result_*
+.direnv
 target/
 scratch/
 python/denet/*.so

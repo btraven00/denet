@@ -19,12 +19,38 @@
             version = "0.3.3";
             src = ./.;
 
-            # ✅ Disable `default` features, enable `ebpf` only
+            # Disable `default` features
+            cargoBuildNoDefaultFeatures = true;
+            # cargoBuildFeatures = [ "ebpf" ];
+            cargoExtraArgs = "--no-default-features"; # --features ebpf";
+
+            # Set CARGO_FEATURE_EBPF to ensure build.rs detects the feature
+            # CARGO_FEATURE_EBPF = "1";
+
             cargoBuildFlags = [
               "--release"
-              "--no-default-features"
-              "--features" "ebpf"
             ];
+
+            # Use Python directly - simpler approach
+            PYTHON_SYS_EXECUTABLE = "${pkgs.python312}/bin/python";
+            PYO3_PYTHON = "${pkgs.python312}/bin/python";
+
+            # Required build dependencies
+            nativeBuildInputs = with pkgs; [
+              clang
+              llvm
+              pkg-config
+              python312
+              #linuxHeaders  # Linux headers for eBPF development
+              #libbpf
+              #bcc          # For BPF headers
+            ];
+
+            # Add compile flags for BPF headers
+            NIX_CFLAGS_COMPILE = "-I${pkgs.linuxHeaders}/include -I${pkgs.libbpf}/include -I${pkgs.bcc}/include";
+
+            # Set Cargo build target
+            CARGO_BUILD_TARGET = pkgs.stdenv.hostPlatform.rust.rustcTargetSpec;
 
             meta = with pkgs.lib; {
               description = "Streaming process monitoring tool";
@@ -39,7 +65,16 @@
         };
 
         devShell = pkgs.mkShell {
-          buildInputs = [ pkgs.rustc pkgs.cargo ];
+          buildInputs = with pkgs; [
+            rustc
+            cargo
+            #clang
+            #llvm
+            pkg-config
+            python312
+            #linuxHeaders
+            #libbpf
+          ];
         };
       });
 }
