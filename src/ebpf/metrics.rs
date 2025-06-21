@@ -10,6 +10,10 @@ pub struct EbpfMetrics {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub syscalls: Option<SyscallMetrics>,
 
+    /// Off-CPU profiling data
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offcpu: Option<OffCpuMetrics>,
+
     /// Error message if eBPF collection failed
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -20,6 +24,7 @@ impl EbpfMetrics {
     pub fn error(message: &str) -> Self {
         Self {
             syscalls: None,
+            offcpu: None,
             error: Some(message.to_string()),
         }
     }
@@ -28,6 +33,25 @@ impl EbpfMetrics {
     pub fn with_syscalls(syscalls: SyscallMetrics) -> Self {
         Self {
             syscalls: Some(syscalls),
+            offcpu: None,
+            error: None,
+        }
+    }
+
+    /// Create metrics with off-CPU profiling data
+    pub fn with_offcpu(offcpu: OffCpuMetrics) -> Self {
+        Self {
+            syscalls: None,
+            offcpu: Some(offcpu),
+            error: None,
+        }
+    }
+
+    /// Create metrics with both syscalls and off-CPU data
+    pub fn with_all(syscalls: SyscallMetrics, offcpu: OffCpuMetrics) -> Self {
+        Self {
+            syscalls: Some(syscalls),
+            offcpu: Some(offcpu),
             error: None,
         }
     }
@@ -223,6 +247,146 @@ pub fn categorize_syscall(syscall_nr: u64) -> String {
         // Unknown
         _ => "other".to_string(),
     }
+}
+
+use super::offcpu_profiler::{ProcessedOffCpuEvent, StackFrame};
+
+/// Aggregated stack trace information for display
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AggregatedStacks {
+    /// Aggregated user-space stack traces
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub user_stack: Vec<StackFrame>,
+
+    /// Aggregated kernel-space stack traces
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub kernel_stack: Vec<StackFrame>,
+}
+
+/// Off-CPU profiling metrics
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OffCpuMetrics {
+    /// Total time spent off-CPU (nanoseconds)
+    pub total_time_ns: u64,
+
+    /// Number of off-CPU events
+    pub total_events: u64,
+
+    /// Average time spent off-CPU (nanoseconds)
+    pub avg_time_ns: u64,
+
+    /// Maximum time spent off-CPU (nanoseconds)
+    pub max_time_ns: u64,
+
+    /// Minimum time spent off-CPU (nanoseconds)
+    pub min_time_ns: u64,
+
+    /// Thread-specific off-CPU statistics
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub thread_stats: HashMap<String, ThreadOffCpuStats>,
+
+    /// Top blocking threads by off-CPU time
+    pub top_blocking_threads: Vec<ThreadOffCpuInfo>,
+
+    /// Analysis of off-CPU bottlenecks
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bottlenecks: Vec<String>,
+
+    /// Symbolicated stack traces (very verbose, for debugging/export)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stack_traces: Vec<ProcessedOffCpuEvent>,
+
+    /// Aggregated stack information (for display)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stacks: Option<AggregatedStacks>,
+}
+
+/// Thread-specific off-CPU statistics
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ThreadOffCpuStats {
+    /// Thread ID
+    pub tid: u32,
+
+    /// Total time spent off-CPU (nanoseconds)
+    pub total_time_ns: u64,
+
+    /// Number of off-CPU events
+    pub count: u64,
+
+    /// Average time spent off-CPU (nanoseconds)
+    pub avg_time_ns: u64,
+
+    /// Maximum time spent off-CPU (nanoseconds)
+    pub max_time_ns: u64,
+
+    /// Minimum time spent off-CPU (nanoseconds)
+    pub min_time_ns: u64,
+}
+
+/// Thread off-CPU summary for reporting
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadOffCpuInfo {
+    /// Thread ID
+    pub tid: u32,
+
+    /// Process ID
+    pub pid: u32,
+
+    /// Total time spent off-CPU (milliseconds)
+    #[serde(rename = "time_ms")]
+    pub total_time_ms: f64,
+
+    /// Percentage of total off-CPU time (with 2 decimal places)
+    #[serde(serialize_with = "serialize_percentage_2dp")]
+    pub percentage: f64,
+}
+
+/// Serialize a f64 percentage value with 2 decimal places
+fn serialize_percentage_2dp<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let rounded = (value * 100.0).round() / 100.0;
+    serializer.serialize_f64(rounded)
+}
+
+/// Analysis of off-CPU patterns
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OffCpuAnalysis {
+    /// Classification of what's causing the most off-CPU time
+    pub bottleneck_type: OffCpuBottleneckType,
+
+    /// Percentage of time spent in I/O-related waits
+    pub io_wait_percentage: f64,
+
+    /// Percentage of time spent in lock contention
+    pub lock_contention_percentage: f64,
+
+    /// Percentage of time spent in sleep/idle
+    pub sleep_percentage: f64,
+
+    /// Optimization suggestions
+    pub optimization_hints: Vec<String>,
+}
+
+/// Classification of off-CPU bottlenecks
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum OffCpuBottleneckType {
+    /// Blocking I/O operations
+    IoBlocked,
+
+    /// Lock contention
+    LockContention,
+
+    /// Voluntary sleep/yield
+    Sleep,
+
+    /// Various mixed causes
+    Mixed,
+
+    /// Unknown cause
+    Unknown,
 }
 
 /// Generate enhanced syscall analysis for bottleneck diagnosis

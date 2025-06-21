@@ -26,6 +26,7 @@ pub mod config;
 pub mod core;
 pub mod error;
 pub mod monitor;
+pub mod symbolication;
 
 // Platform-specific modules
 #[cfg(target_os = "linux")]

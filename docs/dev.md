@@ -23,6 +23,15 @@ pixi install
 3. Build and install Python bindings: `pixi run develop`
 4. Test Python bindings: `pixi run test`
 
+### eBPF Development Workflow
+
+When working on eBPF features:
+
+1. Make changes to Rust eBPF code in `aya-ebpf/src/`
+2. Build the eBPF programs: `./scripts/build_ebpf.sh`
+3. Build the main project with eBPF support: `pixi run build-ebpf`
+4. Test: `sudo pixi run test-ebpf`
+
 ## Testing
 
 ### Running Tests
@@ -105,6 +114,12 @@ pixi run lint-fix
 
 # Format both Rust and Python code
 pixi run fmt
+
+# Build the Rust eBPF programs (required for off-CPU profiling)
+./scripts/build_ebpf.sh
+
+# Build the main project with eBPF support
+pixi run build-ebpf
 ```
 
 ## Project Structure
@@ -115,7 +130,14 @@ denet/
 │   ├── lib.rs        # Core library and Python binding interface (PyO3)
 │   ├── bin/          # CLI executables
 │   │   └── denet.rs  # Command-line interface implementation
+│   ├── ebpf/         # eBPF integration code
+│   │   ├── programs/ # C-based eBPF programs
+│   │   ├── syscall_tracker.rs # Syscall profiling implementation
+│   │   └── offcpu_profiler.rs # Off-CPU profiling implementation
 │   └── process_monitor.rs  # Core implementation with Rust tests
+├── aya-ebpf/         # Rust-based eBPF programs (using aya-bpf)
+│   └── src/          # eBPF program source code
+│       └── offcpu_profiler.rs # Off-CPU profiler eBPF implementation
 ├── python/           # Python package
 │   └── denet/        # Python module
 │       ├── __init__.py    # Python API (decorator and context manager)
@@ -124,6 +146,8 @@ denet/
 │   ├── python/       # Python binding tests
 │   │   ├── test_convenience.py  # Tests for decorator and context manager
 │   │   └── test_process_monitor.py  # Tests for ProcessMonitor class
+│   ├── integration/  # Integration tests
+│   │   └── offcpu_profiler_test.rs # Tests for off-CPU profiling
 │   └── cli/          # Command-line interface tests
 ├── .github/          # GitHub configuration
 │   └── workflows/    # GitHub Actions workflows for CI/CD

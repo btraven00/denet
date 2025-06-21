@@ -284,7 +284,7 @@ fn main() -> Result<()> {
     let start_time = Instant::now();
     let mut metrics_count = 0;
     let mut results = Vec::new();
-    let mut aggregated_metrics: Vec<AggregatedMetrics> = Vec::new();
+    let mut _aggregated_metrics: Vec<AggregatedMetrics> = Vec::new();
 
     // Calculate timeout if duration is specified
     let timeout = if args.duration > 0 {
@@ -335,12 +335,16 @@ fn main() -> Result<()> {
         if args.json {
             let json = serde_json::to_string(&final_tree_metrics).unwrap();
             println!("{json}");
-        } else if let Some(agg) = final_tree_metrics.aggregated {
-            results.push(convert_aggregated_to_metrics(&agg));
-            metrics_count = 1;
+        } else if let Some(tree_metrics) = &final_tree_metrics {
+            if let Some(agg) = &tree_metrics.aggregated {
+                results.push(convert_aggregated_to_metrics(agg));
+                metrics_count = 1;
+            }
         }
     } else {
         // Regular adaptive polling mode
+        let use_polling = true;
+
         while monitor.is_running() && running.load(Ordering::SeqCst) {
             // Check timeout
             if let Some(timeout_duration) = timeout {
@@ -352,12 +356,11 @@ fn main() -> Result<()> {
                 }
             }
 
-            if args.exclude_children {
-                // Monitor only the main process
+            // Sample metrics based on polling mode
+            if args.no_polling {
+                // Single process monitoring (no tree)
                 if let Some(metrics) = monitor.sample_metrics() {
                     metrics_count += 1;
-
-                    // Store metrics for final summary
                     results.push(metrics.clone());
 
                     // Format and display metrics
@@ -368,7 +371,6 @@ fn main() -> Result<()> {
                         }
                         if !args.quiet {
                             if update_in_place {
-                                // Clear line and print new content with spinner and elapsed time
                                 let spinner = progress_chars[progress_index % progress_chars.len()];
                                 let elapsed = start_time.elapsed().as_secs();
                                 print!(
@@ -388,11 +390,10 @@ fn main() -> Result<()> {
                     } else {
                         let formatted = format_metrics(&metrics);
                         if let Some(file) = &mut out_file {
-                            writeln!(file, "{}", serde_json::to_string(&metrics).unwrap())?;
+                            writeln!(file, "{formatted}")?;
                         }
                         if !args.quiet {
                             if update_in_place {
-                                // Use compact format for in-place updates
                                 let formatted_compact = format_metrics_compact(&metrics);
                                 let spinner = progress_chars[progress_index % progress_chars.len()];
                                 let elapsed = start_time.elapsed().as_secs();
@@ -412,81 +413,88 @@ fn main() -> Result<()> {
                         }
                     }
                 }
-            } else {
+            } else if use_polling {
                 // Monitor process tree (default behavior)
-                let tree_metrics = monitor.sample_tree_metrics();
-                if let Some(agg_metrics) = tree_metrics.aggregated.as_ref() {
-                    metrics_count += 1;
+                let tree_metrics_opt = monitor.sample_tree_metrics();
+                if let Some(tree_metrics) = tree_metrics_opt {
+                    if let Some(agg_metrics) = tree_metrics.aggregated.as_ref() {
+                        metrics_count += 1;
 
-                    // Store aggregated metrics for final summary
-                    // Convert aggregated metrics to regular metrics for storage compatibility
-                    let storage_metrics = convert_aggregated_to_metrics(agg_metrics);
-                    results.push(storage_metrics);
+                        // Store aggregated metrics for final summary
+                        // Convert aggregated metrics to regular metrics for storage compatibility
+                        let storage_metrics = convert_aggregated_to_metrics(agg_metrics);
+                        results.push(storage_metrics);
 
-                    // Also store for specialized aggregated stats
-                    aggregated_metrics.push(agg_metrics.clone());
+                        // Also store for specialized aggregated stats
+                        _aggregated_metrics.push(agg_metrics.clone());
 
-                    // Format and display tree metrics
-                    if args.json {
-                        let json = serde_json::to_string(&tree_metrics).unwrap();
-                        if let Some(file) = &mut out_file {
-                            writeln!(file, "{json}")?;
-                        }
-                        if !args.quiet {
-                            if update_in_place {
-                                // For in-place updates, show just aggregated metrics
-                                let agg_json = serde_json::to_string(&agg_metrics).unwrap();
-                                let spinner = progress_chars[progress_index % progress_chars.len()];
-                                let elapsed = start_time.elapsed().as_secs();
-                                print!(
-                                    "\r{}\r{} [{}s] {}",
-                                    " ".repeat(terminal_width.saturating_sub(1)),
-                                    spinner.to_string().cyan(),
-                                    elapsed.to_string().bright_black(),
-                                    agg_json
-                                );
-                                io::stdout().flush()?;
-                                needs_newline_on_exit = true;
-                                progress_index += 1;
-                            } else {
-                                println!("{json}");
+                        // Format and display tree metrics
+                        if args.json {
+                            let json = serde_json::to_string(&tree_metrics).unwrap();
+                            if let Some(file) = &mut out_file {
+                                writeln!(file, "{json}")?;
                             }
-                        }
-                    } else {
-                        // Format and display tree metrics with parent and children
-                        let formatted = format_aggregated_metrics(agg_metrics);
-                        if let Some(file) = &mut out_file {
-                            writeln!(file, "{}", serde_json::to_string(&tree_metrics).unwrap())?;
-                        }
-                        if !args.quiet {
-                            if update_in_place {
-                                // Use compact format for in-place updates
-                                let formatted_compact =
-                                    format_aggregated_metrics_compact(agg_metrics);
-                                let spinner = progress_chars[progress_index % progress_chars.len()];
-                                let elapsed = start_time.elapsed().as_secs();
-                                print!(
-                                    "\r{}\r{} [{}s] {}",
-                                    " ".repeat(terminal_width.saturating_sub(1)),
-                                    spinner.to_string().cyan(),
-                                    elapsed.to_string().bright_black(),
-                                    formatted_compact
-                                );
-                                io::stdout().flush()?;
-                                needs_newline_on_exit = true;
-                                progress_index += 1;
-                            } else {
-                                println!("{formatted}");
+                            if !args.quiet {
+                                if update_in_place {
+                                    // For in-place updates, show just aggregated metrics
+                                    let agg_json = serde_json::to_string(&agg_metrics).unwrap();
+                                    let spinner =
+                                        progress_chars[progress_index % progress_chars.len()];
+                                    let elapsed = start_time.elapsed().as_secs();
+                                    print!(
+                                        "\r{}\r{} [{}s] {}",
+                                        " ".repeat(terminal_width.saturating_sub(1)),
+                                        spinner.to_string().cyan(),
+                                        elapsed.to_string().bright_black(),
+                                        agg_json
+                                    );
+                                    io::stdout().flush()?;
+                                    needs_newline_on_exit = true;
+                                    progress_index += 1;
+                                } else {
+                                    println!("{json}");
+                                }
+                            }
+                        } else {
+                            // Format and display tree metrics with parent and children
+                            let formatted = format_aggregated_metrics(agg_metrics);
+                            if let Some(file) = &mut out_file {
+                                writeln!(
+                                    file,
+                                    "{}",
+                                    serde_json::to_string(&tree_metrics).unwrap()
+                                )?;
+                            }
+                            if !args.quiet {
+                                if update_in_place {
+                                    // Use compact format for in-place updates
+                                    let formatted_compact =
+                                        format_aggregated_metrics_compact(agg_metrics);
+                                    let spinner =
+                                        progress_chars[progress_index % progress_chars.len()];
+                                    let elapsed = start_time.elapsed().as_secs();
+                                    print!(
+                                        "\r{}\r{} [{}s] {}",
+                                        " ".repeat(terminal_width.saturating_sub(1)),
+                                        spinner.to_string().cyan(),
+                                        elapsed.to_string().bright_black(),
+                                        formatted_compact
+                                    );
+                                    io::stdout().flush()?;
+                                    needs_newline_on_exit = true;
+                                    progress_index += 1;
+                                } else {
+                                    println!("{formatted}");
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // Sleep for the adaptive interval
             std::thread::sleep(monitor.adaptive_interval());
         }
-    } // End of polling mode else block
+    }
 
     // Calculate summary
     let runtime = start_time.elapsed();
