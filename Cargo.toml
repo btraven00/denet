@@ -13,8 +13,8 @@ authors = ["ben <ben.uzh@proton.me>"]
 
 [features]
 default = ["python"]
-python = ["pyo3"]
-ebpf = ["aya", "aya-log"]
+python = ["dep:pyo3"]
+ebpf = ["dep:aya", "dep:aya-log"]
 
 [dependencies]
 sysinfo = { version = "0.35.2" }
@@ -42,7 +42,8 @@ aya = { version = "0.12.0", optional = true }
 aya-log = { version = "0.2", optional = true }
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+# Only build cdylib when python feature is enabled
+crate-type = ["rlib", "cdylib"]
 
 [[bin]]
 name = "denet"

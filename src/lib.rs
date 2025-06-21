@@ -52,18 +52,19 @@ pub use process_monitor::{ProcessMonitor, ProcessResult};
 pub use config::{DenetConfig, MonitorConfig, OutputConfig, OutputFormat};
 pub use error::{DenetError, Result};
 
-// Python module export
+// Python-specific code is completely isolated here
 #[cfg(feature = "python")]
-use pyo3::prelude::*;
+mod python_bindings {
+    use super::python;
+    use pyo3::prelude::*;
 
-#[cfg(feature = "python")]
-#[pymodule]
-fn _denet(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    python::register_python_module(m)
+    #[pymodule]
+    pub fn _denet(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+        python::register_python_module(m)
+    }
 }
 
-/// Run a simple monitoring loop (non-Python API)
-#[cfg(not(feature = "python"))]
+/// Run a simple monitoring loop
 pub fn run_monitor(
     cmd: Vec<String>,
     base_interval_ms: u64,
