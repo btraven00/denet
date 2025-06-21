@@ -43,11 +43,12 @@ cargo install denet  # Rust binary
 
 ### Understanding CPU Utilization
 
-# CPU usage is reported in a `top`-compatible format where 100% represents one fully utilized CPU core:
-# - 100% = one core fully utilized
-# - 400% = four cores fully utilized
-# - Child processes are tracked separately and aggregated for total resource usage
-# - Process trees are monitored by default, tracking all child processes spawned by the main process
+CPU usage is reported in a `top`-compatible format where 100% represents one fully utilized CPU core:
+
+- 100% = one core fully utilized
+- 400% = four cores fully utilized
+- Child processes are tracked separately and aggregated for total resource usage
+- Process trees are monitored by default, tracking all child processes spawned by the main process
 
 This is consistent with standard tools like `top` and `htop`. For example, a process using 3 CPU cores at full capacity will show 300% CPU usage, regardless of how many cores your system has.
 
