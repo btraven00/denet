@@ -26,6 +26,7 @@ platforms = ["linux-64", "osx-arm64"]
 
 [tool.pixi.dependencies]
 python = "==3.12"
+pip = "*"
 maturin = "==1.8.6"
 pytest = ">=7.0.0"
 pytest-cov = ">=4.1.0"
@@ -40,7 +41,8 @@ develop = { cmd = "./scripts/build_and_install.sh" }
 test = { cmd = "python -m pytest -n 4 tests/python/" }
 
 # 2 workers for github runners
-test-cov = { cmd = "python -m pytest -n 2 tests/python/ --cov=denet --cov-report=xml --cov-branch" }
+pytest-with-coverage = { cmd = "python -m pytest -n 2 tests/python/ --cov=python/denet --cov-report=xml --cov-branch" }
+pytest-with-coverage-html = { cmd = "python -m pytest -n 2 tests/python/ --cov=python/denet --cov-report=html --cov-branch" }
 test-rust = { cmd = "cargo test --no-default-features" }
 test-all = { cmd = "cargo test --no-default-features && python -m pytest tests/python/" }
 coverage = { cmd = "cargo llvm-cov --lib --no-default-features --html -- --skip test_from_pid --skip test_process_metadata" }

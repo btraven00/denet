@@ -2,6 +2,9 @@ env/
 target/
 scratch/
 python/denet/*.so
+htmlcov/
+coverage.xml
+.coverage
 
 __pycache__/*
 

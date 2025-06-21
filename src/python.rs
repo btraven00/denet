@@ -512,98 +512,13 @@ fn generate_summary_from_metrics_json(
     }
 }
 
-// Profile decorator implementation
-#[pyfunction]
-#[pyo3(signature = (
-    func,
-    base_interval_ms = 100,
-    max_interval_ms = 1000,
-    output_file = None,
-    output_format = "jsonl",
-    store_in_memory = true,
-    include_children = true
-))]
-#[allow(clippy::too_many_arguments)]
-fn profile<'a>(
-    py: Python<'a>,
-    func: &Bound<'a, PyAny>,
-    base_interval_ms: u64,
-    max_interval_ms: u64,
-    output_file: Option<String>,
-    output_format: &str,
-    store_in_memory: bool,
-    include_children: bool,
-) -> PyResult<Bound<'a, PyAny>> {
-    // Create a decorator that will wrap the function
-    use pyo3::types::PyDict;
-    let locals = PyDict::new_bound(py);
-    locals.set_item("func", func)?;
-    locals.set_item("base_interval_ms", base_interval_ms)?;
-    locals.set_item("max_interval_ms", max_interval_ms)?;
-    locals.set_item("output_file", output_file)?;
-    locals.set_item("output_format", output_format)?;
-    locals.set_item("store_in_memory", store_in_memory)?;
-    locals.set_item("include_children", include_children)?;
-    locals.set_item("ProcessMonitor", py.get_type_bound::<PyProcessMonitor>())?;
-
-    // Define a wrapper function
-    py.eval_bound(
-        include_str!("python/profile_decorator.py"),
-        None,
-        Some(&locals),
-    )
-    .map_err(|e| {
-        e.print(py);
-        pyo3::exceptions::PyRuntimeError::new_err("Failed to create profile decorator")
-    })
-}
-
-// Context manager implementation
-#[pyfunction]
-#[pyo3(signature = (
-    base_interval_ms = 100,
-    max_interval_ms = 1000,
-    output_file = None,
-    output_format = "jsonl",
-    store_in_memory = true,
-    include_children = true
-))]
-fn monitor<'a>(
-    py: Python<'a>,
-    base_interval_ms: u64,
-    max_interval_ms: u64,
-    output_file: Option<String>,
-    output_format: &str,
-    store_in_memory: bool,
-    include_children: bool,
-) -> PyResult<Bound<'a, PyAny>> {
-    use pyo3::types::PyDict;
-    let locals = PyDict::new_bound(py);
-    locals.set_item("base_interval_ms", base_interval_ms)?;
-    locals.set_item("max_interval_ms", max_interval_ms)?;
-    locals.set_item("output_file", output_file)?;
-    locals.set_item("output_format", output_format)?;
-    locals.set_item("store_in_memory", store_in_memory)?;
-    locals.set_item("include_children", include_children)?;
-    locals.set_item("ProcessMonitor", py.get_type_bound::<PyProcessMonitor>())?;
-
-    py.eval_bound(
-        include_str!("python/monitor_context.py"),
-        None,
-        Some(&locals),
-    )
-    .map_err(|e| {
-        e.print(py);
-        pyo3::exceptions::PyRuntimeError::new_err("Failed to create monitor context manager")
-    })
-}
-
 /// Register all Python classes and functions with the module
 pub fn register_python_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyProcessMonitor>()?;
     m.add_function(wrap_pyfunction!(generate_summary_from_file, m)?)?;
     m.add_function(wrap_pyfunction!(generate_summary_from_metrics_json, m)?)?;
-    m.add_function(wrap_pyfunction!(profile, m)?)?;
-    m.add_function(wrap_pyfunction!(monitor, m)?)?;
+
+    // Python profile decorator implementation is now moved to Python layer
+
     Ok(())
 }

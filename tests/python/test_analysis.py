@@ -1,556 +1,427 @@
+"""
+Test analysis utilities functionality.
+
+This module tests the analysis functions provided by denet, focusing on
+correct behavior and data integrity rather than reimplementing functionality.
+"""
+
 import json
-import os
-import tempfile
-import unittest
+import pytest
+from denet.analysis import (
+    aggregate_metrics,
+    find_peaks,
+    resource_utilization,
+    convert_format,
+    process_tree_analysis,
+    save_metrics,
+    load_metrics,
+)
 
-# Define analysis functions locally for testing
-# This allows tests to run without requiring the full denet package to be installed
+
+@pytest.fixture
+def sample_metrics():
+    """Generate sample metrics for testing."""
+    return [
+        {
+            "ts_ms": 1000,
+            "cpu_usage": 5.0,
+            "mem_rss_kb": 5000,
+            "mem_vms_kb": 10000,
+            "disk_read_bytes": 1024,
+            "disk_write_bytes": 2048,
+            "net_rx_bytes": 512,
+            "net_tx_bytes": 256,
+            "thread_count": 2,
+            "uptime_secs": 10,
+        },
+        {
+            "ts_ms": 1100,
+            "cpu_usage": 10.0,
+            "mem_rss_kb": 6000,
+            "mem_vms_kb": 12000,
+            "disk_read_bytes": 2048,
+            "disk_write_bytes": 4096,
+            "net_rx_bytes": 1024,
+            "net_tx_bytes": 512,
+            "thread_count": 3,
+            "uptime_secs": 11,
+        },
+        {
+            "ts_ms": 1200,
+            "cpu_usage": 15.0,
+            "mem_rss_kb": 7000,
+            "mem_vms_kb": 14000,
+            "disk_read_bytes": 4096,
+            "disk_write_bytes": 8192,
+            "net_rx_bytes": 2048,
+            "net_tx_bytes": 1024,
+            "thread_count": 4,
+            "uptime_secs": 12,
+        },
+        {
+            "ts_ms": 1300,
+            "cpu_usage": 10.0,
+            "mem_rss_kb": 8000,
+            "mem_vms_kb": 16000,
+            "disk_read_bytes": 8192,
+            "disk_write_bytes": 16384,
+            "net_rx_bytes": 4096,
+            "net_tx_bytes": 2048,
+            "thread_count": 4,
+            "uptime_secs": 13,
+        },
+        {
+            "ts_ms": 1400,
+            "cpu_usage": 5.0,
+            "mem_rss_kb": 6000,
+            "mem_vms_kb": 12000,
+            "disk_read_bytes": 16384,
+            "disk_write_bytes": 32768,
+            "net_rx_bytes": 8192,
+            "net_tx_bytes": 4096,
+            "thread_count": 3,
+            "uptime_secs": 14,
+        },
+    ]
 
 
-def aggregate_metrics(metrics, window_size=10, method="mean"):
-    """
-    Aggregate metrics into windows to reduce data size.
-    """
-    if not metrics:
-        return []
+@pytest.fixture
+def tree_metrics():
+    """Create sample process tree metrics."""
+    return [
+        {
+            "ts_ms": 1000,
+            "pid": 1000,
+            "cpu_usage": 5.0,
+            "mem_rss_kb": 5000,
+            "thread_count": 2,
+            "children": [{"pid": 1001, "cpu_usage": 2.0, "mem_rss_kb": 2000, "thread_count": 1}],
+        },
+        {
+            "ts_ms": 1100,
+            "pid": 1000,
+            "cpu_usage": 10.0,
+            "mem_rss_kb": 6000,
+            "thread_count": 2,
+            "children": [{"pid": 1001, "cpu_usage": 5.0, "mem_rss_kb": 3000, "thread_count": 2}],
+        },
+    ]
 
-    if window_size <= 1:
-        return metrics
 
-    result = []
+class TestAggregateMetrics:
+    """Test metrics aggregation functionality."""
 
-    # Group metrics into windows
-    for i in range(0, len(metrics), window_size):
-        window = metrics[i : i + window_size]
-        if not window:
-            continue
+    def test_basic_aggregation(self, sample_metrics):
+        """Test basic metrics aggregation with different window sizes and methods."""
+        # Test with window size = 2 and mean method
+        aggregated = aggregate_metrics(sample_metrics, window_size=2, method="mean")
+        assert len(aggregated) == 3
+        assert aggregated[0]["_window_size"] == 2
+        assert aggregated[0]["_aggregation_method"] == "mean"
+        assert aggregated[0]["cpu_usage"] == 7.5  # (5 + 10) / 2
 
-        # Start with the first sample and update with aggregated values
-        aggregated = window[0].copy()
+    def test_aggregation_methods(self, sample_metrics):
+        """Test different aggregation methods."""
+        # Test max method
+        aggregated = aggregate_metrics(sample_metrics, window_size=3, method="max")
+        assert len(aggregated) == 2
+        assert aggregated[0]["cpu_usage"] == 15.0  # max of 5, 10, 15
 
-        # Fields to aggregate (numeric fields only)
-        numeric_fields = [
-            "cpu_usage",
-            "mem_rss_kb",
-            "mem_vms_kb",
-            "disk_read_bytes",
-            "disk_write_bytes",
-            "net_rx_bytes",
-            "net_tx_bytes",
-            "thread_count",
-            "uptime_secs",
+        # Test min method
+        aggregated = aggregate_metrics(sample_metrics, window_size=3, method="min")
+        assert aggregated[0]["cpu_usage"] == 5.0  # min of 5, 10, 15
+
+    def test_edge_cases(self, sample_metrics):
+        """Test edge cases for aggregation."""
+        # Empty list
+        assert aggregate_metrics([], window_size=2) == []
+
+        # Window size <= 1 (should return original data)
+        assert len(aggregate_metrics(sample_metrics, window_size=1)) == 5
+
+        # Window size larger than data
+        aggregated = aggregate_metrics(sample_metrics, window_size=10, method="mean")
+        assert len(aggregated) == 1
+
+
+class TestFindPeaks:
+    """Test peak detection functionality."""
+
+    def test_basic_peak_detection(self, sample_metrics):
+        """Test basic peak detection."""
+        peaks = find_peaks(sample_metrics, field="cpu_usage", threshold=0.7, window_size=1)
+        assert len(peaks) == 1
+        assert peaks[0]["cpu_usage"] == 15.0
+
+    def test_different_thresholds(self, sample_metrics):
+        """Test peak detection with different thresholds."""
+        # Lower threshold should still find the same peak
+        peaks = find_peaks(sample_metrics, field="cpu_usage", threshold=0.5, window_size=1)
+        assert len(peaks) >= 1
+        assert any(p["cpu_usage"] == 15.0 for p in peaks)
+
+    def test_edge_cases(self, sample_metrics):
+        """Test edge cases for peak detection."""
+        # Non-existent field
+        assert find_peaks(sample_metrics, field="nonexistent") == []
+
+        # Empty list
+        assert find_peaks([], field="cpu_usage") == []
+
+
+class TestResourceUtilization:
+    """Test resource utilization statistics."""
+
+    def test_basic_statistics(self, sample_metrics):
+        """Test generation of resource utilization statistics."""
+        stats = resource_utilization(sample_metrics)
+
+        # Check CPU statistics
+        assert "avg_cpu" in stats
+        assert "max_cpu" in stats
+        assert stats["max_cpu"] == 15.0
+        assert stats["avg_cpu"] == pytest.approx(9.0)
+
+        # Check memory statistics
+        assert "avg_mem_mb" in stats
+        assert "max_mem_mb" in stats
+        assert stats["max_mem_mb"] == pytest.approx(7.8125)  # 8000 KB = 7.8125 MB
+
+        # Check I/O statistics
+        assert "total_read_mb" in stats
+        assert "total_write_mb" in stats
+
+    def test_empty_metrics(self):
+        """Test resource utilization with empty metrics."""
+        assert resource_utilization([]) == {}
+
+    def test_partial_metrics(self):
+        """Test resource utilization with partial metrics."""
+        partial_metrics = [
+            {
+                "ts_ms": 1000,
+                "cpu_usage": 5.0,
+                # Missing mem_rss_kb
+            },
+            {
+                "ts_ms": 1100,
+                # Missing cpu_usage
+                "mem_rss_kb": 6000,
+            },
         ]
 
-        # Apply aggregation method to each field
-        for field in numeric_fields:
-            if field not in window[0]:
-                continue
+        # Should still calculate stats for available fields
+        stats = resource_utilization(partial_metrics)
+        assert "avg_cpu" not in stats  # Not all metrics have cpu_usage
+        assert "avg_mem_mb" not in stats  # Not all metrics have mem_rss_kb
 
-            values = [sample.get(field, 0) for sample in window if field in sample]
-            if not values:
-                continue
-
-            if method == "mean":
-                aggregated[field] = sum(values) / len(values)
-            elif method == "max":
-                aggregated[field] = max(values)
-            elif method == "min":
-                aggregated[field] = min(values)
-            else:
-                # Default to mean
-                aggregated[field] = sum(values) / len(values)
-
-        # Use the timestamp of the last sample in the window
-        if "ts_ms" in window[-1]:
-            aggregated["ts_ms"] = window[-1]["ts_ms"]
-
-        # Mark as aggregated data
-        aggregated["_aggregated"] = True
-        aggregated["_window_size"] = len(window)
-        aggregated["_aggregation_method"] = method
-
-        result.append(aggregated)
-
-    return result
-
-
-def find_peaks(metrics, field="cpu_usage", threshold=0.5):
-    """
-    Find peaks in metrics where a specific field exceeds a threshold.
-    """
-    if not metrics:
-        return []
-
-    # Ensure the field exists in metrics
-    if not all(field in metric for metric in metrics):
-        return []
-
-    # For test simplicity, we'll just find the max value
-    max_metric = max(metrics, key=lambda m: m[field])
-    return [max_metric]
-
-
-def resource_utilization(metrics):
-    """
-    Generate comprehensive resource utilization statistics.
-    """
-    import statistics
-
-    if not metrics:
-        return {}
-
-    result = {}
-
-    # CPU statistics
-    if all("cpu_usage" in metric for metric in metrics):
-        cpu_values = [metric["cpu_usage"] for metric in metrics]
-        result["avg_cpu"] = statistics.mean(cpu_values)
-        result["max_cpu"] = max(cpu_values)
-        result["min_cpu"] = min(cpu_values)
-        result["median_cpu"] = statistics.median(cpu_values)
-        if len(cpu_values) > 1:
-            result["stdev_cpu"] = statistics.stdev(cpu_values)
-
-    # Memory statistics (RSS)
-    if all("mem_rss_kb" in metric for metric in metrics):
-        mem_values = [metric["mem_rss_kb"] for metric in metrics]
-        result["avg_mem_mb"] = statistics.mean(mem_values) / 1024
-        result["max_mem_mb"] = max(mem_values) / 1024
-        result["min_mem_mb"] = min(mem_values) / 1024
-        result["median_mem_mb"] = statistics.median(mem_values) / 1024
-        if len(mem_values) > 1:
-            result["stdev_mem_mb"] = statistics.stdev(mem_values) / 1024
-
-    # I/O statistics
-    if all("disk_read_bytes" in metric for metric in metrics):
-        result["total_read_mb"] = metrics[-1]["disk_read_bytes"] / (1024 * 1024)
-
-    if all("disk_write_bytes" in metric for metric in metrics):
-        result["total_write_mb"] = metrics[-1]["disk_write_bytes"] / (1024 * 1024)
-
-    # Network statistics
-    if all("net_rx_bytes" in metric for metric in metrics):
-        result["total_net_rx_mb"] = metrics[-1]["net_rx_bytes"] / (1024 * 1024)
-
-    if all("net_tx_bytes" in metric for metric in metrics):
-        result["total_net_tx_mb"] = metrics[-1]["net_tx_bytes"] / (1024 * 1024)
-
-    # Thread statistics
-    if all("thread_count" in metric for metric in metrics):
-        thread_values = [metric["thread_count"] for metric in metrics]
-        result["avg_threads"] = statistics.mean(thread_values)
-        result["max_threads"] = max(thread_values)
-        result["min_threads"] = min(thread_values)
-
-    # Time statistics
-    if "ts_ms" in metrics[0] and "ts_ms" in metrics[-1]:
-        total_time_ms = metrics[-1]["ts_ms"] - metrics[0]["ts_ms"]
-        result["total_time_sec"] = total_time_ms / 1000
-
-    return result
-
-
-def convert_format(metrics, to_format="csv", indent=None):
-    """
-    Convert metrics to different formats.
-    """
-    # Load metrics from file if path is provided
-    if isinstance(metrics, str):
-        with open(metrics) as f:
-            content = f.read()
-            if content.startswith("[") and content.endswith("]"):
-                # JSON array format
-                metrics = json.loads(content)
-            else:
-                # JSONL format
-                metrics = [json.loads(line) for line in content.split("\n") if line.strip()]
-
-    if not metrics:
-        return ""
-
-    if to_format == "json":
-        return json.dumps(metrics, indent=indent)
-
-    elif to_format == "jsonl":
-        return "\n".join(json.dumps(metric) for metric in metrics)
-
-    elif to_format == "csv":
-        # Extract all possible fields from the metrics
-        all_fields = set()
-        for metric in metrics:
-            all_fields.update(metric.keys())
-
-        # Sort fields with common ones first
-        common_fields = ["ts_ms", "cpu_usage", "mem_rss_kb", "mem_vms_kb"]
-        fields = [f for f in common_fields if f in all_fields]
-        fields.extend(sorted(f for f in all_fields if f not in common_fields))
-
-        # Generate CSV header
-        result = ",".join(fields) + "\n"
-
-        # Generate rows
-        for metric in metrics:
-            row = [str(metric.get(field, "")) for field in fields]
-            result += ",".join(row) + "\n"
-
-        return result
-
-    else:
-        raise ValueError(f"Unknown format: {to_format}")
-
-
-def process_tree_analysis(metrics):
-    """
-    Analyze process tree metrics to find resource usage patterns by process.
-    """
-    import statistics
-
-    if not metrics:
-        return {}
-
-    # Check if these are process tree metrics
-    if "children" not in metrics[0] and "child_processes" not in metrics[0]:
-        return {}
-
-    result = {"main_process": {}, "child_processes": {}, "total": {}}
-
-    # Track processes over time
-    processes = {}
-    main_pid = 0
-
-    for metric in metrics:
-        # Main process stats
-        main_pid = metric.get("pid", 0)
-        if main_pid not in processes:
-            processes[main_pid] = {"cpu": [], "memory": [], "threads": []}
-
-        processes[main_pid]["cpu"].append(metric.get("cpu_usage", 0))
-        processes[main_pid]["memory"].append(metric.get("mem_rss_kb", 0))
-        processes[main_pid]["threads"].append(metric.get("thread_count", 1))
-
-        # Child processes
-        children = metric.get("children", metric.get("child_processes", []))
-        for child in children:
-            child_pid = child.get("pid", 0)
-            if child_pid not in processes:
-                processes[child_pid] = {"cpu": [], "memory": [], "threads": []}
-
-            processes[child_pid]["cpu"].append(child.get("cpu_usage", 0))
-            processes[child_pid]["memory"].append(child.get("mem_rss_kb", 0))
-            processes[child_pid]["threads"].append(child.get("thread_count", 1))
-
-    # Calculate statistics for each process
-    total_cpu = []
-    total_memory = []
-    total_threads = []
-
-    for pid, data in processes.items():
-        if not data["cpu"]:
-            continue
-
-        process_stats = {
-            "avg_cpu": statistics.mean(data["cpu"]),
-            "max_cpu": max(data["cpu"]),
-            "avg_memory_mb": statistics.mean(data["memory"]) / 1024,
-            "max_memory_mb": max(data["memory"]) / 1024,
-            "avg_threads": statistics.mean(data["threads"]),
-            "max_threads": max(data["threads"]),
-        }
-
-        if pid == main_pid:
-            result["main_process"] = process_stats
-        else:
-            result["child_processes"][pid] = process_stats
-
-        # Accumulate for totals
-        total_cpu.extend(data["cpu"])
-        total_memory.extend(data["memory"])
-        total_threads.extend(data["threads"])
-
-    # Calculate totals
-    if total_cpu:
-        result["total"]["avg_cpu"] = statistics.mean(total_cpu)
-        result["total"]["max_cpu"] = max(total_cpu)
-
-    if total_memory:
-        result["total"]["avg_memory_mb"] = statistics.mean(total_memory) / 1024
-        result["total"]["max_memory_mb"] = max(total_memory) / 1024
-
-    if total_threads:
-        result["total"]["avg_threads"] = statistics.mean(total_threads)
-        result["total"]["max_threads"] = max(total_threads)
-
-    return result
-
-
-def save_metrics(metrics, path, format="jsonl"):
-    """
-    Save metrics to a file.
-    """
-    with open(path, "w") as f:
-        if format == "json":
-            json.dump(metrics, f, indent=2)
-        elif format == "jsonl":
-            for metric in metrics:
-                f.write(json.dumps(metric) + "\n")
-        elif format == "csv":
-            f.write(convert_format(metrics, "csv"))
-        else:
-            raise ValueError(f"Unknown format: {format}")
-
-
-def load_metrics(path):
-    """
-    Load metrics from a file.
-    """
-    with open(path) as f:
-        content = f.read()
-        if not content:
-            return []
-
-        if content.startswith("[") and content.endswith("]"):
-            # JSON array format
-            return json.loads(content)
-        else:
-            # JSONL format (one JSON object per line)
-            lines = [line for line in content.split("\n") if line.strip()]
-
-            # Skip metadata line if present (first line with pid, cmd, executable)
-            if lines and any(key in lines[0].lower() for key in ['"pid":', '"cmd":', '"executable":', '"t0_ms":']):
-                return [json.loads(line) for line in lines[1:]]
-
-            # No metadata identified, process all lines
-            return [json.loads(line) for line in lines]
-
-
-class TestAnalysisUtilities(unittest.TestCase):
-    def setUp(self):
-        # Generate sample metrics for testing
-        self.sample_metrics = [
+    def test_single_sample_metrics(self):
+        """Test resource utilization with just one sample."""
+        single_sample = [
             {
                 "ts_ms": 1000,
                 "cpu_usage": 5.0,
                 "mem_rss_kb": 5000,
-                "mem_vms_kb": 10000,
                 "disk_read_bytes": 1024,
                 "disk_write_bytes": 2048,
                 "net_rx_bytes": 512,
                 "net_tx_bytes": 256,
                 "thread_count": 2,
-                "uptime_secs": 10,
-            },
-            {
-                "ts_ms": 1100,
-                "cpu_usage": 10.0,
-                "mem_rss_kb": 6000,
-                "mem_vms_kb": 12000,
-                "disk_read_bytes": 2048,
-                "disk_write_bytes": 4096,
-                "net_rx_bytes": 1024,
-                "net_tx_bytes": 512,
-                "thread_count": 3,
-                "uptime_secs": 11,
-            },
-            {
-                "ts_ms": 1200,
-                "cpu_usage": 15.0,
-                "mem_rss_kb": 7000,
-                "mem_vms_kb": 14000,
-                "disk_read_bytes": 4096,
-                "disk_write_bytes": 8192,
-                "net_rx_bytes": 2048,
-                "net_tx_bytes": 1024,
-                "thread_count": 4,
-                "uptime_secs": 12,
-            },
-            {
-                "ts_ms": 1300,
-                "cpu_usage": 10.0,
-                "mem_rss_kb": 8000,
-                "mem_vms_kb": 16000,
-                "disk_read_bytes": 8192,
-                "disk_write_bytes": 16384,
-                "net_rx_bytes": 4096,
-                "net_tx_bytes": 2048,
-                "thread_count": 4,
-                "uptime_secs": 13,
-            },
-            {
-                "ts_ms": 1400,
-                "cpu_usage": 5.0,
-                "mem_rss_kb": 6000,
-                "mem_vms_kb": 12000,
-                "disk_read_bytes": 16384,
-                "disk_write_bytes": 32768,
-                "net_rx_bytes": 8192,
-                "net_tx_bytes": 4096,
-                "thread_count": 3,
-                "uptime_secs": 14,
-            },
+            }
         ]
 
-        # Create sample process tree metrics
-        self.tree_metrics = [
-            {
-                "ts_ms": 1000,
-                "pid": 1000,
-                "cpu_usage": 5.0,
-                "mem_rss_kb": 5000,
-                "thread_count": 2,
-                "children": [{"pid": 1001, "cpu_usage": 2.0, "mem_rss_kb": 2000, "thread_count": 1}],
-            },
-            {
-                "ts_ms": 1100,
-                "pid": 1000,
-                "cpu_usage": 10.0,
-                "mem_rss_kb": 6000,
-                "thread_count": 2,
-                "children": [{"pid": 1001, "cpu_usage": 5.0, "mem_rss_kb": 3000, "thread_count": 2}],
-            },
-        ]
+        stats = resource_utilization(single_sample)
+        assert stats["avg_cpu"] == 5.0
+        assert stats["max_cpu"] == 5.0
+        assert stats["min_cpu"] == 5.0
+        assert stats["median_cpu"] == 5.0
+        assert "stdev_cpu" not in stats  # Need more than one sample for stdev
 
-    def test_aggregate_metrics(self):
-        """Test metrics aggregation with different window sizes and methods"""
-        # Test with window size = 2 and mean method
-        aggregated = aggregate_metrics(self.sample_metrics, window_size=2, method="mean")
-        self.assertEqual(len(aggregated), 3)
-        self.assertEqual(aggregated[0]["_window_size"], 2)
-        self.assertEqual(aggregated[0]["_aggregation_method"], "mean")
-        self.assertEqual(aggregated[0]["cpu_usage"], 7.5)  # (5 + 10) / 2
 
-        # Test with window size = 3 and max method
-        aggregated = aggregate_metrics(self.sample_metrics, window_size=3, method="max")
-        self.assertEqual(len(aggregated), 2)
-        self.assertEqual(aggregated[0]["cpu_usage"], 15.0)  # max of 5, 10, 15
+class TestConvertFormat:
+    """Test format conversion utilities."""
 
-        # Test with window size = 5 (entire dataset)
-        aggregated = aggregate_metrics(self.sample_metrics, window_size=5, method="mean")
-        self.assertEqual(len(aggregated), 1)
-        self.assertEqual(aggregated[0]["cpu_usage"], 9.0)  # mean of all values
+    def test_csv_conversion(self, sample_metrics):
+        """Test conversion to CSV format."""
+        csv_data = convert_format(sample_metrics, to_format="csv")
+        assert "ts_ms,cpu_usage,mem_rss_kb" in csv_data
+        assert csv_data.count("\n") == len(sample_metrics) + 1  # +1 for header
 
-        # Test with empty list
-        self.assertEqual(aggregate_metrics([], window_size=2), [])
-
-        # Test with window_size <= 1 (should return original data)
-        self.assertEqual(len(aggregate_metrics(self.sample_metrics, window_size=1)), 5)
-
-    def test_find_peaks(self):
-        """Test peak detection in metrics"""
-        # Find CPU usage peaks with default threshold
-        peaks = find_peaks(self.sample_metrics, field="cpu_usage", threshold=0.5)
-        self.assertEqual(len(peaks), 1)
-        self.assertEqual(peaks[0]["cpu_usage"], 15.0)
-
-        # Find CPU usage peaks with lower threshold
-        peaks = find_peaks(self.sample_metrics, field="cpu_usage", threshold=0.5)
-        self.assertEqual(len(peaks), 1)
-
-        # Test with non-existent field
-        self.assertEqual(find_peaks(self.sample_metrics, field="nonexistent"), [])
-
-        # Test with empty list
-        self.assertEqual(find_peaks([], field="cpu_usage"), [])
-
-    def test_resource_utilization(self):
-        """Test resource utilization statistics generation"""
-        stats = resource_utilization(self.sample_metrics)
-
-        # Check CPU statistics
-        self.assertIn("avg_cpu", stats)
-        self.assertIn("max_cpu", stats)
-        self.assertEqual(stats["max_cpu"], 15.0)
-        self.assertAlmostEqual(stats["avg_cpu"], 9.0)
-
-        # Check memory statistics
-        self.assertIn("avg_mem_mb", stats)
-        self.assertIn("max_mem_mb", stats)
-        self.assertAlmostEqual(stats["max_mem_mb"], 7.8125)  # 8000 KB = 7.8125 MB
-
-        # Check I/O statistics
-        self.assertIn("total_read_mb", stats)
-        self.assertIn("total_write_mb", stats)
-
-        # Test with empty list
-        self.assertEqual(resource_utilization([]), {})
-
-    def test_convert_format(self):
-        """Test format conversion utilities"""
-        # Test conversion to CSV
-        csv_data = convert_format(self.sample_metrics, to_format="csv")
-        self.assertIn("ts_ms,cpu_usage,mem_rss_kb", csv_data)
-        self.assertEqual(csv_data.count("\n"), len(self.sample_metrics) + 1)  # +1 for header
-
-        # Test conversion to JSON
-        json_data = convert_format(self.sample_metrics, to_format="json")
+    def test_json_conversion(self, sample_metrics):
+        """Test conversion to JSON format."""
+        json_data = convert_format(sample_metrics, to_format="json")
         parsed_json = json.loads(json_data)
-        self.assertEqual(len(parsed_json), len(self.sample_metrics))
+        assert len(parsed_json) == len(sample_metrics)
 
-        # Test conversion to JSONL
-        jsonl_data = convert_format(self.sample_metrics, to_format="jsonl")
+    def test_jsonl_conversion(self, sample_metrics):
+        """Test conversion to JSONL format."""
+        jsonl_data = convert_format(sample_metrics, to_format="jsonl")
         lines = jsonl_data.strip().split("\n")
-        self.assertEqual(len(lines), len(self.sample_metrics))
+        assert len(lines) == len(sample_metrics)
 
-        # Test with empty list
-        self.assertEqual(convert_format([], to_format="csv"), "")
+    def test_edge_cases(self, sample_metrics):
+        """Test edge cases for format conversion."""
+        # Empty list
+        assert convert_format([], to_format="csv") == ""
 
-        # Test invalid format
-        with self.assertRaises(ValueError):
-            convert_format(self.sample_metrics, to_format="invalid")
+        # Invalid format
+        with pytest.raises(ValueError):
+            convert_format(sample_metrics, to_format="invalid")
 
-    def test_process_tree_analysis(self):
-        """Test process tree metrics analysis"""
-        analysis = process_tree_analysis(self.tree_metrics)
+    def test_convert_from_file_path(self, sample_metrics, tmp_path):
+        """Test converting from a file path instead of metrics list."""
+        # First save metrics to a file
+        jsonl_file = tmp_path / "test_metrics.jsonl"
+        json_file = tmp_path / "test_metrics.json"
+
+        # Save in both formats
+        save_metrics(sample_metrics, str(jsonl_file), format="jsonl")
+        save_metrics(sample_metrics, str(json_file), format="json")
+
+        # Test converting from JSONL file path
+        csv_from_jsonl = convert_format(str(jsonl_file), to_format="csv")
+        assert "ts_ms,cpu_usage,mem_rss_kb" in csv_from_jsonl
+
+        # Test converting from JSON file path
+        csv_from_json = convert_format(str(json_file), to_format="csv")
+        assert "ts_ms,cpu_usage,mem_rss_kb" in csv_from_json
+
+    def test_json_with_indent(self, sample_metrics):
+        """Test JSON conversion with indentation."""
+        # With indent=2
+        json_indented = convert_format(sample_metrics, to_format="json", indent=2)
+        assert "  " in json_indented  # Should have 2-space indentation
+
+        # With no indent
+        json_compact = convert_format(sample_metrics, to_format="json", indent=None)
+        assert "  " not in json_compact  # Should be compact without indentation
+
+
+class TestProcessTreeAnalysis:
+    """Test process tree analysis functionality."""
+
+    def test_tree_analysis(self, tree_metrics):
+        """Test analysis of process tree metrics."""
+        analysis = process_tree_analysis(tree_metrics)
 
         # Check main process stats
-        self.assertIn("main_process", analysis)
-        self.assertIn("avg_cpu", analysis["main_process"])
-        self.assertAlmostEqual(analysis["main_process"]["avg_cpu"], 7.5)
+        assert "main_process" in analysis
+        assert "avg_cpu" in analysis["main_process"]
+        assert analysis["main_process"]["avg_cpu"] == pytest.approx(7.5)
 
         # Check child process stats
-        self.assertIn("child_processes", analysis)
-        self.assertIn(1001, analysis["child_processes"])
-        self.assertAlmostEqual(analysis["child_processes"][1001]["avg_cpu"], 3.5)
+        assert "child_processes" in analysis
+        assert 1001 in analysis["child_processes"]
+        assert analysis["child_processes"][1001]["avg_cpu"] == pytest.approx(3.5)
 
         # Check totals
-        self.assertIn("total", analysis)
+        assert "total" in analysis
 
-        # Test with regular (non-tree) metrics
-        self.assertEqual(process_tree_analysis(self.sample_metrics), {})
+    def test_non_tree_metrics(self, sample_metrics):
+        """Test tree analysis with regular (non-tree) metrics."""
+        assert process_tree_analysis(sample_metrics) == {}
 
-        # Test with empty list
-        self.assertEqual(process_tree_analysis([]), {})
+    def test_empty_metrics(self):
+        """Test tree analysis with empty metrics."""
+        assert process_tree_analysis([]) == {}
 
-    def test_save_and_load_metrics(self):
-        """Test saving and loading metrics from files"""
-        # Create a temporary directory for test files
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Create temporary file paths
-            jsonl_path = os.path.join(temp_dir, "metrics.jsonl")
-            json_path = os.path.join(temp_dir, "metrics.json")
-            csv_path = os.path.join(temp_dir, "metrics.csv")
-            test_txt_path = os.path.join(temp_dir, "test.txt")
+    def test_alternate_child_format(self):
+        """Test tree analysis with alternate child_processes format."""
+        alternate_tree_metrics = [
+            {
+                "ts_ms": 1000,
+                "pid": 2000,
+                "cpu_usage": 10.0,
+                "mem_rss_kb": 8000,
+                "thread_count": 3,
+                "child_processes": [  # Using child_processes instead of children
+                    {"pid": 2001, "cpu_usage": 4.0, "mem_rss_kb": 3000, "thread_count": 1}
+                ],
+            }
+        ]
 
-            # Test saving in different formats
-            save_metrics(self.sample_metrics, jsonl_path, format="jsonl")
-            self.assertTrue(os.path.exists(jsonl_path))
-
-            save_metrics(self.sample_metrics, json_path, format="json")
-            self.assertTrue(os.path.exists(json_path))
-
-            save_metrics(self.sample_metrics, csv_path, format="csv")
-            self.assertTrue(os.path.exists(csv_path))
-
-            # Test loading from files
-            loaded_jsonl = load_metrics(jsonl_path)
-            self.assertEqual(len(loaded_jsonl), len(self.sample_metrics))
-
-            loaded_json = load_metrics(json_path)
-            self.assertEqual(len(loaded_json), len(self.sample_metrics))
-
-            # Test invalid format
-            with self.assertRaises(ValueError):
-                save_metrics(self.sample_metrics, test_txt_path, format="invalid")
+        analysis = process_tree_analysis(alternate_tree_metrics)
+        assert "main_process" in analysis
+        assert "child_processes" in analysis
+        assert 2001 in analysis["child_processes"]
+        assert analysis["child_processes"][2001]["avg_cpu"] == 4.0
 
 
-if __name__ == "__main__":
-    unittest.main()
+class TestSaveLoadMetrics:
+    """Test saving and loading metrics from files."""
+
+    def test_save_and_load_jsonl(self, sample_metrics, tmp_path):
+        """Test saving and loading metrics in JSONL format."""
+        temp_file = tmp_path / "test_metrics.jsonl"
+
+        # Save metrics
+        save_metrics(sample_metrics, str(temp_file), format="jsonl")
+        assert temp_file.exists()
+
+        # Load metrics
+        loaded_metrics = load_metrics(str(temp_file))
+        assert len(loaded_metrics) == len(sample_metrics)
+        assert loaded_metrics[0]["cpu_usage"] == sample_metrics[0]["cpu_usage"]
+
+    def test_save_and_load_json(self, sample_metrics, tmp_path):
+        """Test saving and loading metrics in JSON format."""
+        temp_file = tmp_path / "test_metrics.json"
+
+        # Save metrics
+        save_metrics(sample_metrics, str(temp_file), format="json")
+        assert temp_file.exists()
+
+        # Load metrics
+        loaded_metrics = load_metrics(str(temp_file))
+        assert len(loaded_metrics) == len(sample_metrics)
+
+    def test_save_csv_format(self, sample_metrics, tmp_path):
+        """Test saving metrics in CSV format."""
+        temp_file = tmp_path / "test_metrics.csv"
+
+        # Save metrics
+        save_metrics(sample_metrics, str(temp_file), format="csv")
+        assert temp_file.exists()
+
+        # Verify CSV content
+        with open(temp_file, "r") as f:
+            content = f.read()
+            assert "ts_ms" in content
+            assert "cpu_usage" in content
+
+    def test_invalid_format(self, sample_metrics, tmp_path):
+        """Test handling of invalid save formats."""
+        temp_file = tmp_path / "test_metrics.txt"
+
+        with pytest.raises(ValueError):
+            save_metrics(sample_metrics, str(temp_file), format="invalid")
+
+    def test_load_metrics_with_metadata(self, sample_metrics, tmp_path):
+        """Test loading metrics with metadata included."""
+        temp_file = tmp_path / "test_metrics_with_metadata.jsonl"
+
+        # Save metrics with metadata
+        save_metrics(sample_metrics, str(temp_file), format="jsonl", include_metadata=True)
+
+        # Load with metadata
+        loaded_with_metadata = load_metrics(str(temp_file), include_metadata=True)
+
+        # First item should be metadata
+        assert "pid" in loaded_with_metadata[0]
+        assert "cmd" in loaded_with_metadata[0]
+        assert "executable" in loaded_with_metadata[0]
+        assert "t0_ms" in loaded_with_metadata[0]
+
+        # Rest should be the metrics
+        assert len(loaded_with_metadata) - 1 == len(sample_metrics)
+
+    def test_load_metrics_empty_file(self, tmp_path):
+        """Test loading metrics from an empty file."""
+        temp_file = tmp_path / "empty.jsonl"
+
+        # Create empty file
+        with open(temp_file, "w"):
+            pass
+
+        # Should return empty list without error
+        assert load_metrics(str(temp_file)) == []

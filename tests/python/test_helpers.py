@@ -1,120 +1,127 @@
 """
-Helper functions for denet tests.
+Test helper utilities for denet Python tests.
 
-This module provides utility functions for working with denet test fixtures,
-particularly to handle both the old flat metrics format and the new tree-structured
-format that includes child process information.
+This module provides clean, focused utility functions for testing denet functionality.
 """
 
 import json
 from typing import Any, Dict, List, Union
 
-__all__ = [
-    "extract_metrics_from_sample",
-    "check_sample_has_metrics",
-    "get_metrics_from_samples",
-    "get_max_processes",
-]
 
-
-def extract_metrics_from_sample(sample: Union[str, Dict[str, Any]], fallback_to_parent: bool = True) -> Dict[str, Any]:
+def extract_metrics_from_sample(sample: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Extract metrics from a sample, handling both old flat format and new tree format.
-
-    This function handles the different formats that may be returned by denet:
-    1. Old format: A flat dictionary with metrics at the top level
-    2. New format: A tree structure with parent, children, and aggregated metrics
+    Extract metrics from a sample, handling different formats.
 
     Args:
-        sample: Sample data, either as a JSON string or a dictionary
-        fallback_to_parent: Whether to fallback to parent metrics if aggregated metrics not found
+        sample: Sample data as JSON string or dictionary
 
     Returns:
-        Dictionary containing the metrics, either from the top level, aggregated field,
-        or parent field (if fallback_to_parent is True)
+        Dictionary containing metrics, or empty dict if no metrics found
     """
-    # Parse if sample is a string
     if isinstance(sample, str):
         try:
             sample = json.loads(sample)
         except json.JSONDecodeError:
             return {}
 
-    # Skip metadata entries
+    if not isinstance(sample, dict):
+        return {}
+
+    # Skip metadata entries (contain pid, cmd, executable, t0_ms)
     if all(key in sample for key in ["pid", "cmd", "executable", "t0_ms"]):
         return {}
 
-    # Case 1: Old flat format with metrics at top level
+    # Return metrics directly if they're at the top level
     if "cpu_usage" in sample and "mem_rss_kb" in sample:
         return sample
 
-    # Case 2: New tree format with aggregated metrics
-    if "aggregated" in sample:
+    # Handle tree format with aggregated metrics
+    if "aggregated" in sample and isinstance(sample["aggregated"], dict):
         return sample["aggregated"]
 
-    # Case 3: Fallback to parent metrics if requested
-    if fallback_to_parent and "parent" in sample and isinstance(sample["parent"], dict):
-        return sample["parent"]
-
-    # If we can't find metrics, return empty dict
     return {}
 
 
-def check_sample_has_metrics(sample: Union[str, Dict[str, Any]]) -> bool:
+def is_valid_metrics_sample(sample: Union[str, Dict[str, Any]]) -> bool:
     """
-    Check if a sample contains metrics data.
+    Check if a sample contains valid metrics data.
 
     Args:
-        sample: Sample data, either as a JSON string or a dictionary
+        sample: Sample data as JSON string or dictionary
 
     Returns:
-        True if sample contains metrics (cpu_usage, mem_rss_kb), False otherwise
+        True if sample contains valid metrics
     """
     metrics = extract_metrics_from_sample(sample)
-    return "cpu_usage" in metrics and "mem_rss_kb" in metrics
+    required_fields = ["cpu_usage", "mem_rss_kb", "ts_ms"]
+    return all(field in metrics for field in required_fields)
 
 
-def get_metrics_from_samples(samples: List[Union[str, Dict[str, Any]]]) -> List[Dict[str, Any]]:
+def filter_metrics_samples(samples: List[Union[str, Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """
-    Extract metrics from a list of samples, filtering out metadata entries.
+    Extract and filter valid metrics from a list of samples.
 
     Args:
-        samples: List of samples, each either as a JSON string or a dictionary
+        samples: List of samples
 
     Returns:
-        List of metric dictionaries, with metadata entries filtered out
+        List of valid metrics dictionaries
     """
-    return [extract_metrics_from_sample(sample) for sample in samples if check_sample_has_metrics(sample)]
+    return [extract_metrics_from_sample(sample) for sample in samples if is_valid_metrics_sample(sample)]
 
 
-def get_max_processes(samples: List[Union[str, Dict[str, Any]]]) -> int:
+def assert_valid_metrics(metrics: Dict[str, Any]) -> None:
     """
-    Get the maximum number of processes from a list of samples.
-
-    This looks for process_count in the aggregated field or defaults to 1
-    for the old format.
+    Assert that metrics contain expected fields with valid values.
 
     Args:
-        samples: List of samples, each either as a JSON string or a dictionary
+        metrics: Metrics dictionary to validate
+
+    Raises:
+        AssertionError: If metrics are invalid
+    """
+    # Required fields
+    required_fields = ["cpu_usage", "mem_rss_kb", "ts_ms"]
+    for field in required_fields:
+        assert field in metrics, f"Missing required field: {field}"
+
+    # Value validations
+    assert isinstance(metrics["cpu_usage"], (int, float)), "cpu_usage must be numeric"
+    assert metrics["cpu_usage"] >= 0, "cpu_usage must be non-negative"
+
+    assert isinstance(metrics["mem_rss_kb"], (int, float)), "mem_rss_kb must be numeric"
+    assert metrics["mem_rss_kb"] > 0, "mem_rss_kb must be positive"
+
+    assert isinstance(metrics["ts_ms"], (int, float)), "ts_ms must be numeric"
+    assert metrics["ts_ms"] > 0, "ts_ms must be positive"
+
+
+def create_sample_metrics(count: int = 5) -> List[Dict[str, Any]]:
+    """
+    Create sample metrics for testing.
+
+    Args:
+        count: Number of sample metrics to create
 
     Returns:
-        Maximum number of processes found in the samples
+        List of sample metrics dictionaries
     """
-    max_processes = 1
+    base_time = 1000
+    metrics = []
 
-    for sample in samples:
-        # Parse if sample is a string
-        if isinstance(sample, str):
-            try:
-                sample = json.loads(sample)
-            except json.JSONDecodeError:
-                continue
+    for i in range(count):
+        sample = {
+            "ts_ms": base_time + (i * 100),
+            "cpu_usage": 10.0 + (i * 5.0),
+            "mem_rss_kb": 5000 + (i * 1000),
+            "mem_vms_kb": 10000 + (i * 2000),
+            "disk_read_bytes": 1024 * (i + 1),
+            "disk_write_bytes": 2048 * (i + 1),
+            "net_rx_bytes": 512 * (i + 1),
+            "net_tx_bytes": 256 * (i + 1),
+            "thread_count": 2 + i,
+            "uptime_secs": 10 + i,
+        }
+        metrics.append(sample)
 
-        # Look for process_count in aggregated data
-        if "aggregated" in sample:
-            process_count = sample["aggregated"].get("process_count", 1)
-            max_processes = max(max_processes, process_count)
-        elif "process_count" in sample:
-            max_processes = max(max_processes, sample["process_count"])
-
-    return max_processes
+    return metrics

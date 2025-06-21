@@ -22,7 +22,7 @@ Denet is a streaming process monitoring tool that provides detailed metrics on r
 - Command-line interface with colorized output
 - Multiple output formats (JSON, JSONL, CSV)
 - In-memory sample collection for Python API
-- Python decorator and context manager for easy profiling
+
 - Analysis utilities for metrics aggregation, peak detection, and resource utilization
 - Process metadata preserved in output files (pid, command, executable path)
 
@@ -134,70 +134,35 @@ monitor.save_samples("metrics.csv", "csv")     # CSV format
 #     # Do other work while monitoring continues in background...
 ```
 
-#### Function Decorator
-
 ```python
-import denet
-
-# Profile a function with the decorator
-@denet.profile(
-    base_interval_ms=100,
-    max_interval_ms=1000,
-    output_file="profile_results.jsonl",
-    store_in_memory=True,    # Store samples in memory (default)
-    include_children=True    # Monitor child processes (default True)
-)
-def expensive_calculation():
-    # Long-running calculation
-    result = 0
-    for i in range(10_000_000):
-        result += i
-    return result
-
-# Call the function and get both result and metrics
-result, metrics = expensive_calculation()
-print(f"Result: {result}, Collected {len(metrics)} samples")
-
-# The decorator can also be used without parameters
-@denet.profile
-def simple_function():
-    return sum(range(1000000))
-
-result, metrics = simple_function()
-```
-
-#### Context Manager
-
-```python
+# For more controlled execution with monitoring, use execute_with_monitoring:
 import denet
 import json
 
-# Monitor a block of code
-with denet.monitor(
+# Execute a command with monitoring and capture the result
+exit_code, monitor = denet.execute_with_monitoring(
+    cmd=["python", "script.py"],
     base_interval_ms=100,
     max_interval_ms=1000,
-    output_file=None,         # Optional file output
-    store_in_memory=True,     # Store samples in memory (default)
-    include_children=True     # Monitor child processes (default True)
-) as mon:
-    # Code to profile
-    for i in range(5):
-        # Do something CPU intensive
-        result = sum(i*i for i in range(1_000_000))
+    store_in_memory=True,    # Store samples in memory
+    output_file=None,        # Optional file output
+    include_children=True    # Monitor child processes (default True)
+)
 
-# Access collected metrics after the block
-samples = mon.get_samples()
+# Access collected metrics after execution
+samples = monitor.get_samples()
 print(f"Collected {len(samples)} samples")
+print(f"Exit code: {exit_code}")
 print(f"Peak CPU usage: {max(sample['cpu_usage'] for sample in samples)}%")
 
 # Generate and print summary
-summary_json = mon.get_summary()
+summary_json = monitor.get_summary()
 summary = json.loads(summary_json)
 print(f"Average CPU usage: {summary['avg_cpu_usage']}%")
 print(f"Peak memory: {summary['peak_mem_rss_kb']/1024:.2f} MB")
 
 # Save samples to a file (includes metadata line in JSONL format)
-mon.save_samples("metrics.jsonl", "jsonl")  # First line contains process metadata
+monitor.save_samples("metrics.jsonl", "jsonl")  # First line contains process metadata
 ```
 
 ## Adaptive Sampling
@@ -226,6 +191,9 @@ metrics_with_metadata = denet.load_metrics("metrics.jsonl", include_metadata=Tru
 
 # Access the executable path from metadata
 executable_path = metrics_with_metadata[0]["executable"]  # First item is metadata when include_metadata=True
+
+# Direct command execution with monitoring
+exit_code, monitor = denet.execute_with_monitoring(["python", "script.py"])
 
 # Aggregate metrics to reduce data size
 aggregated = denet.aggregate_metrics(metrics, window_size=5, method="mean")

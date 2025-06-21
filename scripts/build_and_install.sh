@@ -1,89 +1,16 @@
 #!/bin/bash
-# Direct build and install script for denet
-# This script builds the Rust extension and Python package and installs it directly with pip
-# without relying on maturin's develop command
+# Build and install script for denet using maturin develop
 
 set -e  # Exit on error
 
 # Go to the project root
 cd "$(dirname "$0")/.."
 
-# Ensure the Python package directory exists
-mkdir -p denet
+echo "🔨 Building and installing denet with maturin develop..."
 
-# Ensure the Python package directory exists
-mkdir -p python/denet
-
-# Display what we're doing
-echo "🔨 Building and installing denet..."
-
-# Get Python executable path
-PYTHON_EXE=$(which python)
-echo "Using Python at: $PYTHON_EXE"
-
-# Build the wheel using maturin
-echo "Building wheel..."
-maturin build --release
-
-# Find the most recently built wheel
-WHEEL_PATH=$(ls -t target/wheels/*.whl | head -1)
-
-if [ -z "$WHEEL_PATH" ]; then
-    echo "❌ Error: No wheel file found after build."
-    exit 1
-fi
-
-echo "Built wheel: $WHEEL_PATH"
-
-# Install the wheel with pip or alternative methods
-echo "Installing wheel..."
-if $PYTHON_EXE -c "import pip" 2>/dev/null; then
-    # If pip is available, use it
-    $PYTHON_EXE -m pip install --force-reinstall "$WHEEL_PATH"
-else
-    # Alternative for pixi/conda environments without pip
-    echo "No pip module found, copying wheel directly..."
-    SITE_PACKAGES=$($PYTHON_EXE -c "import site; print(site.getsitepackages()[0])")
-    echo "Site packages directory: $SITE_PACKAGES"
-    
-    # Extract wheel (it's just a zip file)
-    TEMP_DIR=$(mktemp -d)
-    unzip -q "$WHEEL_PATH" -d "$TEMP_DIR"
-    
-    # Find and copy all Python package files
-    echo "Copying Python package files..."
-    mkdir -p "$SITE_PACKAGES/denet"
-    cp -r "$TEMP_DIR/denet"/* "$SITE_PACKAGES/denet/"
-    
-    # Find and copy the .so file
-    SO_FILE=$(find "$TEMP_DIR" -name "*.so" | head -1)
-    if [ -n "$SO_FILE" ]; then
-        mkdir -p "$SITE_PACKAGES/denet"
-        cp "$SO_FILE" "$SITE_PACKAGES/denet/_denet.so"
-        echo "Copied $SO_FILE to $SITE_PACKAGES/denet/_denet.so"
-    else
-        echo "Error: No .so file found in the wheel"
-        exit 1
-    fi
-    
-    # Clean up
-    rm -rf "$TEMP_DIR"
-fi
+# Use maturin develop to build and install in editable mode
+maturin develop --release
 
 # Verify the installation
-# Verify that the module can be imported
 echo "Verifying installation..."
-if $PYTHON_EXE -c "import denet; print('✅ denet successfully installed!')"; then
-    echo "✅ Build and installation complete!"
-else
-    echo "❌ Installation verification failed."
-    
-    # Print Python path for debugging
-    echo "Python path:"
-    $PYTHON_EXE -c "import sys; print(sys.path)"
-    
-    echo "Attempting to find denet module..."
-    find $($PYTHON_EXE -c "import site; print(' '.join(site.getsitepackages()))") -name "*denet*" || echo "No denet module found"
-    
-    exit 1
-fi
+python -c "import denet; print('✅ denet successfully installed!')"
