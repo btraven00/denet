@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.3](https://github.com/btraven00/denet/compare/v0.3.2...v0.3.3) (2025-06-21)
+
+
+### Bug Fixes
+
+* **docs:** format ([df9415b](https://github.com/btraven00/denet/commit/df9415b7feea8aa75c52f5088c81069697de6b06))
+* **tests:** exclude python module ([bfe62d5](https://github.com/btraven00/denet/commit/bfe62d5dc9641ab261d266dadf1c142c2e86eb79))
+* **tests:** refactor python test suite ([2aeb5ed](https://github.com/btraven00/denet/commit/2aeb5eda6bf4d1e4fa9fbea01130cbf5281445c3))
+
 ## [0.3.2](https://github.com/btraven00/denet/compare/v0.3.1...v0.3.2) (2025-06-19)
 
 
