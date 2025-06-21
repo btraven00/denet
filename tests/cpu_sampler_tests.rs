@@ -7,7 +7,6 @@ use std::time::Duration;
 mod linux_tests {
     use super::*;
     use denet::cpu_sampler::CpuSampler;
-    use std::fs;
     use std::path::Path;
 
     // We'll use CpuSampler methods directly instead of these helper functions

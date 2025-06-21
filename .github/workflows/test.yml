@@ -63,7 +63,7 @@ jobs:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         run: |
           echo "Running Rust tests with coverage on Linux"
-          cargo llvm-cov --lcov --output-path lcov.info --exclude src/python.rs
+          pixi run coverage-rust
 
       - name: Build and install Python package
         env:

@@ -5,6 +5,7 @@ python/denet/*.so
 htmlcov/
 coverage.xml
 .coverage
+lcov.info
 
 __pycache__/*
 
