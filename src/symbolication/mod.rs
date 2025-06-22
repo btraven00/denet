@@ -27,12 +27,12 @@ pub struct SymbolInfo {
 /// Parse /proc/{pid}/maps and return a vector of MemoryRegion structs.
 /// Returns an empty vector on error.
 pub fn get_memory_maps(pid: u32) -> Vec<MemoryRegion> {
-    let path = format!("/proc/{}/maps", pid);
+    let path = format!("/proc/{pid}/maps");
     let file = match File::open(&path) {
         Ok(f) => f,
         Err(e) => {
             // Log the error to help with debugging
-            eprintln!("Failed to open maps file for PID {}: {}", pid, e);
+            eprintln!("Failed to open maps file for PID {pid}: {e}");
             return vec![];
         }
     };
@@ -45,10 +45,7 @@ pub fn get_memory_maps(pid: u32) -> Vec<MemoryRegion> {
         let line = match line_result {
             Ok(l) => l,
             Err(e) => {
-                eprintln!(
-                    "Error reading line {} from maps for PID {}: {}",
-                    line_no, pid, e
-                );
+                eprintln!("Error reading line {line_no} from maps for PID {pid}: {e}");
                 skipped_lines += 1;
                 continue;
             }
@@ -140,10 +137,7 @@ pub fn get_memory_maps(pid: u32) -> Vec<MemoryRegion> {
 
     // Warn if we skipped a significant number of lines
     if skipped_lines > 5 {
-        eprintln!(
-            "Warning: Skipped {} malformed lines in maps for PID {}",
-            skipped_lines, pid
-        );
+        eprintln!("Warning: Skipped {skipped_lines} malformed lines in maps for PID {pid}");
     }
 
     regions
@@ -185,7 +179,7 @@ pub fn get_symbol_info_with_addr2line(binary_path: &str, offset: u64) -> Option<
     }
 
     // Format address for addr2line (use hex notation)
-    let addr_str = format!("0x{:x}", offset);
+    let addr_str = format!("0x{offset:x}");
 
     // Try with multiple offset calculation methods if needed
     // Sometimes the direct offset works better, sometimes we need additional info
@@ -298,6 +292,12 @@ pub struct SymbolicationCache {
     pub max_age_secs: u64,
 }
 
+impl Default for SymbolicationCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SymbolicationCache {
     pub fn new() -> Self {
         Self {
@@ -314,7 +314,7 @@ impl SymbolicationCache {
         let should_refresh = match self.last_refresh.get(&pid) {
             Some(instant) => {
                 instant.elapsed() > std::time::Duration::from_secs(self.max_age_secs)
-                    || self.pid_maps.get(&pid).map_or(true, |maps| maps.is_empty())
+                    || self.pid_maps.get(&pid).is_none_or(|maps| maps.is_empty())
             }
             None => true,
         };
@@ -325,7 +325,7 @@ impl SymbolicationCache {
             self.last_refresh.insert(pid, std::time::Instant::now());
         }
 
-        self.pid_maps.entry(pid).or_insert_with(Vec::new)
+        self.pid_maps.entry(pid).or_default()
     }
 
     /// Get symbol info for an address, using the cache when possible

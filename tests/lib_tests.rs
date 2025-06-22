@@ -92,13 +92,11 @@ fn test_core_process_monitor_reexport() {
 #[test]
 fn test_process_monitor_legacy_reexport() {
     use denet::ProcessMonitor;
-    use std::time::Duration;
 
     // Create a basic process monitor for the current process
     let pid = std::process::id() as usize;
-    // Use the legacy from_pid constructor with the correct parameters
-    let monitor_result =
-        ProcessMonitor::from_pid(pid, Duration::from_millis(100), Duration::from_millis(1000));
+    // Use the legacy from_pid constructor
+    let monitor_result = ProcessMonitor::from_pid(pid);
 
     // The monitor should be created successfully
     assert!(monitor_result.is_ok());

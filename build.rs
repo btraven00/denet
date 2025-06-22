@@ -68,10 +68,7 @@ fn compile_ebpf_programs() {
     std::fs::create_dir_all(&ebpf_out_dir).unwrap();
 
     // List of eBPF programs to compile with clang
-    let c_ebpf_programs = vec![
-        "syscall_tracer.c",
-        "offcpu_profiler.c",
-    ];
+    let c_ebpf_programs = vec!["syscall_tracer.c", "offcpu_profiler.c"];
 
     // Process C-based programs
     for program in c_ebpf_programs {
