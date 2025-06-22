@@ -22,6 +22,10 @@ Denet is a streaming process monitoring tool that provides detailed metrics on r
 - Command-line interface with colorized output
 - Multiple output formats (JSON, JSONL, CSV)
 - In-memory sample collection for Python API
+- eBPF-based profiling on Linux:
+  - Syscall tracking and categorization
+  - Off-CPU profiling to identify blocking points
+  - Fine-grained thread state analysis
 
 - Analysis utilities for metrics aggregation, peak detection, and resource utilization
 - Process metadata preserved in output files (pid, command, executable path)
@@ -31,6 +35,9 @@ Denet is a streaming process monitoring tool that provides detailed metrics on r
 - Python 3.6+ (Python 3.12 recommended for best performance)
 - Rust (for development)
 - [pixi](https://prefix.dev/docs/pixi/overview) (for development only)
+- For eBPF features (Linux only):
+  - Linux kernel 5.5+ recommended
+  - CAP_BPF or root privileges
 
 ## Installation
 
@@ -81,6 +88,9 @@ denet --quiet --json --out metrics.jsonl run python script.py
 
 # Monitor a CPU-intensive workload (shows aggregated metrics for all children)
 denet run python cpu_intensive_script.py
+
+# Enable eBPF-based profiling (Linux only, requires root)
+sudo denet --ebpf run python script.py
 
 # Disable child process monitoring (only track the parent process)
 denet --no-include-children run python multi_process_script.py
@@ -231,7 +241,50 @@ For detailed developer documentation, including project structure, development w
 
 GPL-3
 
+## Advanced Features
+
+### Off-CPU Profiling (Linux only)
+
+Off-CPU profiling tracks the time threads spend blocked or waiting, which can help identify bottlenecks from:
+- I/O operations (disk, network)
+- Lock contention
+- Synchronization primitives
+- Sleeping/idle time
+
+To use off-CPU profiling, run with the `--ebpf` flag:
+
+```bash
+sudo denet --ebpf run python io_bound_script.py
+```
+
+The resulting metrics will include an `offcpu` section with detailed information about where time is spent off the CPU:
+
+```json
+{
+  "ebpf": {
+    "offcpu": {
+      "total_time_ns": 1532487231,
+      "total_events": 127,
+      "avg_time_ns": 12066827,
+      "max_time_ns": 102453619,
+      "min_time_ns": 1023589,
+      "top_blocking_threads": [
+        {
+          "name": "Thread 1234",
+          "tid": 1234,
+          "pid": 1233,
+          "total_time_ns": 984523651,
+          "percentage": 64.2
+        },
+        ...
+      ]
+    }
+  }
+}
+```
+
 ## Acknowledgements
 
 - [sysinfo](https://github.com/GuillaumeGomez/sysinfo) - Rust library for system information
 - [PyO3](https://github.com/PyO3/pyo3) - Rust bindings for Python
+- [Aya](https://github.com/aya-rs/aya) - Rust eBPF library

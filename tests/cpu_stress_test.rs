@@ -69,10 +69,8 @@ if __name__ == "__main__":
         .expect("Failed to spawn CPU burner");
 
     // Create a monitor for the parent process
-    let base_interval = Duration::from_millis(100);
-    let max_interval = Duration::from_millis(500);
-    let mut monitor = ProcessMonitor::from_pid(child.id() as usize, base_interval, max_interval)
-        .expect("Failed to create process monitor");
+    let mut monitor =
+        ProcessMonitor::from_pid(child.id() as usize).expect("Failed to create process monitor");
 
     // Let the stress test start up
     std::thread::sleep(Duration::from_millis(1000));
@@ -87,12 +85,14 @@ if __name__ == "__main__":
         let tree_metrics = monitor.sample_tree_metrics();
 
         // Store the CPU usage from all processes in the tree
-        if let Some(agg) = tree_metrics.aggregated {
-            samples.push(agg.cpu_usage);
-            println!(
-                "Sample: CPU {}%, Process count: {}",
-                agg.cpu_usage, agg.process_count
-            );
+        if let Some(tree_metrics) = tree_metrics {
+            if let Some(agg) = &tree_metrics.aggregated {
+                samples.push(agg.cpu_usage);
+                println!(
+                    "Sample: CPU {}%, Process count: {}",
+                    agg.cpu_usage, agg.process_count
+                );
+            }
         }
 
         std::thread::sleep(Duration::from_millis(200));

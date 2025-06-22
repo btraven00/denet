@@ -67,21 +67,23 @@ fn compile_ebpf_programs() {
     let ebpf_out_dir = PathBuf::from(&out_dir).join("ebpf");
     std::fs::create_dir_all(&ebpf_out_dir).unwrap();
 
-    // List of eBPF programs to compile
-    let ebpf_programs = vec!["syscall_tracer.c", "simple_test.c"];
+    // List of eBPF programs to compile with clang
+    let c_ebpf_programs = vec!["syscall_tracer.c", "offcpu_profiler.c"];
 
-    for program in ebpf_programs {
+    // Process C-based programs
+    for program in c_ebpf_programs {
         let src_path = PathBuf::from(ebpf_src_dir).join(program);
         let obj_name = program.replace(".c", ".o");
+
+        // Create parent directory for output if needed (for subdirectories)
+        if let Some(parent) = PathBuf::from(&obj_name).parent() {
+            let dir_path = ebpf_out_dir.join(parent);
+            std::fs::create_dir_all(&dir_path).unwrap();
+        }
+
         let obj_path = ebpf_out_dir.join(&obj_name);
 
         println!("cargo:rerun-if-changed={}", src_path.display());
-
-        // Only compile if source file exists
-        if !src_path.exists() {
-            println!("cargo:warning=Creating placeholder for {program}");
-            create_placeholder_ebpf_program(&src_path);
-        }
 
         // Compile eBPF C program to bytecode
         let compilation = Command::new("clang")
@@ -120,121 +122,8 @@ fn compile_ebpf_programs() {
         // Tell Rust where to find the compiled object file
         println!(
             "cargo:rustc-env=EBPF_{}_PATH={}",
-            obj_name.replace(".o", "").to_uppercase(),
+            obj_name.replace(".o", "").replace("/", "_").to_uppercase(),
             obj_path.display()
         );
     }
-}
-
-/// Create a placeholder eBPF program if it doesn't exist
-fn create_placeholder_ebpf_program(path: &PathBuf) {
-    let program_name = path.file_stem().unwrap().to_str().unwrap();
-
-    let placeholder_content = match program_name {
-        "simple_test" => {
-            r#"//! Simple eBPF program for testing tracepoints
-//! This is a minimal program that should be easy to load
-
-#include <linux/bpf.h>
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
-
-// Simple array map for testing
-struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY);
-    __type(key, __u32);
-    __type(value, __u64);
-    __uint(max_entries, 10);
-} test_map SEC(".maps");
-
-// Simple tracepoint for openat syscall
-SEC("tracepoint/syscalls/sys_enter_openat")
-int trace_openat_enter(void *ctx) {
-    __u32 key = 0;
-    __u64 *value = bpf_map_lookup_elem(&test_map, &key);
-    if (value) {
-        (*value)++;
-    }
-    return 0;
-}
-
-char LICENSE[] SEC("license") = "GPL";
-"#
-        }
-        "syscall_tracer" => {
-            r#"//! Syscall tracing eBPF program
-//! This program attaches to syscall tracepoints and counts syscall frequency
-
-#include <linux/bpf.h>
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
-
-// BPF map to store syscall counts per PID
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, __u32);   // PID
-    __type(value, __u64); // syscall count
-    __uint(max_entries, 10240);
-} syscall_counts SEC(".maps");
-
-// Tracepoint for syscall entry
-SEC("tracepoint/syscalls/sys_enter_openat")
-int trace_openat_enter(void *ctx) {
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
-
-    // Get current count for this PID
-    __u64 *count = bpf_map_lookup_elem(&syscall_counts, &pid);
-    if (count) {
-        __sync_fetch_and_add(count, 1);
-    } else {
-        __u64 initial_count = 1;
-        bpf_map_update_elem(&syscall_counts, &pid, &initial_count, BPF_ANY);
-    }
-
-    return 0;
-}
-
-// Additional tracepoints for common syscalls
-SEC("tracepoint/syscalls/sys_enter_read")
-int trace_read_enter(void *ctx) {
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
-
-    __u64 *count = bpf_map_lookup_elem(&syscall_counts, &pid);
-    if (count) {
-        __sync_fetch_and_add(count, 1);
-    } else {
-        __u64 initial_count = 1;
-        bpf_map_update_elem(&syscall_counts, &pid, &initial_count, BPF_ANY);
-    }
-
-    return 0;
-}
-
-SEC("tracepoint/syscalls/sys_enter_write")
-int trace_write_enter(void *ctx) {
-    __u32 pid = bpf_get_current_pid_tgid() >> 32;
-
-    __u64 *count = bpf_map_lookup_elem(&syscall_counts, &pid);
-    if (count) {
-        __sync_fetch_and_add(count, 1);
-    } else {
-        __u64 initial_count = 1;
-        bpf_map_update_elem(&syscall_counts, &pid, &initial_count, BPF_ANY);
-    }
-
-    return 0;
-}
-
-char LICENSE[] SEC("license") = "GPL";
-"#
-        }
-        _ => "// Placeholder eBPF program\n",
-    };
-
-    // Create directory if it doesn't exist
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
-    }
-
-    std::fs::write(path, placeholder_content).unwrap();
 }

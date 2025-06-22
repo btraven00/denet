@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 // Real eBPF implementation using aya
 #[cfg(feature = "ebpf")]
-use aya::{maps::HashMap as BpfHashMap, Bpf, BpfLoader};
+use aya::{maps::HashMap as BpfHashMap, Ebpf, EbpfLoader};
 
 // Include compiled eBPF bytecode at compile time
 #[cfg(feature = "ebpf")]
@@ -20,7 +20,7 @@ const SYSCALL_TRACER_BYTECODE: &[u8] =
 #[cfg(feature = "ebpf")]
 pub struct SyscallTracker {
     #[cfg(feature = "ebpf")]
-    bpf: Option<Bpf>,
+    bpf: Option<Ebpf>,
 
     #[cfg(feature = "ebpf")]
     syscall_counts: Option<BpfHashMap<aya::maps::MapData, u32, u64>>,
@@ -172,7 +172,7 @@ impl SyscallTracker {
     /// For this implementation, we'll use a hybrid approach with real Linux interfaces
     #[cfg(feature = "ebpf")]
     fn init_ebpf() -> Result<(
-        Bpf,
+        Ebpf,
         BpfHashMap<aya::maps::MapData, u32, u32>,
         BpfHashMap<aya::maps::MapData, u32, u64>,
     )> {
@@ -375,7 +375,7 @@ impl SyscallTracker {
         crate::ebpf::debug::debug_println("Creating BPF loader");
 
         // Create loader with default options
-        let mut loader = BpfLoader::new();
+        let mut loader = EbpfLoader::new();
 
         // Log the Aya usage
         crate::ebpf::debug::debug_println("Using Aya for eBPF loading");
@@ -480,7 +480,7 @@ impl SyscallTracker {
                 "Trying to load from file: {}",
                 bytecode_path.display()
             ));
-            let load_attempt = Bpf::load_file(&bytecode_path);
+            let load_attempt = Ebpf::load_file(&bytecode_path);
             if let Err(ref e) = load_attempt {
                 crate::ebpf::debug::debug_println(&format!("File load error: {}", e));
                 // Check error message for verifier logs
