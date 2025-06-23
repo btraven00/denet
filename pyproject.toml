@@ -73,6 +73,8 @@ fix-all = { cmd = "cargo fmt --all && ruff format --force-exclude python/ tests/
 publish-pypi = { cmd = "maturin publish --skip-existing --features python" }
 publish-crates = { cmd = "cargo publish --features python" }
 
+extract-crates = { cmd = "cargo metadata --format-version 1 --locked | jq -r '.packages[] | \"(\\(.name|@sh), \\(.version|@sh)),\"'" }
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
