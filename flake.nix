@@ -16,7 +16,7 @@
         packages = {
           denet = naersk-lib.buildPackage {
             pname = "denet";
-            version = "0.3.3";
+            version = "0.4.1";
             src = ./.;
 
             # Disable `default` features

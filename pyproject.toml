@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "denet"
-version = "0.3.3"
+version = "0.4.1"
 description = "A streaming process monitoring tool"
 readme = "README.md"
 authors = [{ name = "btraven00" }]
@@ -20,7 +20,7 @@ classifiers = [
 
 [tool.pixi.project]
 name = "denet"
-version = "0.3.3"
+version = "0.4.1"
 channels = ["conda-forge", "pypi"]
 platforms = ["linux-64", "osx-arm64"]
 

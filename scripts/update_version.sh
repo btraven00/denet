@@ -30,6 +30,10 @@ echo "Updating pyproject.toml..."
 sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" "$REPO_ROOT/pyproject.toml"
 sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" "$REPO_ROOT/Cargo.toml"
 
+# Update version in flake.nix
+echo "Updating flake.nix..."
+sed -i "s/version = \".*\";/version = \"$NEW_VERSION\";/" "$REPO_ROOT/flake.nix"
+
 # If you have a version specified in __init__.py, update it
 if [ -f "$REPO_ROOT/python/denet/__init__.py" ]; then
     echo "Updating python/denet/__init__.py..."
