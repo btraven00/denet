@@ -3,7 +3,7 @@
 //! This test verifies that our CPU measurement can correctly
 //! report high CPU usage across multiple cores.
 
-use denet::process_monitor::ProcessMonitor;
+use denet::ProcessMonitor;
 use std::process::Command;
 use std::time::{Duration, Instant};
 

@@ -60,22 +60,22 @@ fn test_run_monitor_basic() {
     }
 }
 
-/// Test CoreProcessMonitor re-export
+/// Test ProcessMonitor re-export
 #[test]
-fn test_core_process_monitor_reexport() {
-    use denet::CoreProcessMonitor;
-    use denet::MonitorConfig;
-
-    let config = MonitorConfig::builder()
-        .base_interval_ms(100)
-        .build()
-        .unwrap();
+fn test_process_monitor_reexport() {
+    use denet::ProcessMonitor;
+    use std::time::Duration;
 
     // Current process id
     let pid = std::process::id() as usize;
 
     // Test the constructor without running
-    let monitor_result = CoreProcessMonitor::from_pid_with_config(pid, config);
+    let monitor_result = ProcessMonitor::from_pid_with_options(
+        pid,
+        Duration::from_millis(100),
+        Duration::from_millis(1000),
+        false,
+    );
 
     // The current process should exist
     assert!(monitor_result.is_ok());

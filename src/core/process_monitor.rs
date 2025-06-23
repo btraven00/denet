@@ -135,12 +135,6 @@ pub struct ProcessMonitor {
 // We'll use a Result type directly instead of a custom ErrorType to avoid orphan rule issues
 pub type ProcessResult<T> = std::result::Result<T, std::io::Error>;
 
-// Helper function to convert IO errors to Python errors when needed
-#[cfg(feature = "python")]
-pub fn io_err_to_py_err(err: std::io::Error) -> pyo3::PyErr {
-    pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {err}"))
-}
-
 impl ProcessMonitor {
     pub fn new(
         cmd: Vec<String>,

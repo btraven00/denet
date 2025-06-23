@@ -35,18 +35,13 @@ pub mod cpu_sampler;
 #[cfg(feature = "ebpf")]
 pub mod ebpf;
 
-// Legacy process_monitor for backward compatibility
-// TODO: Remove after migration is complete
-pub mod process_monitor;
-
 // Python bindings
 #[cfg(feature = "python")]
 mod python;
 
-// Re-export main types for backward compatibility
-pub use core::ProcessMonitor as CoreProcessMonitor;
+// Re-export main types
+pub use core::{ProcessMonitor, ProcessResult};
 pub use monitor::*;
-pub use process_monitor::{ProcessMonitor, ProcessResult};
 
 // Re-export for convenience
 pub use config::{DenetConfig, MonitorConfig, OutputConfig, OutputFormat};
@@ -71,14 +66,18 @@ pub fn run_monitor(
     max_interval_ms: u64,
     since_process_start: bool,
 ) -> Result<()> {
-    let config = DenetConfig {
-        monitor: MonitorConfig::builder()
-            .base_interval_ms(base_interval_ms)
-            .max_interval_ms(max_interval_ms)
-            .since_process_start(since_process_start)
-            .build()?,
-        output: OutputConfig::default(),
-    };
+    use std::time::Duration;
+    let mut monitor = ProcessMonitor::new_with_options(
+        cmd,
+        Duration::from_millis(base_interval_ms),
+        Duration::from_millis(max_interval_ms),
+        since_process_start,
+    )
+    .map_err(|e| DenetError::Io(e))?;
 
-    core::run_monitor(cmd, config)
+    while monitor.is_running() {
+        let _ = monitor.sample_metrics();
+        std::thread::sleep(Duration::from_millis(base_interval_ms));
+    }
+    Ok(())
 }
