@@ -9,25 +9,29 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{self, Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
-// In the long run, we will want this function to be more robust
-// or use platform-specific APIs. For now, we'll keep it simple.
-pub(crate) fn get_thread_count(_pid: usize) -> usize {
-    #[cfg(target_os = "linux")]
-    {
-        let task_dir = format!("/proc/{_pid}/task");
-        match std::fs::read_dir(task_dir) {
-            Ok(entries) => entries.count(),
-            Err(_) => 0,
-        }
-    }
+// Constants for better maintainability
+const DEFAULT_THREAD_COUNT: usize = 1;
+const LINUX_PROC_DIR: &str = "/proc";
+const LINUX_TASK_SUBDIR: &str = "/task";
 
-    #[cfg(not(target_os = "linux"))]
-    {
-        // Default implementation for non-Linux platforms
-        // In a real implementation, we'd use platform-specific APIs here
-        // For now, just return 1 as a default value
-        1
-    }
+/// Get the number of threads for a process
+/// In the long run, we will want this function to be more robust
+/// or use platform-specific APIs. For now, we'll keep it simple.
+pub(crate) fn get_thread_count(pid: usize) -> usize {
+    get_linux_thread_count(pid).unwrap_or(DEFAULT_THREAD_COUNT)
+}
+
+#[cfg(target_os = "linux")]
+fn get_linux_thread_count(pid: usize) -> Option<usize> {
+    let task_dir = format!("{}/{}{}", LINUX_PROC_DIR, pid, LINUX_TASK_SUBDIR);
+    std::fs::read_dir(task_dir)
+        .ok()
+        .map(|entries| entries.count())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn get_linux_thread_count(_pid: usize) -> Option<usize> {
+    None
 }
 
 /// Read metrics from a JSON file and generate a summary

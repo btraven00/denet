@@ -114,97 +114,134 @@ enum Commands {
 }
 
 fn main() -> Result<()> {
-    // Parse command line arguments
     let args = Args::parse();
 
-    // Handle stats/summary subcommand separately as they don't require a monitor
-    match &args.command {
-        Commands::Stats { file } | Commands::Summary { file } => {
-            if let Some(old_cmd) = std::env::args().nth(1) {
-                if old_cmd == "summary" && !args.quiet {
-                    eprintln!("Note: Using 'stats' is recommended over 'summary'");
-                }
-            }
-            return generate_summary_from_file(file, args.json, args.out.as_ref());
-        }
-        Commands::Run { .. } | Commands::Attach { .. } => {}
+    // Handle stats/summary subcommand separately
+    if let Commands::Stats { file } | Commands::Summary { file } = &args.command {
+        return handle_stats_command(file, &args);
     }
 
-    // Create output files
-    let out_path = args.out.clone(); // Clone to keep the original
+    // Handle monitoring commands
+    handle_monitoring_commands(&args)
+}
+
+/// Handle stats and summary commands
+fn handle_stats_command(file: &PathBuf, args: &Args) -> Result<()> {
+    if let Some(old_cmd) = std::env::args().nth(1) {
+        if old_cmd == "summary" && !args.quiet {
+            eprintln!("Note: Using 'stats' is recommended over 'summary'");
+        }
+    }
+    generate_summary_from_file(file, args.json, args.out.as_ref())
+}
+
+/// Handle monitoring commands (run and attach)
+fn handle_monitoring_commands(args: &Args) -> Result<()> {
+    let file_handles = setup_output_files(args)?;
+    let monitor = create_monitor_from_args(args)?;
+    execute_monitoring_with_output(monitor, file_handles, args)
+}
+
+/// Output file handles for monitoring
+struct OutputHandles {
+    out_file: Option<File>,
+    _stats_file: Option<File>,
+}
+
+/// Set up output files based on command line arguments
+fn setup_output_files(args: &Args) -> Result<OutputHandles> {
+    let out_path = args.out.clone();
     let default_out_path = if !args.nodump && args.out.is_none() {
         Some(PathBuf::from("out.json"))
     } else {
         None
     };
 
-    let mut out_file = out_path.as_ref().or(default_out_path.as_ref()).map(|path| {
+    let out_file = out_path.as_ref().or(default_out_path.as_ref()).map(|path| {
         File::create(path).unwrap_or_else(|err| {
             eprintln!("Error creating output file: {err}");
             exit(1);
         })
     });
 
-    // Create stats output file if specified
-    let _stats_file = args.stats.as_ref().map(|path| {
+    let stats_file = args.stats.as_ref().map(|path| {
         File::create(path).unwrap_or_else(|err| {
             eprintln!("Error creating stats output file: {err}");
             exit(1);
         })
     });
 
-    // Create process monitor based on the subcommand
-    let mut monitor = match &args.command {
-        // Stats and Summary commands are handled above, not here
+    Ok(OutputHandles {
+        out_file,
+        _stats_file: stats_file,
+    })
+}
+
+/// Create a ProcessMonitor based on command line arguments
+fn create_monitor_from_args(args: &Args) -> Result<ProcessMonitor> {
+    match &args.command {
+        Commands::Run { command } => create_monitor_for_command(command, args),
+        Commands::Attach { pid } => create_monitor_for_pid(*pid, args),
         Commands::Stats { .. } | Commands::Summary { .. } => unreachable!(),
-        Commands::Run { command } => {
-            if command.is_empty() {
-                eprintln!("Error: Empty command");
-                exit(1);
-            }
+    }
+}
 
-            match ProcessMonitor::new_with_options(
-                command.clone(),
-                Duration::from_millis(args.interval),
-                Duration::from_millis(args.max_interval),
-                args.since_process_start,
-            ) {
-                Ok(m) => {
-                    if args.debug && !args.quiet {
-                        println!("Monitoring process: {}", command.join(" ").cyan());
-                    }
-                    m
-                }
-                Err(err) => {
-                    eprintln!("Error starting command: {err}");
-                    exit(1);
-                }
-            }
-        }
-        Commands::Attach { pid } => {
-            match ProcessMonitor::from_pid_with_options(
-                *pid,
-                Duration::from_millis(args.interval),
-                Duration::from_millis(args.max_interval),
-                args.since_process_start,
-            ) {
-                Ok(m) => {
-                    if !args.quiet {
-                        println!(
-                            "Monitoring existing process with PID: {}",
-                            pid.to_string().cyan()
-                        );
-                    }
-                    m
-                }
-                Err(err) => {
-                    eprintln!("Error attaching to process: {err}");
-                    exit(1);
-                }
-            }
-        }
-    };
+/// Create monitor for a new command
+fn create_monitor_for_command(command: &[String], args: &Args) -> Result<ProcessMonitor> {
+    if command.is_empty() {
+        eprintln!("Error: Empty command");
+        exit(1);
+    }
 
+    match ProcessMonitor::new_with_options(
+        command.to_vec(),
+        Duration::from_millis(args.interval),
+        Duration::from_millis(args.max_interval),
+        args.since_process_start,
+    ) {
+        Ok(monitor) => {
+            if args.debug && !args.quiet {
+                println!("Monitoring process: {}", command.join(" ").cyan());
+            }
+            Ok(monitor)
+        }
+        Err(err) => {
+            eprintln!("Error starting command: {err}");
+            exit(1);
+        }
+    }
+}
+
+/// Create monitor for existing process by PID
+fn create_monitor_for_pid(pid: usize, args: &Args) -> Result<ProcessMonitor> {
+    match ProcessMonitor::from_pid_with_options(
+        pid,
+        Duration::from_millis(args.interval),
+        Duration::from_millis(args.max_interval),
+        args.since_process_start,
+    ) {
+        Ok(monitor) => {
+            if !args.quiet {
+                println!(
+                    "Monitoring existing process with PID: {}",
+                    pid.to_string().cyan()
+                );
+            }
+            Ok(monitor)
+        }
+        Err(err) => {
+            eprintln!("Error attaching to process {pid}: {err}");
+            exit(1);
+        }
+    }
+}
+
+/// Execute monitoring with output handling
+fn execute_monitoring_with_output(
+    mut monitor: ProcessMonitor,
+    mut file_handles: OutputHandles,
+    args: &Args,
+) -> Result<()> {
     // Set debug mode if requested
     if args.debug {
         monitor.set_debug_mode(true);
@@ -254,10 +291,11 @@ fn main() -> Result<()> {
     // Setup signal handling for clean shutdown
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
+    let quiet = args.quiet;
 
     ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);
-        if !args.quiet {
+        if !quiet {
             println!("\nReceived Ctrl-C, finishing...");
         }
     })
@@ -299,7 +337,7 @@ fn main() -> Result<()> {
     // Emit metadata first (always for files, only output to console if JSON mode)
     if let Some(metadata_ref) = &metadata {
         let metadata_json = serde_json::to_string(&metadata_ref).unwrap();
-        if let Some(file) = &mut out_file {
+        if let Some(file) = &mut file_handles.out_file {
             writeln!(file, "{metadata_json}")?;
         }
         if args.json && !args.quiet {
@@ -363,7 +401,7 @@ fn main() -> Result<()> {
                     // Format and display metrics
                     if args.json {
                         let json = serde_json::to_string(&metrics).unwrap();
-                        if let Some(file) = &mut out_file {
+                        if let Some(file) = &mut file_handles.out_file {
                             writeln!(file, "{json}")?;
                         }
                         if !args.quiet {
@@ -387,7 +425,7 @@ fn main() -> Result<()> {
                         }
                     } else {
                         let formatted = format_metrics(&metrics);
-                        if let Some(file) = &mut out_file {
+                        if let Some(file) = &mut file_handles.out_file {
                             writeln!(file, "{}", serde_json::to_string(&metrics).unwrap())?;
                         }
                         if !args.quiet {
@@ -429,7 +467,7 @@ fn main() -> Result<()> {
                     // Format and display tree metrics
                     if args.json {
                         let json = serde_json::to_string(&tree_metrics).unwrap();
-                        if let Some(file) = &mut out_file {
+                        if let Some(file) = &mut file_handles.out_file {
                             writeln!(file, "{json}")?;
                         }
                         if !args.quiet {
@@ -455,7 +493,7 @@ fn main() -> Result<()> {
                     } else {
                         // Format and display tree metrics with parent and children
                         let formatted = format_aggregated_metrics(agg_metrics);
-                        if let Some(file) = &mut out_file {
+                        if let Some(file) = &mut file_handles.out_file {
                             writeln!(file, "{}", serde_json::to_string(&tree_metrics).unwrap())?;
                         }
                         if !args.quiet {
@@ -512,7 +550,7 @@ fn main() -> Result<()> {
         );
 
         // If we wrote to a file, print the path
-        if let Some(path) = &out_path {
+        if let Some(path) = &args.out {
             println!("Results written to {}", path.display().to_string().green());
         }
 

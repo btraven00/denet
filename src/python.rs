@@ -12,12 +12,36 @@ use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 use std::time::Duration;
 
+/// Helper function to convert IO errors to Python errors
+fn map_io_error(err: std::io::Error) -> pyo3::PyErr {
+    pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {err}"))
+}
+
 /// Python wrapper for ProcessMonitor
 #[pyclass(name = "ProcessMonitor")]
 struct PyProcessMonitor {
     inner: ProcessMonitor,
     samples: Vec<String>,
     output_config: OutputConfig,
+}
+
+/// Build OutputConfig with consistent settings
+fn build_output_config(
+    output_file: Option<String>,
+    output_format: &str,
+    store_in_memory: bool,
+    quiet: bool,
+) -> PyResult<OutputConfig> {
+    let mut builder = OutputConfig::builder()
+        .format_str(output_format)?
+        .store_in_memory(store_in_memory)
+        .quiet(quiet);
+
+    if let Some(path) = output_file {
+        builder = builder.output_file(path);
+    }
+
+    Ok(builder.build())
 }
 
 #[pymethods]
@@ -36,22 +60,8 @@ impl PyProcessMonitor {
         quiet: bool,
         include_children: bool,
     ) -> PyResult<Self> {
-        let output_config = OutputConfig::builder()
-            .format_str(output_format)?
-            .store_in_memory(store_in_memory)
-            .quiet(quiet)
-            .build();
-
-        let output_config = if let Some(path) = output_file {
-            OutputConfig::builder()
-                .output_file(path)
-                .format_str(output_format)?
-                .store_in_memory(store_in_memory)
-                .quiet(quiet)
-                .build()
-        } else {
-            output_config
-        };
+        let output_config =
+            build_output_config(output_file, output_format, store_in_memory, quiet)?;
 
         let mut inner = ProcessMonitor::new_with_options(
             cmd,
@@ -59,7 +69,7 @@ impl PyProcessMonitor {
             Duration::from_millis(max_interval_ms),
             since_process_start,
         )
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {e}")))?;
+        .map_err(map_io_error)?;
 
         // Enable child process monitoring if requested
         inner.set_include_children(include_children);
@@ -85,30 +95,15 @@ impl PyProcessMonitor {
         quiet: bool,
         include_children: bool,
     ) -> PyResult<Self> {
-        let output_config = OutputConfig::builder()
-            .format_str(output_format)?
-            .store_in_memory(store_in_memory)
-            .quiet(quiet)
-            .build();
-
-        let output_config = if let Some(path) = output_file {
-            OutputConfig::builder()
-                .output_file(path)
-                .format_str(output_format)?
-                .store_in_memory(store_in_memory)
-                .quiet(quiet)
-                .build()
-        } else {
-            output_config
-        };
-
+        let output_config =
+            build_output_config(output_file, output_format, store_in_memory, quiet)?;
         let mut inner = ProcessMonitor::from_pid_with_options(
             pid,
             Duration::from_millis(base_interval_ms),
             Duration::from_millis(max_interval_ms),
             since_process_start,
         )
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {e}")))?;
+        .map_err(map_io_error)?;
 
         // Enable child process monitoring if requested
         inner.set_include_children(include_children);
@@ -155,7 +150,7 @@ impl PyProcessMonitor {
                 .write(true)
                 .truncate(true)
                 .open(path)
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {e}")))?;
+                .map_err(map_io_error)?;
             Some(file)
         } else {
             None
@@ -167,7 +162,7 @@ impl PyProcessMonitor {
                 .write(true)
                 .truncate(true)
                 .open(path)
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {e}")))?;
+                .map_err(map_io_error)?;
             Some(file)
         } else {
             None
@@ -267,7 +262,7 @@ impl PyProcessMonitor {
                 .write(true)
                 .truncate(true)
                 .open(path)
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {e}")))?;
+                .map_err(map_io_error)?;
             Some(file)
         } else {
             None
@@ -290,14 +285,10 @@ impl PyProcessMonitor {
                 if let Some(file) = &mut file_handle {
                     match self.output_config.format {
                         OutputFormat::JsonLines => {
-                            writeln!(file, "{json}").map_err(|e| {
-                                pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {e}"))
-                            })?;
+                            writeln!(file, "{json}").map_err(map_io_error)?;
                         }
                         _ => {
-                            writeln!(file, "{json}").map_err(|e| {
-                                pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {e}"))
-                            })?;
+                            writeln!(file, "{json}").map_err(map_io_error)?;
                         }
                     }
                 } else if !self.output_config.quiet {
@@ -344,10 +335,9 @@ impl PyProcessMonitor {
                 .create(true)
                 .append(true)
                 .open(path)
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {e}")))?;
+                .map_err(map_io_error)?;
 
-            writeln!(file, "{metrics_json}")
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {e}")))?;
+            writeln!(file, "{metrics_json}").map_err(map_io_error)?;
         }
 
         // Return the metrics JSON
@@ -387,21 +377,19 @@ impl PyProcessMonitor {
             .parse()
             .map_err(|e: DenetError| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
-        let mut file = File::create(&path)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {e}")))?;
+        let mut file = File::create(&path).map_err(map_io_error)?;
 
         match output_format {
             OutputFormat::Json => {
                 // Create a JSON array from the string samples
                 let json_array = format!("[{}]", self.samples.join(","));
-                file.write_all(json_array.as_bytes()).map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {e}"))
-                })?;
+                file.write_all(json_array.as_bytes())
+                    .map_err(map_io_error)?;
             }
             OutputFormat::Csv => {
                 // Write CSV header
                 writeln!(file, "ts_ms,cpu_usage,mem_rss_kb,mem_vms_kb,disk_read_bytes,disk_write_bytes,net_rx_bytes,net_tx_bytes,thread_count,uptime_secs")
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {e}")))?;
+                    .map_err(map_io_error)?;
 
                 // Write data rows
                 for metrics_json in &self.samples {
@@ -450,7 +438,7 @@ impl PyProcessMonitor {
                             file,
                             "{ts_ms},{cpu_usage},{mem_rss_kb},{mem_vms_kb},{disk_read_bytes},{disk_write_bytes},{net_rx_bytes},{net_tx_bytes},{thread_count},{uptime_secs}"
                         )
-                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {e}")))?;
+                        .map_err(map_io_error)?;
                     }
                 }
             }
@@ -458,9 +446,7 @@ impl PyProcessMonitor {
                 // Default to jsonl (one JSON object per line)
                 // The samples are already JSON strings, so just write them
                 for json in &self.samples {
-                    writeln!(file, "{json}").map_err(|e| {
-                        pyo3::exceptions::PyRuntimeError::new_err(format!("IO Error: {e}"))
-                    })?;
+                    writeln!(file, "{json}").map_err(map_io_error)?;
                 }
             }
         }
