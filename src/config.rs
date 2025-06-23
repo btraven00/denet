@@ -3,6 +3,7 @@
 //! This module provides builder patterns and configuration structs to replace
 //! scattered parameters throughout the codebase.
 
+use crate::core::constants::defaults;
 use crate::error::{DenetError, Result};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -61,8 +62,8 @@ pub struct MonitorConfig {
 impl Default for MonitorConfig {
     fn default() -> Self {
         Self {
-            base_interval: Duration::from_millis(100),
-            max_interval: Duration::from_millis(1000),
+            base_interval: defaults::BASE_INTERVAL,
+            max_interval: defaults::MAX_INTERVAL,
             since_process_start: false,
             include_children: true,
             max_duration: None,
@@ -188,8 +189,8 @@ impl MonitorConfigBuilder {
 
     pub fn build(self) -> Result<MonitorConfig> {
         let config = MonitorConfig {
-            base_interval: self.base_interval.unwrap_or(Duration::from_millis(100)),
-            max_interval: self.max_interval.unwrap_or(Duration::from_millis(1000)),
+            base_interval: self.base_interval.unwrap_or(defaults::BASE_INTERVAL),
+            max_interval: self.max_interval.unwrap_or(defaults::MAX_INTERVAL),
             since_process_start: self.since_process_start.unwrap_or(false),
             include_children: self.include_children.unwrap_or(true),
             max_duration: self.max_duration,
