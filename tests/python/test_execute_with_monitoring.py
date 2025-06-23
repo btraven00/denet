@@ -169,3 +169,109 @@ class TestExecuteWithMonitoring:
         # Verify no children are in the samples
         summary = monitor.get_summary()
         assert "child_processes" not in summary or not summary["child_processes"]
+
+    def test_file_handle_cleanup(self, temp_stdout_file, temp_stderr_file):
+        """Test that file handles are properly closed even if an exception occurs."""
+        # This test ensures the finally block is covered for file handle cleanup
+        cmd = [sys.executable, "-c", "print('test')"]
+
+        # Normal execution should clean up properly
+        exit_code, monitor = execute_with_monitoring(
+            cmd,
+            stdout_file=temp_stdout_file,
+            stderr_file=temp_stderr_file,
+            quiet=True
+        )
+
+        assert exit_code == 0
+
+        # Files should exist and be accessible (handles closed properly)
+        with open(temp_stdout_file, "r") as f:
+            content = f.read()
+            assert "test" in content
+
+    def test_monitoring_exception_handling(self, temp_output_file):
+        """Test exception handling in the monitoring loop."""
+        import unittest.mock
+
+        cmd = [sys.executable, "-c", "import time; time.sleep(0.3)"]
+
+        # We'll test by making the monitor.sample_once() method raise an exception
+        with unittest.mock.patch('denet.ProcessMonitor.from_pid') as mock_from_pid:
+            # Create a mock monitor that raises an exception on sample_once
+            mock_monitor = unittest.mock.MagicMock()
+            mock_monitor.is_running.return_value = True
+            mock_monitor.sample_once.side_effect = RuntimeError("Simulated monitoring error")
+            mock_monitor.get_samples.return_value = []
+            mock_monitor.get_summary.return_value = {}
+            mock_from_pid.return_value = mock_monitor
+
+            # This should still complete successfully despite the monitoring exception
+            exit_code, monitor = execute_with_monitoring(cmd, output_file=temp_output_file)
+
+            assert exit_code == 0
+            assert mock_monitor.sample_once.called
+
+    def test_timeout_with_process_cleanup(self, temp_output_file):
+        """Test timeout behavior with process cleanup, including ProcessLookupError handling."""
+        import unittest.mock
+
+        # Use a command that will definitely timeout
+        cmd = [sys.executable, "-c", "import time; time.sleep(10)"]
+
+        # Mock os.killpg to simulate ProcessLookupError on the first call
+        original_killpg = os.killpg
+        call_count = 0
+
+        def mock_killpg(pgid, sig):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:  # First call (SIGTERM) - simulate process already dead
+                raise ProcessLookupError("Process group not found")
+            return original_killpg(pgid, sig)
+
+        with unittest.mock.patch('os.killpg', side_effect=mock_killpg):
+            with pytest.raises(subprocess.TimeoutExpired):
+                execute_with_monitoring(
+                    cmd,
+                    timeout=0.1,
+                    output_file=temp_output_file,
+                )
+
+        # Verify the ProcessLookupError was caught and handled
+        assert call_count >= 1
+
+    def test_failed_command(self, temp_output_file):
+        """Test execution with a command that returns non-zero exit code."""
+        cmd = [sys.executable, "-c", "import sys; sys.exit(42)"]
+
+        exit_code, monitor = execute_with_monitoring(cmd, output_file=temp_output_file)
+
+        # Should return the actual exit code, not raise an exception
+        assert exit_code == 42
+        assert monitor is not None
+
+    def test_invalid_command(self, temp_output_file):
+        """Test execution with an invalid command."""
+        cmd = ["nonexistent_command_that_should_fail"]
+
+        # This should raise an exception during subprocess.Popen
+        with pytest.raises((FileNotFoundError, OSError)):
+            execute_with_monitoring(cmd, output_file=temp_output_file)
+
+    def test_memory_only_monitoring(self):
+        """Test monitoring with store_in_memory=True and no output file."""
+        cmd = [sys.executable, "-c", "import time; print('memory test'); time.sleep(0.2)"]
+
+        exit_code, monitor = execute_with_monitoring(
+            cmd,
+            store_in_memory=True,
+            output_file=None  # No file output
+        )
+
+        assert exit_code == 0
+        samples = monitor.get_samples()
+        assert len(samples) > 0
+
+        # Verify we captured some monitoring data
+        assert any("cpu_usage" in sample for sample in samples)
