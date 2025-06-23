@@ -310,3 +310,300 @@ impl Default for Summary {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_process_metadata_new() {
+        let pid = 12345;
+        let cmd = vec!["test".to_string(), "command".to_string()];
+        let executable = "/usr/bin/test".to_string();
+
+        let metadata = ProcessMetadata::new(pid, cmd.clone(), executable.clone());
+
+        assert_eq!(metadata.pid, pid);
+        assert_eq!(metadata.cmd, cmd);
+        assert_eq!(metadata.executable, executable);
+        assert!(metadata.t0_ms > 0);
+    }
+
+    #[test]
+    fn test_metrics_new() {
+        let metrics = Metrics::new();
+
+        assert!(metrics.ts_ms > 0);
+        assert_eq!(metrics.cpu_usage, 0.0);
+        assert_eq!(metrics.mem_rss_kb, 0);
+        assert_eq!(metrics.mem_vms_kb, 0);
+        assert_eq!(metrics.disk_read_bytes, 0);
+        assert_eq!(metrics.disk_write_bytes, 0);
+        assert_eq!(metrics.net_rx_bytes, 0);
+        assert_eq!(metrics.net_tx_bytes, 0);
+        assert_eq!(metrics.thread_count, 0);
+        assert_eq!(metrics.uptime_secs, 0);
+        assert_eq!(metrics.cpu_core, None);
+    }
+
+    #[test]
+    fn test_metrics_default() {
+        let metrics = Metrics::default();
+        assert!(metrics.ts_ms > 0);
+        assert_eq!(metrics.cpu_usage, 0.0);
+    }
+
+    #[test]
+    fn test_aggregated_metrics_from_empty_metrics() {
+        let metrics = vec![];
+        let aggregated = AggregatedMetrics::from_metrics(&metrics);
+
+        assert_eq!(aggregated.cpu_usage, 0.0);
+        assert_eq!(aggregated.process_count, 0);
+        assert_eq!(aggregated.thread_count, 0);
+        assert_eq!(aggregated.uptime_secs, 0);
+    }
+
+    #[test]
+    fn test_aggregated_metrics_from_single_metric() {
+        let mut metric = Metrics::new();
+        metric.cpu_usage = 25.5;
+        metric.mem_rss_kb = 1024;
+        metric.mem_vms_kb = 2048;
+        metric.disk_read_bytes = 512;
+        metric.disk_write_bytes = 256;
+        metric.net_rx_bytes = 128;
+        metric.net_tx_bytes = 64;
+        metric.thread_count = 4;
+        metric.uptime_secs = 60;
+
+        let metrics = vec![metric];
+        let aggregated = AggregatedMetrics::from_metrics(&metrics);
+
+        assert_eq!(aggregated.cpu_usage, 25.5);
+        assert_eq!(aggregated.mem_rss_kb, 1024);
+        assert_eq!(aggregated.mem_vms_kb, 2048);
+        assert_eq!(aggregated.disk_read_bytes, 512);
+        assert_eq!(aggregated.disk_write_bytes, 256);
+        assert_eq!(aggregated.net_rx_bytes, 128);
+        assert_eq!(aggregated.net_tx_bytes, 64);
+        assert_eq!(aggregated.thread_count, 4);
+        assert_eq!(aggregated.process_count, 1);
+        assert_eq!(aggregated.uptime_secs, 60);
+    }
+
+    #[test]
+    fn test_aggregated_metrics_from_multiple_metrics() {
+        let mut metric1 = Metrics::new();
+        metric1.cpu_usage = 10.0;
+        metric1.mem_rss_kb = 500;
+        metric1.thread_count = 2;
+        metric1.uptime_secs = 30;
+
+        let mut metric2 = Metrics::new();
+        metric2.cpu_usage = 15.0;
+        metric2.mem_rss_kb = 750;
+        metric2.thread_count = 3;
+        metric2.uptime_secs = 60;
+
+        let metrics = vec![metric1, metric2];
+        let aggregated = AggregatedMetrics::from_metrics(&metrics);
+
+        assert_eq!(aggregated.cpu_usage, 25.0);
+        assert_eq!(aggregated.mem_rss_kb, 1250);
+        assert_eq!(aggregated.thread_count, 5);
+        assert_eq!(aggregated.process_count, 2);
+        assert_eq!(aggregated.uptime_secs, 60); // Max uptime
+    }
+
+    #[test]
+    fn test_aggregated_metrics_default() {
+        let aggregated = AggregatedMetrics::default();
+
+        assert!(aggregated.ts_ms > 0);
+        assert_eq!(aggregated.cpu_usage, 0.0);
+        assert_eq!(aggregated.mem_rss_kb, 0);
+        assert_eq!(aggregated.process_count, 0);
+        assert_eq!(aggregated.thread_count, 0);
+        assert_eq!(aggregated.uptime_secs, 0);
+        assert!(aggregated.ebpf.is_none());
+    }
+
+    #[test]
+    fn test_summary_new() {
+        let summary = Summary::new();
+
+        assert_eq!(summary.total_time_secs, 0.0);
+        assert_eq!(summary.sample_count, 0);
+        assert_eq!(summary.max_processes, 0);
+        assert_eq!(summary.max_threads, 0);
+        assert_eq!(summary.total_disk_read_bytes, 0);
+        assert_eq!(summary.total_disk_write_bytes, 0);
+        assert_eq!(summary.total_net_rx_bytes, 0);
+        assert_eq!(summary.total_net_tx_bytes, 0);
+        assert_eq!(summary.peak_mem_rss_kb, 0);
+        assert_eq!(summary.avg_cpu_usage, 0.0);
+    }
+
+    #[test]
+    fn test_summary_default() {
+        let summary = Summary::default();
+        assert_eq!(summary.total_time_secs, 0.0);
+        assert_eq!(summary.sample_count, 0);
+    }
+
+    #[test]
+    fn test_summary_from_empty_metrics() {
+        let metrics = vec![];
+        let summary = Summary::from_metrics(&metrics, 10.0);
+
+        assert_eq!(summary.total_time_secs, 0.0);
+        assert_eq!(summary.sample_count, 0);
+        assert_eq!(summary.avg_cpu_usage, 0.0);
+    }
+
+    #[test]
+    fn test_summary_from_metrics() {
+        let mut metric1 = Metrics::new();
+        metric1.cpu_usage = 20.0;
+        metric1.mem_rss_kb = 1000;
+        metric1.disk_read_bytes = 500;
+        metric1.disk_write_bytes = 250;
+        metric1.net_rx_bytes = 100;
+        metric1.net_tx_bytes = 50;
+        metric1.thread_count = 4;
+
+        let mut metric2 = Metrics::new();
+        metric2.cpu_usage = 30.0;
+        metric2.mem_rss_kb = 1500;
+        metric2.disk_read_bytes = 1000;
+        metric2.disk_write_bytes = 500;
+        metric2.net_rx_bytes = 200;
+        metric2.net_tx_bytes = 100;
+        metric2.thread_count = 6;
+
+        let metrics = vec![metric1, metric2];
+        let summary = Summary::from_metrics(&metrics, 15.5);
+
+        assert_eq!(summary.total_time_secs, 15.5);
+        assert_eq!(summary.sample_count, 2);
+        assert_eq!(summary.max_processes, 1);
+        assert_eq!(summary.max_threads, 6);
+        assert_eq!(summary.total_disk_read_bytes, 1000);
+        assert_eq!(summary.total_disk_write_bytes, 500);
+        assert_eq!(summary.total_net_rx_bytes, 200);
+        assert_eq!(summary.total_net_tx_bytes, 100);
+        assert_eq!(summary.peak_mem_rss_kb, 1500);
+        assert_eq!(summary.avg_cpu_usage, 25.0);
+    }
+
+    #[test]
+    fn test_summary_from_empty_aggregated_metrics() {
+        let metrics = vec![];
+        let summary = Summary::from_aggregated_metrics(&metrics, 10.0);
+
+        assert_eq!(summary.total_time_secs, 0.0);
+        assert_eq!(summary.sample_count, 0);
+        assert_eq!(summary.avg_cpu_usage, 0.0);
+    }
+
+    #[test]
+    fn test_summary_from_aggregated_metrics() {
+        let mut metric1 = AggregatedMetrics::default();
+        metric1.cpu_usage = 40.0;
+        metric1.mem_rss_kb = 2000;
+        metric1.disk_read_bytes = 800;
+        metric1.disk_write_bytes = 400;
+        metric1.net_rx_bytes = 150;
+        metric1.net_tx_bytes = 75;
+        metric1.thread_count = 8;
+        metric1.process_count = 2;
+
+        let mut metric2 = AggregatedMetrics::default();
+        metric2.cpu_usage = 60.0;
+        metric2.mem_rss_kb = 3000;
+        metric2.disk_read_bytes = 1600;
+        metric2.disk_write_bytes = 800;
+        metric2.net_rx_bytes = 300;
+        metric2.net_tx_bytes = 150;
+        metric2.thread_count = 12;
+        metric2.process_count = 3;
+
+        let metrics = vec![metric1, metric2];
+        let summary = Summary::from_aggregated_metrics(&metrics, 25.0);
+
+        assert_eq!(summary.total_time_secs, 25.0);
+        assert_eq!(summary.sample_count, 2);
+        assert_eq!(summary.max_processes, 3);
+        assert_eq!(summary.max_threads, 12);
+        assert_eq!(summary.total_disk_read_bytes, 1600);
+        assert_eq!(summary.total_disk_write_bytes, 800);
+        assert_eq!(summary.total_net_rx_bytes, 300);
+        assert_eq!(summary.total_net_tx_bytes, 150);
+        assert_eq!(summary.peak_mem_rss_kb, 3000);
+        assert_eq!(summary.avg_cpu_usage, 50.0);
+    }
+
+    #[test]
+    fn test_serialization() {
+        let metadata = ProcessMetadata::new(123, vec!["test".to_string()], "test".to_string());
+        let json = serde_json::to_string(&metadata).unwrap();
+        let deserialized: ProcessMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(metadata.pid, deserialized.pid);
+        assert_eq!(metadata.cmd, deserialized.cmd);
+
+        let metrics = Metrics::new();
+        let json = serde_json::to_string(&metrics).unwrap();
+        let deserialized: Metrics = serde_json::from_str(&json).unwrap();
+        assert_eq!(metrics.cpu_usage, deserialized.cpu_usage);
+
+        let aggregated = AggregatedMetrics::default();
+        let json = serde_json::to_string(&aggregated).unwrap();
+        let deserialized: AggregatedMetrics = serde_json::from_str(&json).unwrap();
+        assert_eq!(aggregated.cpu_usage, deserialized.cpu_usage);
+
+        let summary = Summary::default();
+        let json = serde_json::to_string(&summary).unwrap();
+        let deserialized: Summary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary.avg_cpu_usage, deserialized.avg_cpu_usage);
+    }
+
+    #[test]
+    fn test_child_process_metrics() {
+        let mut metrics = Metrics::new();
+        metrics.cpu_usage = 15.0;
+
+        let child = ChildProcessMetrics {
+            pid: 456,
+            command: "child_process".to_string(),
+            metrics,
+        };
+
+        assert_eq!(child.pid, 456);
+        assert_eq!(child.command, "child_process");
+        assert_eq!(child.metrics.cpu_usage, 15.0);
+    }
+
+    #[test]
+    fn test_process_tree_metrics() {
+        let parent = Some(Metrics::new());
+        let children = vec![ChildProcessMetrics {
+            pid: 456,
+            command: "child".to_string(),
+            metrics: Metrics::new(),
+        }];
+        let aggregated = Some(AggregatedMetrics::default());
+
+        let tree_metrics = ProcessTreeMetrics {
+            ts_ms: 1234567890,
+            parent,
+            children,
+            aggregated,
+        };
+
+        assert_eq!(tree_metrics.ts_ms, 1234567890);
+        assert!(tree_metrics.parent.is_some());
+        assert_eq!(tree_metrics.children.len(), 1);
+        assert!(tree_metrics.aggregated.is_some());
+    }
+}

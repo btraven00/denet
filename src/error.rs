@@ -107,3 +107,239 @@ impl From<DenetError> for pyo3::PyErr {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+    use std::io;
+
+    #[test]
+    fn test_denet_error_display() {
+        // Test IO error display
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let denet_err = DenetError::Io(io_err);
+        assert!(denet_err.to_string().contains("I/O error"));
+        assert!(denet_err.to_string().contains("file not found"));
+
+        // Test process not found error
+        let pid = 12345;
+        let err = DenetError::ProcessNotFound(pid);
+        assert_eq!(err.to_string(), format!("Process not found: {}", pid));
+
+        // Test process access denied error
+        let err = DenetError::ProcessAccessDenied(pid);
+        assert_eq!(
+            err.to_string(),
+            format!("Access denied for process: {}", pid)
+        );
+
+        // Test system time error
+        let time_err = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::now() + std::time::Duration::from_secs(1))
+            .unwrap_err();
+        let err = DenetError::SystemTime(time_err);
+        assert!(err.to_string().contains("System time error"));
+
+        // Test serialization error
+        let json_err = serde_json::Error::io(io::Error::new(io::ErrorKind::Other, "JSON error"));
+        let err = DenetError::Serialization(json_err);
+        assert!(err.to_string().contains("Serialization error"));
+
+        // Test invalid configuration error
+        let msg = "Invalid config parameter";
+        let err = DenetError::InvalidConfiguration(msg.to_string());
+        assert_eq!(err.to_string(), format!("Invalid configuration: {}", msg));
+
+        // Test platform not supported error
+        let msg = "Windows feature";
+        let err = DenetError::PlatformNotSupported(msg.to_string());
+        assert_eq!(err.to_string(), format!("Platform not supported: {}", msg));
+
+        // Test eBPF initialization error
+        let msg = "Failed to initialize BPF";
+        let err = DenetError::EbpfInitError(msg.to_string());
+        assert_eq!(
+            err.to_string(),
+            format!("eBPF initialization error: {}", msg)
+        );
+
+        // Test eBPF not supported error
+        let msg = "Kernel too old";
+        let err = DenetError::EbpfNotSupported(msg.to_string());
+        assert_eq!(err.to_string(), format!("eBPF not supported: {}", msg));
+
+        // Test other error
+        let msg = "Generic error";
+        let err = DenetError::Other(msg.to_string());
+        assert_eq!(err.to_string(), format!("Error: {}", msg));
+    }
+
+    #[test]
+    fn test_denet_error_source() {
+        // Test IO error source
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let denet_err = DenetError::Io(io_err);
+        assert!(denet_err.source().is_some());
+
+        // Test system time error source
+        let time_err = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::now() + std::time::Duration::from_secs(1))
+            .unwrap_err();
+        let denet_err = DenetError::SystemTime(time_err);
+        assert!(denet_err.source().is_some());
+
+        // Test serialization error source
+        let json_err = serde_json::Error::io(io::Error::new(io::ErrorKind::Other, "JSON error"));
+        let denet_err = DenetError::Serialization(json_err);
+        assert!(denet_err.source().is_some());
+
+        // Test errors without source
+        assert!(DenetError::ProcessNotFound(123).source().is_none());
+        assert!(DenetError::ProcessAccessDenied(456).source().is_none());
+        assert!(DenetError::InvalidConfiguration("test".to_string())
+            .source()
+            .is_none());
+        assert!(DenetError::PlatformNotSupported("test".to_string())
+            .source()
+            .is_none());
+        assert!(DenetError::EbpfInitError("test".to_string())
+            .source()
+            .is_none());
+        assert!(DenetError::EbpfNotSupported("test".to_string())
+            .source()
+            .is_none());
+        assert!(DenetError::Other("test".to_string()).source().is_none());
+    }
+
+    #[test]
+    fn test_error_conversions_from_std() {
+        // Test From<io::Error>
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let denet_err: DenetError = io_err.into();
+        match denet_err {
+            DenetError::Io(_) => (),
+            _ => panic!("Expected Io error variant"),
+        }
+
+        // Test From<SystemTimeError>
+        let time_err = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::now() + std::time::Duration::from_secs(1))
+            .unwrap_err();
+        let denet_err: DenetError = time_err.into();
+        match denet_err {
+            DenetError::SystemTime(_) => (),
+            _ => panic!("Expected SystemTime error variant"),
+        }
+
+        // Test From<serde_json::Error>
+        let json_err = serde_json::Error::io(io::Error::new(io::ErrorKind::Other, "JSON error"));
+        let denet_err: DenetError = json_err.into();
+        match denet_err {
+            DenetError::Serialization(_) => (),
+            _ => panic!("Expected Serialization error variant"),
+        }
+    }
+
+    #[test]
+    fn test_error_conversion_to_io_error() {
+        // Test From<DenetError> for io::Error - IO variant
+        let original_io_err = io::Error::new(io::ErrorKind::NotFound, "original io error");
+        let denet_err = DenetError::Io(original_io_err);
+        let converted_io_err: io::Error = denet_err.into();
+        assert!(converted_io_err.to_string().contains("original io error"));
+
+        // Test From<DenetError> for io::Error - non-IO variant
+        let original_err = DenetError::ProcessNotFound(123);
+        let io_err: io::Error = original_err.into();
+        assert!(io_err.to_string().contains("Process not found"));
+    }
+
+    #[test]
+    fn test_result_type_alias() {
+        // Test with success
+        let result: Result<i32> = Ok(42);
+        assert_eq!(result.unwrap(), 42);
+
+        // Test with error
+        let error_result: Result<i32> = Err(DenetError::Other("test error".to_string()));
+        assert!(error_result.is_err());
+        match error_result {
+            Err(DenetError::Other(msg)) => assert_eq!(msg, "test error"),
+            _ => panic!("Expected Other error variant"),
+        }
+    }
+
+    #[test]
+    fn test_denet_error_debug() {
+        let err = DenetError::ProcessNotFound(123);
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("ProcessNotFound"));
+        assert!(debug_str.contains("123"));
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn test_python_error_conversion() {
+        use pyo3::exceptions::*;
+        use pyo3::Python;
+
+        Python::with_gil(|py| {
+            // Test IO error conversion
+            let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+            let denet_err = DenetError::Io(io_err);
+            let py_err: pyo3::PyErr = denet_err.into();
+            assert!(py_err.is_instance_of::<PyIOError>(py));
+
+            // Test ProcessNotFound conversion
+            let denet_err = DenetError::ProcessNotFound(123);
+            let py_err: pyo3::PyErr = denet_err.into();
+            assert!(py_err.is_instance_of::<PyRuntimeError>(py));
+
+            // Test ProcessAccessDenied conversion
+            let denet_err = DenetError::ProcessAccessDenied(123);
+            let py_err: pyo3::PyErr = denet_err.into();
+            assert!(py_err.is_instance_of::<PyPermissionError>(py));
+
+            // Test InvalidConfiguration conversion
+            let denet_err = DenetError::InvalidConfiguration("test".to_string());
+            let py_err: pyo3::PyErr = denet_err.into();
+            assert!(py_err.is_instance_of::<PyValueError>(py));
+
+            // Test PlatformNotSupported conversion
+            let denet_err = DenetError::PlatformNotSupported("test".to_string());
+            let py_err: pyo3::PyErr = denet_err.into();
+            assert!(py_err.is_instance_of::<PyNotImplementedError>(py));
+
+            // Test EbpfInitError conversion
+            let denet_err = DenetError::EbpfInitError("test".to_string());
+            let py_err: pyo3::PyErr = denet_err.into();
+            assert!(py_err.is_instance_of::<PyRuntimeError>(py));
+
+            // Test EbpfNotSupported conversion
+            let denet_err = DenetError::EbpfNotSupported("test".to_string());
+            let py_err: pyo3::PyErr = denet_err.into();
+            assert!(py_err.is_instance_of::<PyNotImplementedError>(py));
+
+            // Test Other error conversion (fallback)
+            let denet_err = DenetError::Other("test".to_string());
+            let py_err: pyo3::PyErr = denet_err.into();
+            assert!(py_err.is_instance_of::<PyRuntimeError>(py));
+
+            // Test SystemTime error conversion (fallback)
+            let time_err = std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::now() + std::time::Duration::from_secs(1))
+                .unwrap_err();
+            let denet_err = DenetError::SystemTime(time_err);
+            let py_err: pyo3::PyErr = denet_err.into();
+            assert!(py_err.is_instance_of::<PyRuntimeError>(py));
+
+            // Test Serialization error conversion (fallback)
+            let json_err =
+                serde_json::Error::io(io::Error::new(io::ErrorKind::Other, "JSON error"));
+            let denet_err = DenetError::Serialization(json_err);
+            let py_err: pyo3::PyErr = denet_err.into();
+            assert!(py_err.is_instance_of::<PyRuntimeError>(py));
+        });
+    }
+}

@@ -291,3 +291,259 @@ impl DenetConfigBuilder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+    use std::time::Duration;
+
+    #[test]
+    fn test_output_format_from_str() {
+        // Test valid formats
+        assert_eq!(OutputFormat::from_str("json").unwrap(), OutputFormat::Json);
+        assert_eq!(
+            OutputFormat::from_str("jsonl").unwrap(),
+            OutputFormat::JsonLines
+        );
+        assert_eq!(
+            OutputFormat::from_str("jsonlines").unwrap(),
+            OutputFormat::JsonLines
+        );
+        assert_eq!(OutputFormat::from_str("csv").unwrap(), OutputFormat::Csv);
+
+        // Test case insensitivity
+        assert_eq!(OutputFormat::from_str("JSON").unwrap(), OutputFormat::Json);
+        assert_eq!(
+            OutputFormat::from_str("JSONL").unwrap(),
+            OutputFormat::JsonLines
+        );
+        assert_eq!(OutputFormat::from_str("CSV").unwrap(), OutputFormat::Csv);
+
+        // Test invalid format
+        let result = OutputFormat::from_str("invalid");
+        assert!(matches!(result, Err(DenetError::InvalidConfiguration(_))));
+    }
+
+    #[test]
+    fn test_output_format_display() {
+        assert_eq!(OutputFormat::Json.to_string(), "json");
+        assert_eq!(OutputFormat::JsonLines.to_string(), "jsonl");
+        assert_eq!(OutputFormat::Csv.to_string(), "csv");
+    }
+
+    #[test]
+    fn test_output_format_default() {
+        assert_eq!(OutputFormat::default(), OutputFormat::JsonLines);
+    }
+
+    #[test]
+    fn test_monitor_config_default() {
+        let config = MonitorConfig::default();
+        assert_eq!(config.base_interval, defaults::BASE_INTERVAL);
+        assert_eq!(config.max_interval, defaults::MAX_INTERVAL);
+        assert!(!config.since_process_start);
+        assert!(config.include_children);
+        assert!(config.max_duration.is_none());
+        assert!(!config.enable_ebpf);
+    }
+
+    #[test]
+    fn test_monitor_config_builder() {
+        let config = MonitorConfig::builder().build().unwrap();
+        assert_eq!(config.base_interval, defaults::BASE_INTERVAL);
+        assert_eq!(config.max_interval, defaults::MAX_INTERVAL);
+    }
+
+    #[test]
+    fn test_monitor_config_validate_success() {
+        let config = MonitorConfig::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_monitor_config_validate_base_greater_than_max() {
+        let config = MonitorConfig {
+            base_interval: Duration::from_millis(2000),
+            max_interval: Duration::from_millis(1000),
+            ..Default::default()
+        };
+        let result = config.validate();
+        assert!(matches!(result, Err(DenetError::InvalidConfiguration(_))));
+        if let Err(DenetError::InvalidConfiguration(msg)) = result {
+            assert!(msg.contains("Base interval cannot be greater than max interval"));
+        }
+    }
+
+    #[test]
+    fn test_monitor_config_validate_zero_base_interval() {
+        let config = MonitorConfig {
+            base_interval: Duration::from_millis(0),
+            ..Default::default()
+        };
+        let result = config.validate();
+        assert!(matches!(result, Err(DenetError::InvalidConfiguration(_))));
+        if let Err(DenetError::InvalidConfiguration(msg)) = result {
+            assert!(msg.contains("Base interval cannot be zero"));
+        }
+    }
+
+    #[test]
+    fn test_output_config_default() {
+        let config = OutputConfig::default();
+        assert!(config.output_file.is_none());
+        assert_eq!(config.format, OutputFormat::JsonLines);
+        assert!(config.store_in_memory);
+        assert!(!config.quiet);
+        assert!(config.update_in_place);
+    }
+
+    #[test]
+    fn test_output_config_builder() {
+        let config = OutputConfig::builder().build();
+        assert!(config.output_file.is_none());
+        assert_eq!(config.format, OutputFormat::JsonLines);
+    }
+
+    #[test]
+    fn test_monitor_config_builder_all_options() {
+        let config = MonitorConfigBuilder::default()
+            .base_interval(Duration::from_millis(200))
+            .max_interval(Duration::from_millis(2000))
+            .since_process_start(true)
+            .include_children(false)
+            .max_duration(Duration::from_secs(60))
+            .enable_ebpf(true)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.base_interval, Duration::from_millis(200));
+        assert_eq!(config.max_interval, Duration::from_millis(2000));
+        assert!(config.since_process_start);
+        assert!(!config.include_children);
+        assert_eq!(config.max_duration, Some(Duration::from_secs(60)));
+        assert!(config.enable_ebpf);
+    }
+
+    #[test]
+    fn test_monitor_config_builder_ms_methods() {
+        let config = MonitorConfigBuilder::default()
+            .base_interval_ms(300)
+            .max_interval_ms(3000)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.base_interval, Duration::from_millis(300));
+        assert_eq!(config.max_interval, Duration::from_millis(3000));
+    }
+
+    #[test]
+    fn test_monitor_config_builder_max_duration_secs() {
+        let config = MonitorConfigBuilder::default()
+            .max_duration_secs(120)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.max_duration, Some(Duration::from_secs(120)));
+    }
+
+    #[test]
+    fn test_monitor_config_builder_max_duration_secs_zero() {
+        let config = MonitorConfigBuilder::default()
+            .max_duration_secs(0)
+            .build()
+            .unwrap();
+
+        assert!(config.max_duration.is_none());
+    }
+
+    #[test]
+    fn test_monitor_config_builder_validation_fails() {
+        let result = MonitorConfigBuilder::default()
+            .base_interval_ms(2000)
+            .max_interval_ms(1000)
+            .build();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_output_config_builder_all_options() {
+        let config = OutputConfigBuilder::default()
+            .output_file("output.json")
+            .format(OutputFormat::Json)
+            .store_in_memory(false)
+            .quiet(true)
+            .update_in_place(false)
+            .build();
+
+        assert_eq!(config.output_file, Some(PathBuf::from("output.json")));
+        assert_eq!(config.format, OutputFormat::Json);
+        assert!(!config.store_in_memory);
+        assert!(config.quiet);
+        assert!(!config.update_in_place);
+    }
+
+    #[test]
+    fn test_output_config_builder_format_str() {
+        let result = OutputConfigBuilder::default().format_str("csv");
+        assert!(result.is_ok());
+        let config = result.unwrap().build();
+        assert_eq!(config.format, OutputFormat::Csv);
+    }
+
+    #[test]
+    fn test_output_config_builder_format_str_invalid() {
+        let result = OutputConfigBuilder::default().format_str("invalid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_denet_config_default() {
+        let config = DenetConfig::default();
+        assert_eq!(config.monitor.base_interval, defaults::BASE_INTERVAL);
+        assert_eq!(config.output.format, OutputFormat::JsonLines);
+    }
+
+    #[test]
+    fn test_denet_config_builder() {
+        let config = DenetConfig::builder().build();
+        assert_eq!(config.monitor.base_interval, defaults::BASE_INTERVAL);
+        assert_eq!(config.output.format, OutputFormat::JsonLines);
+    }
+
+    #[test]
+    fn test_denet_config_builder_with_configs() {
+        let monitor_config = MonitorConfig {
+            base_interval: Duration::from_millis(250),
+            ..Default::default()
+        };
+        let output_config = OutputConfig {
+            format: OutputFormat::Csv,
+            ..Default::default()
+        };
+
+        let config = DenetConfigBuilder::default()
+            .monitor(monitor_config.clone())
+            .output(output_config.clone())
+            .build();
+
+        assert_eq!(config.monitor.base_interval, monitor_config.base_interval);
+        assert_eq!(config.output.format, output_config.format);
+    }
+
+    #[test]
+    fn test_denet_config_builder_partial() {
+        let monitor_config = MonitorConfig {
+            base_interval: Duration::from_millis(250),
+            ..Default::default()
+        };
+
+        let config = DenetConfigBuilder::default()
+            .monitor(monitor_config)
+            .build();
+
+        assert_eq!(config.monitor.base_interval, Duration::from_millis(250));
+        assert_eq!(config.output.format, OutputFormat::JsonLines); // Default
+    }
+}
