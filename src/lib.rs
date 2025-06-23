@@ -59,25 +59,42 @@ mod python_bindings {
     }
 }
 
-/// Run a simple monitoring loop
+/// Run a simple monitoring loop with better error handling and configuration
 pub fn run_monitor(
     cmd: Vec<String>,
     base_interval_ms: u64,
     max_interval_ms: u64,
     since_process_start: bool,
 ) -> Result<()> {
+    let monitor = create_monitor(cmd, base_interval_ms, max_interval_ms, since_process_start)?;
+    execute_monitoring_loop(monitor, base_interval_ms)
+}
+
+/// Create a ProcessMonitor with the given configuration
+fn create_monitor(
+    cmd: Vec<String>,
+    base_interval_ms: u64,
+    max_interval_ms: u64,
+    since_process_start: bool,
+) -> Result<ProcessMonitor> {
     use std::time::Duration;
-    let mut monitor = ProcessMonitor::new_with_options(
+    ProcessMonitor::new_with_options(
         cmd,
         Duration::from_millis(base_interval_ms),
         Duration::from_millis(max_interval_ms),
         since_process_start,
     )
-    .map_err(|e| DenetError::Io(e))?;
+    .map_err(DenetError::Io)
+}
+
+/// Execute the monitoring loop until the process completes
+fn execute_monitoring_loop(mut monitor: ProcessMonitor, interval_ms: u64) -> Result<()> {
+    use std::time::Duration;
+    let sleep_duration = Duration::from_millis(interval_ms);
 
     while monitor.is_running() {
         let _ = monitor.sample_metrics();
-        std::thread::sleep(Duration::from_millis(base_interval_ms));
+        std::thread::sleep(sleep_duration);
     }
     Ok(())
 }
