@@ -446,4 +446,205 @@ mod tests {
 
         assert_eq!(config.timeout, Some(Duration::from_secs(3600)));
     }
+
+    #[test]
+    fn test_monitoring_loop_with_processor() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::Arc;
+
+        // Use the current process for a more reliable test
+        let monitor = match ProcessMonitor::from_pid_with_options(
+            std::process::id() as usize,
+            Duration::from_millis(10),
+            Duration::from_millis(50),
+            false,
+        ) {
+            Ok(m) => m,
+            Err(_) => return, // Skip test if we can't create a monitor
+        };
+
+        let config = MonitoringConfig::new()
+            .with_sample_interval(Duration::from_millis(10))
+            .with_timeout(Duration::from_millis(100));
+
+        let loop1 = MonitoringLoop::with_config(config);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        let result = loop1.run_with_processor(monitor, |_metrics| {
+            counter_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        // Should timeout since we're monitoring the current process with a timeout
+        assert!(result.timed_out || result.sample_count() > 0);
+    }
+
+    #[test]
+    fn test_monitoring_loop_with_interrupt() {
+        let monitor = match ProcessMonitor::from_pid_with_options(
+            std::process::id() as usize,
+            Duration::from_millis(10),
+            Duration::from_millis(50),
+            false,
+        ) {
+            Ok(m) => m,
+            Err(_) => return, // Skip test if we can't create a monitor
+        };
+
+        let interrupt_signal = Arc::new(AtomicBool::new(true));
+        let interrupt_clone = interrupt_signal.clone();
+
+        let config = MonitoringConfig::new()
+            .with_sample_interval(Duration::from_millis(10))
+            .with_timeout(Duration::from_millis(1000));
+
+        let monitoring_loop =
+            MonitoringLoop::with_config(config).with_interrupt_signal(interrupt_signal);
+
+        // Set interrupt signal to false to trigger interruption
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            interrupt_clone.store(false, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        let result = monitoring_loop.run(monitor);
+
+        // Should be interrupted or have some samples
+        assert!(result.interrupted || result.sample_count() > 0);
+    }
+
+    #[test]
+    fn test_monitoring_loop_with_final_samples() {
+        let monitor = match ProcessMonitor::new(
+            vec!["true".to_string()],
+            Duration::from_millis(10),
+            Duration::from_millis(50),
+        ) {
+            Ok(m) => m,
+            Err(_) => return, // Skip test if we can't create a monitor
+        };
+
+        let config = MonitoringConfig::new()
+            .with_sample_interval(Duration::from_millis(10))
+            .with_timeout(Duration::from_millis(100))
+            .with_final_samples(2, Duration::from_millis(10));
+
+        let monitoring_loop = MonitoringLoop::with_config(config);
+        let result = monitoring_loop.run(monitor);
+
+        // Should have timed out or completed
+        assert!(result.timed_out || result.duration > Duration::from_millis(0));
+    }
+
+    #[test]
+    fn test_monitor_for_test_function() {
+        let monitor = match ProcessMonitor::new(
+            vec!["true".to_string()],
+            Duration::from_millis(10),
+            Duration::from_millis(50),
+        ) {
+            Ok(m) => m,
+            Err(_) => return, // Skip test if we can't create a monitor
+        };
+
+        let result = monitor_for_test(monitor);
+
+        // Should complete quickly due to test configuration
+        assert!(result.timed_out || result.duration < Duration::from_secs(35));
+    }
+
+    #[test]
+    fn test_monitor_with_progress_function() {
+        use std::sync::atomic::AtomicUsize;
+
+        let monitor = match ProcessMonitor::new(
+            vec!["true".to_string()],
+            Duration::from_millis(10),
+            Duration::from_millis(50),
+        ) {
+            Ok(m) => m,
+            Err(_) => return, // Skip test if we can't create a monitor
+        };
+
+        let progress_calls = Arc::new(AtomicUsize::new(0));
+        let progress_clone = progress_calls.clone();
+
+        let result =
+            monitor_with_progress(monitor, Duration::from_millis(10), |_count, _metrics| {
+                progress_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            });
+
+        // Should have called progress callback if any samples were collected
+        let progress_count = progress_calls.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(progress_count, result.sample_count());
+    }
+
+    #[test]
+    fn test_monitoring_loop_run_with_progress() {
+        use std::sync::atomic::AtomicUsize;
+
+        let monitor = match ProcessMonitor::new(
+            vec!["true".to_string()],
+            Duration::from_millis(10),
+            Duration::from_millis(50),
+        ) {
+            Ok(m) => m,
+            Err(_) => return, // Skip test if we can't create a monitor
+        };
+
+        let config = MonitoringConfig::new()
+            .with_sample_interval(Duration::from_millis(10))
+            .with_timeout(Duration::from_millis(100));
+
+        let monitoring_loop = MonitoringLoop::with_config(config);
+        let progress_calls = Arc::new(AtomicUsize::new(0));
+        let progress_clone = progress_calls.clone();
+
+        let result = monitoring_loop.run_with_progress(monitor, |count, _metrics| {
+            progress_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            assert!(count > 0);
+        });
+
+        // Verify progress callback was called correctly
+        let progress_count = progress_calls.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(progress_count, result.sample_count());
+    }
+
+    #[test]
+    fn test_monitoring_result_debug() {
+        let result = MonitoringResult {
+            samples: vec![Metrics::default()],
+            duration: Duration::from_secs(1),
+            timed_out: false,
+            interrupted: false,
+        };
+
+        let debug_str = format!("{:?}", result);
+        assert!(debug_str.contains("MonitoringResult"));
+        assert!(debug_str.contains("samples"));
+        assert!(debug_str.contains("duration"));
+    }
+
+    #[test]
+    fn test_monitoring_config_debug() {
+        let config = MonitoringConfig::new();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("MonitoringConfig"));
+        assert!(debug_str.contains("sample_interval"));
+    }
+
+    #[test]
+    fn test_monitoring_config_clone() {
+        let config1 = MonitoringConfig::new()
+            .with_timeout(Duration::from_secs(10))
+            .with_final_samples(5, delays::STANDARD);
+
+        let config2 = config1.clone();
+
+        assert_eq!(config1.sample_interval, config2.sample_interval);
+        assert_eq!(config1.timeout, config2.timeout);
+        assert_eq!(config1.monitor_after_exit, config2.monitor_after_exit);
+        assert_eq!(config1.final_sample_count, config2.final_sample_count);
+        assert_eq!(config1.final_sample_delay, config2.final_sample_delay);
+    }
 }

@@ -34,18 +34,18 @@ pytest-xdist = ">=3.7.0,<4"
 ruff = ">=0.1.0"
 
 [tool.pixi.tasks]
-build = { cmd = "maturin build --release" }
+build = { cmd = "maturin build --release --features python" }
 
 
-develop = { cmd = "./scripts/build_and_install.sh" }
+develop = { cmd = "./scripts/build_and_install.sh --features python" }
 test = { cmd = "python -m pytest -n 4 tests/python/" }
 
 # 2 workers for github runners
-coverage-rust = { cmd = "cargo llvm-cov --lib --no-default-features --lcov --output-path lcov.info --ignore-filename-regex 'python\\.rs$' -- --skip test_from_pid --skip test_process_metadata" }
+coverage-rust = { cmd = "cargo llvm-cov --lib --lcov --output-path lcov.info --ignore-filename-regex 'python\\.rs$' -- --skip test_from_pid --skip test_process_metadata" }
 pytest-with-coverage = { cmd = "python -m pytest -n 2 tests/python/ --cov=python/denet --cov-report=xml --cov-branch" }
 pytest-with-coverage-html = { cmd = "python -m pytest -n 2 tests/python/ --cov=python/denet --cov-report=html --cov-branch" }
-test-rust = { cmd = "cargo test --no-default-features" }
-test-all = { cmd = "cargo test --no-default-features && python -m pytest tests/python/" }
+test-rust = { cmd = "cargo test" }
+test-all = { cmd = "cargo test && python -m pytest tests/python/" }
 
 lint = { cmd = "ruff check --force-exclude python/ tests/" }
 lint-fix = { cmd = "ruff check --fix --force-exclude python/ tests/" }
@@ -70,8 +70,8 @@ clippy-fix = { cmd = "RUSTUP_TOOLCHAIN=nightly cargo clippy --fix -Z unstable-op
 fix-all = { cmd = "cargo fmt --all && ruff format --force-exclude python/ tests/ && ruff format tests/python/ python/denet/ && ruff check --fix --force-exclude python/ tests/ && ruff check --fix tests/python/ python/denet/ && RUSTUP_TOOLCHAIN=nightly cargo clippy --fix -Z unstable-options --allow-dirty -- -D warnings" }
 
 # Publish to PyPI, crates.io
-publish-pypi = { cmd = "maturin publish --skip-existing" }
-publish-crates = { cmd = "cargo publish" }
+publish-pypi = { cmd = "maturin publish --skip-existing --features python" }
+publish-crates = { cmd = "cargo publish --features python" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -54,6 +54,7 @@ struct CpuTimes {
 ///
 /// On Linux, CPU percentages can exceed 100% for multi-threaded processes
 /// that utilize multiple cores. 100% represents full utilization of one core.
+#[derive(Debug)]
 pub struct CpuSampler {
     /// Previous measurements for each PID
     previous_times: HashMap<usize, CpuTimes>,
@@ -336,5 +337,193 @@ mod tests {
     fn kill_child(mut child: Child) {
         child.kill().ok();
         child.wait().ok();
+    }
+
+    #[test]
+    fn test_cpu_sampler_new() {
+        let sampler = CpuSampler::new();
+        assert_eq!(sampler.previous_times.len(), 0);
+        assert!(sampler.clock_ticks_per_sec > 0);
+    }
+
+    #[test]
+    fn test_cpu_sampler_default() {
+        let sampler = CpuSampler::default();
+        assert_eq!(sampler.previous_times.len(), 0);
+        assert!(sampler.clock_ticks_per_sec > 0);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_get_cpu_usage_static() {
+        let pid = std::process::id() as usize;
+
+        // Test with current process
+        let result = CpuSampler::get_cpu_usage_static(pid);
+        assert!(result.is_ok());
+        let usage = result.unwrap();
+        assert!(usage >= 0.0);
+        assert!(usage <= 1000.0); // Allow for high CPU usage in tests
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_get_cpu_usage_static_invalid_pid() {
+        // Test with non-existent PID
+        let result = CpuSampler::get_cpu_usage_static(999999);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_read_process_times_invalid_pid() {
+        // Test with non-existent PID
+        let result = CpuSampler::read_process_times(999999);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_cpu_usage_first_measurement_returns_none() {
+        let mut sampler = CpuSampler::new();
+        let pid = std::process::id() as usize;
+
+        // First measurement should return None
+        let result = sampler.get_cpu_usage(pid);
+        assert!(result.is_none());
+
+        // Should have stored the measurement for next time
+        assert!(sampler.previous_times.contains_key(&pid));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_cpu_usage_quick_successive_calls() {
+        let mut sampler = CpuSampler::new();
+        let pid = std::process::id() as usize;
+
+        // First measurement
+        sampler.get_cpu_usage(pid);
+
+        // Immediate second measurement should return None (too quick)
+        let result = sampler.get_cpu_usage(pid);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_cpu_usage_with_delay() {
+        let mut sampler = CpuSampler::new();
+        let pid = std::process::id() as usize;
+
+        // First measurement
+        sampler.get_cpu_usage(pid);
+
+        // Wait long enough for a valid measurement
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Do some CPU work
+        for _ in 0..100000 {
+            let _ = std::time::SystemTime::now();
+        }
+
+        // Second measurement should return a value
+        let result = sampler.get_cpu_usage(pid);
+        assert!(result.is_some());
+        let usage = result.unwrap();
+        assert!(usage >= 0.0);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_cleanup_stale_entries_empty_active_list() {
+        let mut sampler = CpuSampler::new();
+        let pid = std::process::id() as usize;
+
+        // Add a measurement
+        sampler.get_cpu_usage(pid);
+        assert!(sampler.previous_times.contains_key(&pid));
+
+        // Cleanup with empty active list
+        sampler.cleanup_stale_entries(&[]);
+        assert!(!sampler.previous_times.contains_key(&pid));
+        assert_eq!(sampler.previous_times.len(), 0);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_multiple_pids_tracking() {
+        let mut sampler = CpuSampler::new();
+
+        let child1 = Command::new("sleep")
+            .arg("1")
+            .spawn()
+            .expect("Failed to spawn test process");
+
+        let child2 = Command::new("sleep")
+            .arg("1")
+            .spawn()
+            .expect("Failed to spawn test process");
+
+        let pid1 = child1.id() as usize;
+        let pid2 = child2.id() as usize;
+
+        // Make measurements for both processes
+        sampler.get_cpu_usage(pid1);
+        sampler.get_cpu_usage(pid2);
+
+        assert!(sampler.previous_times.contains_key(&pid1));
+        assert!(sampler.previous_times.contains_key(&pid2));
+        assert_eq!(sampler.previous_times.len(), 2);
+
+        kill_child(child1);
+        kill_child(child2);
+    }
+
+    #[test]
+    fn test_cpu_times_clone() {
+        let times = CpuTimes {
+            user: 100,
+            system: 200,
+            timestamp: Instant::now(),
+        };
+
+        let cloned = times.clone();
+        assert_eq!(times.user, cloned.user);
+        assert_eq!(times.system, cloned.system);
+    }
+
+    #[test]
+    fn test_cpu_times_debug() {
+        let times = CpuTimes {
+            user: 100,
+            system: 200,
+            timestamp: Instant::now(),
+        };
+
+        let debug_str = format!("{:?}", times);
+        assert!(debug_str.contains("CpuTimes"));
+        assert!(debug_str.contains("user"));
+        assert!(debug_str.contains("system"));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_sampler_with_terminated_process() {
+        let mut sampler = CpuSampler::new();
+
+        let child = Command::new("true")
+            .spawn()
+            .expect("Failed to spawn test process");
+
+        let pid = child.id() as usize;
+
+        // Wait for process to terminate
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Try to measure CPU usage of terminated process
+        let result = sampler.get_cpu_usage(pid);
+        // Should return None because process doesn't exist
+        assert!(result.is_none());
     }
 }

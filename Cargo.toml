@@ -12,7 +12,7 @@ keywords = ["profiling", "monitor", "cpu", "resources"]
 authors = ["ben <ben.uzh@proton.me>"]
 
 [features]
-default = ["python"]
+default = []
 python = ["dep:pyo3"]
 ebpf = ["dep:aya", "dep:aya-log"]
 
