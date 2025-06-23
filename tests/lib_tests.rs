@@ -42,7 +42,6 @@ fn test_reexports() {
 #[test]
 fn test_run_monitor_basic() {
     use denet::run_monitor;
-    use std::time::Duration;
 
     // This command should fail quickly and return an error
     let result = run_monitor(vec!["non_existent_command".to_string()], 100, 1000, false);
