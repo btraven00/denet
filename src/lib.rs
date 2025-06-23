@@ -88,13 +88,11 @@ fn create_monitor(
 }
 
 /// Execute the monitoring loop until the process completes
-fn execute_monitoring_loop(mut monitor: ProcessMonitor, interval_ms: u64) -> Result<()> {
+fn execute_monitoring_loop(monitor: ProcessMonitor, interval_ms: u64) -> Result<()> {
+    use crate::core::monitoring_utils::monitor_until_completion;
     use std::time::Duration;
-    let sleep_duration = Duration::from_millis(interval_ms);
 
-    while monitor.is_running() {
-        let _ = monitor.sample_metrics();
-        std::thread::sleep(sleep_duration);
-    }
+    let _result = monitor_until_completion(monitor, Duration::from_millis(interval_ms), None);
+
     Ok(())
 }

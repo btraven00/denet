@@ -1,3 +1,7 @@
+#[cfg(any(not(target_os = "linux"), test))]
+#[allow(unused_imports)]
+use crate::core::constants::delays;
+use crate::core::constants::system;
 use crate::monitor::{
     AggregatedMetrics, ChildProcessMetrics, Metrics, ProcessMetadata, ProcessTreeMetrics, Summary,
 };
@@ -241,7 +245,7 @@ impl ProcessMonitor {
             } else {
                 retries -= 1;
                 // Shorter sleep since we're doing targeted refresh
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                std::thread::sleep(system::PROCESS_DETECTION);
             }
         }
 
@@ -466,8 +470,8 @@ impl ProcessMonitor {
                 self.sys.refresh_cpu_all();
 
                 // If not enough time has passed, add a delay for accuracy
-                if time_since_last_refresh < Duration::from_millis(100) {
-                    std::thread::sleep(Duration::from_millis(100));
+                if time_since_last_refresh < delays::CPU_MEASUREMENT {
+                    std::thread::sleep(delays::CPU_MEASUREMENT);
                     self.sys.refresh_cpu_all();
                     let pid = Pid::from_u32(self.pid as u32);
                     self.sys.refresh_processes_specifics(
@@ -569,7 +573,7 @@ impl ProcessMonitor {
 
                 // Give a small amount of time for the process to be detected
                 // This helps with the test reliability
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                std::thread::sleep(system::PROCESS_DETECTION);
             }
 
             self.sys.process(pid).is_some()
@@ -953,6 +957,7 @@ impl ProcessMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::constants::{defaults, delays, sampling};
     use std::thread;
 
     // Helper function for creating a test monitor with standard parameters
@@ -968,9 +973,9 @@ mod tests {
         fn new(cmd: Vec<String>) -> Self {
             Self {
                 cmd,
-                base_interval: Duration::from_millis(100),
-                max_interval: Duration::from_millis(1000),
-                ready_timeout: Duration::from_millis(500),
+                base_interval: defaults::BASE_INTERVAL,
+                max_interval: defaults::MAX_INTERVAL,
+                ready_timeout: delays::STARTUP,
             }
         }
 
@@ -988,7 +993,7 @@ mod tests {
             let pid = monitor.get_pid();
 
             // Give the process a small amount of time to start
-            std::thread::sleep(Duration::from_millis(50));
+            std::thread::sleep(delays::STANDARD);
 
             // Verify the process is running using a retry strategy
             if !self.wait_for_condition(|| monitor.is_running()) {
@@ -1037,9 +1042,9 @@ mod tests {
     fn create_test_monitor_from_pid(pid: usize) -> Result<ProcessMonitor, std::io::Error> {
         let fixture = ProcessTestFixture {
             cmd: vec![],
-            base_interval: Duration::from_millis(100),
-            max_interval: Duration::from_millis(1000),
-            ready_timeout: Duration::from_millis(500),
+            base_interval: defaults::BASE_INTERVAL,
+            max_interval: defaults::MAX_INTERVAL,
+            ready_timeout: delays::STARTUP,
         };
         fixture.create_monitor_from_pid(pid)
     }
@@ -1113,8 +1118,8 @@ mod tests {
         // Test with a longer running process
         let fixture = ProcessTestFixture {
             cmd: vec!["sleep".to_string(), "2".to_string()], // Increased sleep time for reliability
-            base_interval: Duration::from_millis(100),
-            max_interval: Duration::from_millis(1000),
+            base_interval: defaults::BASE_INTERVAL,
+            max_interval: defaults::MAX_INTERVAL,
             ready_timeout: Duration::from_secs(5), // Longer timeout for this test
         };
         let (mut monitor, _) = fixture.create_and_verify_running().unwrap();
@@ -1145,7 +1150,7 @@ mod tests {
         let mut monitor = create_test_monitor(cmd).unwrap();
 
         // Allow more time for the process to start and register uptime
-        thread::sleep(Duration::from_millis(500));
+        thread::sleep(delays::STARTUP);
 
         // Sample metrics
         let metrics = monitor.sample_metrics();
@@ -1165,7 +1170,7 @@ mod tests {
             if m.uptime_secs == 0 {
                 // On some platforms (especially macOS), uptime might not be reliably reported
                 // If uptime is 0, wait a bit and check again to see if it increases
-                thread::sleep(Duration::from_millis(1000));
+                thread::sleep(Duration::from_secs(1));
                 if let Some(m2) = monitor.sample_metrics() {
                     // We don't assert here - just log the value to debug
                     println!("Process uptime after delay: {} seconds", m2.uptime_secs);
@@ -1207,7 +1212,7 @@ mod tests {
         let mut monitor = create_test_monitor(cmd).unwrap();
 
         // Allow time for child processes to start
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(sampling::SLOW);
 
         // Get child PIDs
         let children = monitor.get_child_pids();
@@ -1227,7 +1232,7 @@ mod tests {
         let mut monitor = create_test_monitor(cmd).unwrap();
 
         // Allow time for process to start
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(sampling::STANDARD);
 
         // Sample tree metrics
         let tree_metrics = monitor.sample_tree_metrics();

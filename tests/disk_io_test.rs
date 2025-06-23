@@ -4,6 +4,8 @@
 //! by creating a process that writes a known amount of data to disk and comparing
 //! the reported metrics with the expected values.
 
+use denet::core::constants::{delays, sampling, timeouts};
+use denet::core::monitoring_utils::{MonitoringConfig, MonitoringLoop};
 use denet::ProcessMonitor;
 use std::fs;
 use std::time::{Duration, Instant};
@@ -36,51 +38,35 @@ fn test_disk_write_metrics_accuracy() {
     ];
 
     // Create and start the monitor
-    let mut monitor = ProcessMonitor::new_with_options(
+    let monitor = ProcessMonitor::new_with_options(
         cmd,
-        Duration::from_millis(100), // Sample every 100ms
+        sampling::STANDARD,         // Sample every 100ms
         Duration::from_millis(500), // Max interval 500ms
         false,                      // Not since process start
     )
     .expect("Failed to create ProcessMonitor");
 
-    let start_time = Instant::now();
-    let mut samples = Vec::new();
-    let mut last_disk_write = 0u64;
-    let mut _total_samples = 0;
+    let config = MonitoringConfig::new()
+        .with_sample_interval(sampling::FAST)
+        .with_timeout(timeouts::LONG)
+        .with_final_samples(1, delays::FINAL_SAMPLE);
 
-    // Monitor the process until it completes
-    while monitor.is_running() {
-        if let Some(metrics) = monitor.sample_metrics() {
-            samples.push(metrics.clone());
-            last_disk_write = metrics.disk_write_bytes;
-            _total_samples += 1;
-
-            // Print progress for debugging
-            if _total_samples % 10 == 0 {
+    let result =
+        MonitoringLoop::with_config(config).run_with_progress(monitor, |count, metrics| {
+            if count % 10 == 0 {
                 println!(
                     "Sample {}: {} bytes written (expected: {} bytes)",
-                    _total_samples, last_disk_write, expected_bytes
+                    count, metrics.disk_write_bytes, expected_bytes
                 );
             }
-        }
+        });
 
-        std::thread::sleep(Duration::from_millis(50));
-
-        // Safety timeout - don't run forever
-        if start_time.elapsed() > Duration::from_secs(30) {
-            break;
-        }
-    }
-
-    // Wait a bit more to ensure the process has finished
-    std::thread::sleep(Duration::from_millis(500));
-
-    // Take one final sample to get the final metrics
-    if let Some(final_metrics) = monitor.sample_metrics() {
-        last_disk_write = final_metrics.disk_write_bytes;
-        samples.push(final_metrics);
-    }
+    let last_disk_write = result
+        .last_sample()
+        .map(|s| s.disk_write_bytes)
+        .unwrap_or(0);
+    let samples = &result.samples;
+    let start_time = Instant::now() - result.duration;
 
     println!("Test completed:");
     println!("  - Duration: {:.2}s", start_time.elapsed().as_secs_f64());
@@ -213,32 +199,26 @@ fn test_disk_read_with_size(test_name: &str, file_size: usize) {
         ),
     ];
 
-    let mut monitor = ProcessMonitor::new_with_options(
+    let monitor = ProcessMonitor::new_with_options(
         cmd,
-        Duration::from_millis(100),
+        sampling::STANDARD,
         Duration::from_millis(400),
         false,
     )
     .expect("Failed to create ProcessMonitor");
 
-    let start_time = Instant::now();
-    let mut samples = Vec::new();
+    let config = MonitoringConfig::new()
+        .with_sample_interval(sampling::FAST)
+        .with_timeout(Duration::from_secs(15))
+        .with_final_samples(1, delays::STANDARD);
+
     let mut max_disk_read = 0u64;
+    let result = MonitoringLoop::with_config(config).run_with_processor(monitor, |metrics| {
+        max_disk_read = std::cmp::max(max_disk_read, metrics.disk_read_bytes);
+    });
 
-    // Monitor the process
-    while monitor.is_running() && start_time.elapsed() < Duration::from_secs(15) {
-        if let Some(metrics) = monitor.sample_metrics() {
-            samples.push(metrics.clone());
-            max_disk_read = std::cmp::max(max_disk_read, metrics.disk_read_bytes);
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-
-    // Get final sample
-    if let Some(final_metrics) = monitor.sample_metrics() {
-        max_disk_read = std::cmp::max(max_disk_read, final_metrics.disk_read_bytes);
-        samples.push(final_metrics);
-    }
+    let samples = &result.samples;
+    let start_time = Instant::now() - result.duration;
 
     println!("Disk read test ({}) completed:", test_name);
     println!(
@@ -292,32 +272,25 @@ fn test_simple_disk_write_accuracy() {
     ];
 
     // Create and start the monitor
-    let mut monitor = ProcessMonitor::new_with_options(
+    let monitor = ProcessMonitor::new_with_options(
         cmd,
-        Duration::from_millis(50),  // Sample every 50ms
+        sampling::FAST,             // Sample every 50ms
         Duration::from_millis(200), // Max interval 200ms
         false,
     )
     .expect("Failed to create ProcessMonitor");
 
-    let mut samples = Vec::new();
-    let mut final_disk_write = 0u64;
+    let config = MonitoringConfig::new()
+        .with_sample_interval(delays::SHORT)
+        .with_timeout(timeouts::MEDIUM)
+        .with_final_samples(1, delays::STANDARD);
 
-    // Monitor until process completes
-    let start_time = Instant::now();
-    while monitor.is_running() && start_time.elapsed() < Duration::from_secs(10) {
-        if let Some(metrics) = monitor.sample_metrics() {
-            samples.push(metrics.clone());
-            final_disk_write = metrics.disk_write_bytes;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-
-    // Get final measurement
-    if let Some(final_metrics) = monitor.sample_metrics() {
-        final_disk_write = final_metrics.disk_write_bytes;
-        samples.push(final_metrics);
-    }
+    let result = MonitoringLoop::with_config(config).run(monitor);
+    let final_disk_write = result
+        .last_sample()
+        .map(|s| s.disk_write_bytes)
+        .unwrap_or(0);
+    let samples = &result.samples;
 
     println!("Simple disk write test results:");
     println!("  - Expected bytes: {}", expected_bytes);
