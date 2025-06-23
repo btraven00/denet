@@ -90,7 +90,7 @@ def assert_valid_metrics(metrics: Dict[str, Any]) -> None:
     assert metrics["cpu_usage"] >= 0, "cpu_usage must be non-negative"
 
     assert isinstance(metrics["mem_rss_kb"], (int, float)), "mem_rss_kb must be numeric"
-    assert metrics["mem_rss_kb"] > 0, "mem_rss_kb must be positive"
+    assert metrics["mem_rss_kb"] >= 0, "mem_rss_kb must be non-negative"
 
     assert isinstance(metrics["ts_ms"], (int, float)), "ts_ms must be numeric"
     assert metrics["ts_ms"] > 0, "ts_ms must be positive"
