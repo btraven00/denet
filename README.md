@@ -128,11 +128,6 @@ monitor.save_samples("metrics.csv", "csv")     # CSV format
 
 # JSONL files include a metadata line at the beginning with process info
 # {"pid": 1234, "cmd": ["python"], "executable": "/usr/bin/python", "t0_ms": 1625184000000}
-
-# Alternative approach: For more control, you can also monitor in a loop:
-# while monitor.is_running():
-#     time.sleep(0.5)
-#     # Do other work while monitoring continues in background...
 ```
 
 ```python
