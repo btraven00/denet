@@ -4,7 +4,7 @@ use colored::Colorize;
 use denet::ebpf::debug;
 use denet::error::Result;
 use denet::monitor::{AggregatedMetrics, Metrics, Summary, SummaryGenerator};
-use denet::process_monitor::ProcessMonitor;
+use denet::ProcessMonitor;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
