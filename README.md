@@ -134,6 +134,7 @@ monitor.save_samples("metrics.csv", "csv")     # CSV format
 # For more controlled execution with monitoring, use execute_with_monitoring:
 import denet
 import json
+import subprocess
 
 # Execute a command with monitoring and capture the result
 exit_code, monitor = denet.execute_with_monitoring(
@@ -196,6 +197,19 @@ exit_code, monitor = denet.execute_with_monitoring(
     cmd=["python", "script.py"],
     output_file="metrics.jsonl",
     write_metadata=True  # Includes metadata as first line: {"pid": 1234, "cmd": ["python", "script.py"], "executable": "/usr/bin/python", "t0_ms": 1625184000000}
+)
+
+# execute_with_monitoring also accepts subprocess.run arguments:
+exit_code, monitor = denet.execute_with_monitoring(
+    cmd=["python", "script.py"],
+    base_interval_ms=100,
+    store_in_memory=True,
+    # Any subprocess.run arguments can be passed through:
+    timeout=30,              # Process timeout in seconds
+    stdout=subprocess.PIPE,  # Capture stdout
+    stderr=subprocess.PIPE,  # Capture stderr
+    cwd="/path/to/workdir",  # Working directory
+    env={"PATH": "/usr/bin"} # Environment variables
 )
 
 # Aggregate metrics to reduce data size
