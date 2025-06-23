@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/btraven00/denet/compare/v0.4.0...v0.4.1) (2025-06-23)
+
+
+### Miscellaneous Chores
+
+* update version to 0.4.1 ([b3591b5](https://github.com/btraven00/denet/commit/b3591b54c36f41a91867d4abb67d4db4308ac2fd))
+
 ## [0.4.0](https://github.com/btraven00/denet/compare/v0.3.3...v0.4.0) (2025-06-23)
 
 
