@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/btraven00/denet/compare/v0.3.3...v0.4.0) (2025-06-23)
+
+
+### Features
+
+* allow to write metadata line from monitoring function ([ea81d00](https://github.com/btraven00/denet/commit/ea81d00b7a9d09e44f8b2f95af6bd114e2493d15))
+* **docs:** comment on subprocess.run compat ([d60fb1f](https://github.com/btraven00/denet/commit/d60fb1f881aa303cfd69e2f6e3f67d6e0ba6ab19))
+
+
+### Bug Fixes
+
+* **docs:** remove outdated comment ([79d08b3](https://github.com/btraven00/denet/commit/79d08b3169eb01a44247de4b4a99b3e900c31a92))
+
 ## [0.3.3](https://github.com/btraven00/denet/compare/v0.3.2...v0.3.3) (2025-06-21)
 
 
