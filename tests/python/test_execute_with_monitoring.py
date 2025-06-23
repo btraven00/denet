@@ -5,6 +5,7 @@ This module tests the functionality of the execute_with_monitoring function whic
 runs a command with performance monitoring from the very start.
 """
 
+import json
 import os
 import pytest
 import subprocess
@@ -275,3 +276,129 @@ class TestExecuteWithMonitoring:
 
         # Verify we captured some monitoring data
         assert any("cpu_usage" in sample for sample in samples)
+
+    def test_write_metadata_enabled(self, temp_output_file):
+        """Test that metadata is written when write_metadata=True."""
+        cmd = ["sleep", "1"]  # Use a longer-running process to ensure sampling
+
+        exit_code, monitor = execute_with_monitoring(
+            cmd,
+            output_file=temp_output_file,
+            write_metadata=True,
+            base_interval_ms=200
+        )
+
+        assert exit_code == 0
+
+        # Read the output file
+        with open(temp_output_file, "r") as f:
+            lines = f.readlines()
+
+        assert len(lines) >= 2  # Should have metadata + at least one metrics line
+
+        # First line should be metadata
+        first_line = lines[0].strip()
+        metadata = json.loads(first_line)
+
+        # Check metadata structure
+        assert "pid" in metadata
+        assert "cmd" in metadata
+        assert "executable" in metadata
+        assert "t0_ms" in metadata
+
+        # Verify it's actually metadata, not metrics
+        assert isinstance(metadata["pid"], int)
+        assert isinstance(metadata["cmd"], list)
+        assert isinstance(metadata["executable"], str)
+        assert isinstance(metadata["t0_ms"], int)
+
+        # Second line should be metrics
+        if len(lines) > 1:
+            second_line = lines[1].strip()
+            metrics = json.loads(second_line)
+            # Should have metrics structure
+            assert "ts_ms" in metrics
+            assert any(key in metrics for key in ["parent", "cpu_usage", "mem_rss_kb"])
+
+    def test_write_metadata_disabled(self, temp_output_file):
+        """Test that metadata is NOT written when write_metadata=False."""
+        cmd = ["sleep", "1"]  # Use a longer-running process to ensure sampling
+
+        exit_code, monitor = execute_with_monitoring(
+            cmd,
+            output_file=temp_output_file,
+            write_metadata=False,  # Explicitly disabled
+            base_interval_ms=200
+        )
+
+        assert exit_code == 0
+
+        # Read the output file
+        with open(temp_output_file, "r") as f:
+            lines = f.readlines()
+
+        assert len(lines) >= 1
+
+        # First line should be metrics, not metadata
+        first_line = lines[0].strip()
+        first_data = json.loads(first_line)
+
+        # Should look like metrics, not metadata
+        metrics_keys = ["ts_ms", "parent", "cpu_usage", "mem_rss_kb"]
+        has_metrics_keys = any(key in first_data for key in metrics_keys)
+        assert has_metrics_keys
+
+        # Should NOT look like metadata
+        metadata_keys = ["pid", "cmd", "executable", "t0_ms"]
+        has_metadata_keys = all(key in first_data for key in metadata_keys)
+        assert not has_metadata_keys
+
+    def test_write_metadata_default_false(self, temp_output_file):
+        """Test that write_metadata defaults to False."""
+        cmd = ["sleep", "1"]  # Use a longer-running process to ensure sampling
+
+        exit_code, monitor = execute_with_monitoring(
+            cmd,
+            output_file=temp_output_file,
+            # write_metadata not specified, should default to False
+            base_interval_ms=200
+        )
+
+        assert exit_code == 0
+
+        # Read the output file
+        with open(temp_output_file, "r") as f:
+            lines = f.readlines()
+
+        if len(lines) >= 1:
+            # First line should be metrics, not metadata
+            first_line = lines[0].strip()
+            first_data = json.loads(first_line)
+
+            # Should look like metrics
+            metrics_keys = ["ts_ms", "parent", "cpu_usage", "mem_rss_kb"]
+            has_metrics_keys = any(key in first_data for key in metrics_keys)
+            assert has_metrics_keys
+
+    def test_write_metadata_no_output_file(self):
+        """Test that write_metadata doesn't affect in-memory only operation."""
+        cmd = ["sleep", "1"]  # Use a longer-running process to ensure sampling
+
+        exit_code, monitor = execute_with_monitoring(
+            cmd,
+            store_in_memory=True,
+            output_file=None,  # No file output
+            write_metadata=True,  # Should not affect in-memory storage
+            base_interval_ms=200
+        )
+
+        assert exit_code == 0
+
+        samples = monitor.get_samples()
+        assert len(samples) > 0
+
+        # In-memory samples should still be metrics, not metadata
+        first_sample = json.loads(samples[0])
+        metrics_keys = ["ts_ms", "parent", "cpu_usage", "mem_rss_kb"]
+        has_metrics_keys = any(key in first_sample for key in metrics_keys)
+        assert has_metrics_keys

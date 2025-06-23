@@ -107,6 +107,8 @@ pub struct OutputConfig {
     pub quiet: bool,
     /// Whether to update output in place (vs new lines)
     pub update_in_place: bool,
+    /// Whether to write metadata as first line when writing to file
+    pub write_metadata: bool,
 }
 
 impl Default for OutputConfig {
@@ -117,6 +119,7 @@ impl Default for OutputConfig {
             store_in_memory: true,
             quiet: false,
             update_in_place: true,
+            write_metadata: false,
         }
     }
 }
@@ -209,6 +212,7 @@ pub struct OutputConfigBuilder {
     store_in_memory: Option<bool>,
     quiet: Option<bool>,
     update_in_place: Option<bool>,
+    write_metadata: Option<bool>,
 }
 
 impl OutputConfigBuilder {
@@ -242,6 +246,11 @@ impl OutputConfigBuilder {
         self
     }
 
+    pub fn write_metadata(mut self, write: bool) -> Self {
+        self.write_metadata = Some(write);
+        self
+    }
+
     pub fn build(self) -> OutputConfig {
         OutputConfig {
             output_file: self.output_file,
@@ -249,6 +258,7 @@ impl OutputConfigBuilder {
             store_in_memory: self.store_in_memory.unwrap_or(true),
             quiet: self.quiet.unwrap_or(false),
             update_in_place: self.update_in_place.unwrap_or(true),
+            write_metadata: self.write_metadata.unwrap_or(false),
         }
     }
 }
@@ -396,6 +406,7 @@ mod tests {
         assert!(config.store_in_memory);
         assert!(!config.quiet);
         assert!(config.update_in_place);
+        assert!(!config.write_metadata);
     }
 
     #[test]
@@ -471,10 +482,12 @@ mod tests {
     fn test_output_config_builder_all_options() {
         let config = OutputConfigBuilder::default()
             .output_file("output.json")
-            .format(OutputFormat::Json)
+            .format_str("json")
+            .unwrap()
             .store_in_memory(false)
             .quiet(true)
             .update_in_place(false)
+            .write_metadata(true)
             .build();
 
         assert_eq!(config.output_file, Some(PathBuf::from("output.json")));
@@ -482,6 +495,7 @@ mod tests {
         assert!(!config.store_in_memory);
         assert!(config.quiet);
         assert!(!config.update_in_place);
+        assert!(config.write_metadata);
     }
 
     #[test]
@@ -496,6 +510,21 @@ mod tests {
     fn test_output_config_builder_format_str_invalid() {
         let result = OutputConfigBuilder::default().format_str("invalid");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_output_config_builder_write_metadata() {
+        let config = OutputConfigBuilder::default().write_metadata(true).build();
+        assert!(config.write_metadata);
+
+        let config = OutputConfigBuilder::default().write_metadata(false).build();
+        assert!(!config.write_metadata);
+    }
+
+    #[test]
+    fn test_output_config_builder_write_metadata_default() {
+        let config = OutputConfigBuilder::default().build();
+        assert!(!config.write_metadata); // Should default to false
     }
 
     #[test]

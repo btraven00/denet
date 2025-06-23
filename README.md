@@ -142,6 +142,7 @@ exit_code, monitor = denet.execute_with_monitoring(
     max_interval_ms=1000,
     store_in_memory=True,    # Store samples in memory
     output_file=None,        # Optional file output
+    write_metadata=False,    # Write metadata as first line to output file (default False)
     include_children=True    # Monitor child processes (default True)
 )
 
@@ -149,7 +150,6 @@ exit_code, monitor = denet.execute_with_monitoring(
 samples = monitor.get_samples()
 print(f"Collected {len(samples)} samples")
 print(f"Exit code: {exit_code}")
-print(f"Peak CPU usage: {max(sample['cpu_usage'] for sample in samples)}%")
 
 # Generate and print summary
 summary_json = monitor.get_summary()
@@ -190,6 +190,13 @@ executable_path = metrics_with_metadata[0]["executable"]  # First item is metada
 
 # Direct command execution with monitoring
 exit_code, monitor = denet.execute_with_monitoring(["python", "script.py"])
+
+# Execute with metadata written to output file
+exit_code, monitor = denet.execute_with_monitoring(
+    cmd=["python", "script.py"],
+    output_file="metrics.jsonl",
+    write_metadata=True  # Includes metadata as first line: {"pid": 1234, "cmd": ["python", "script.py"], "executable": "/usr/bin/python", "t0_ms": 1625184000000}
+)
 
 # Aggregate metrics to reduce data size
 aggregated = denet.aggregate_metrics(metrics, window_size=5, method="mean")

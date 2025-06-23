@@ -23,6 +23,7 @@ struct PyProcessMonitor {
     inner: ProcessMonitor,
     samples: Vec<String>,
     output_config: OutputConfig,
+    metadata_written: bool,
 }
 
 /// Build OutputConfig with consistent settings
@@ -31,11 +32,13 @@ fn build_output_config(
     output_format: &str,
     store_in_memory: bool,
     quiet: bool,
+    write_metadata: bool,
 ) -> PyResult<OutputConfig> {
     let mut builder = OutputConfig::builder()
         .format_str(output_format)?
         .store_in_memory(store_in_memory)
-        .quiet(quiet);
+        .quiet(quiet)
+        .write_metadata(write_metadata);
 
     if let Some(path) = output_file {
         builder = builder.output_file(path);
@@ -47,7 +50,7 @@ fn build_output_config(
 #[pymethods]
 impl PyProcessMonitor {
     #[new]
-    #[pyo3(signature = (cmd, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true))]
+    #[pyo3(signature = (cmd, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         cmd: Vec<String>,
@@ -59,9 +62,15 @@ impl PyProcessMonitor {
         store_in_memory: bool,
         quiet: bool,
         include_children: bool,
+        write_metadata: bool,
     ) -> PyResult<Self> {
-        let output_config =
-            build_output_config(output_file, output_format, store_in_memory, quiet)?;
+        let output_config = build_output_config(
+            output_file,
+            output_format,
+            store_in_memory,
+            quiet,
+            write_metadata,
+        )?;
 
         let mut inner = ProcessMonitor::new_with_options(
             cmd,
@@ -78,12 +87,13 @@ impl PyProcessMonitor {
             inner,
             samples: Vec::new(),
             output_config,
+            metadata_written: false,
         })
     }
 
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (pid, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true))]
+    #[pyo3(signature = (pid, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false))]
     fn from_pid(
         pid: usize,
         base_interval_ms: u64,
@@ -94,9 +104,15 @@ impl PyProcessMonitor {
         store_in_memory: bool,
         quiet: bool,
         include_children: bool,
+        write_metadata: Option<bool>,
     ) -> PyResult<Self> {
-        let output_config =
-            build_output_config(output_file, output_format, store_in_memory, quiet)?;
+        let output_config = build_output_config(
+            output_file,
+            output_format,
+            store_in_memory,
+            quiet,
+            write_metadata.unwrap_or(false),
+        )?;
         let mut inner = ProcessMonitor::from_pid_with_options(
             pid,
             Duration::from_millis(base_interval_ms),
@@ -112,6 +128,7 @@ impl PyProcessMonitor {
             inner,
             samples: Vec::new(),
             output_config,
+            metadata_written: false,
         })
     }
 
@@ -220,6 +237,7 @@ impl PyProcessMonitor {
             inner,
             samples: Vec::new(),
             output_config,
+            metadata_written: false,
         };
 
         // Resume the process if it was paused
@@ -331,6 +349,24 @@ impl PyProcessMonitor {
 
         // Write to file if output_file is specified
         if let Some(path) = &self.output_config.output_file {
+            // Write metadata as first line if enabled and not yet written
+            if self.output_config.write_metadata && !self.metadata_written {
+                if let Some(metadata) = self.inner.get_metadata() {
+                    let metadata_json = serde_json::to_string(&metadata)
+                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+                    let mut file = OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(path)
+                        .map_err(map_io_error)?;
+
+                    writeln!(file, "{metadata_json}").map_err(map_io_error)?;
+                    self.metadata_written = true;
+                }
+            }
+
             let mut file = OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -454,7 +490,7 @@ impl PyProcessMonitor {
         Ok(())
     }
 
-    fn get_summary(&self) -> PyResult<String> {
+    fn get_summary(&mut self) -> PyResult<String> {
         if self.samples.is_empty() {
             return serde_json::to_string(&Summary::new())
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()));

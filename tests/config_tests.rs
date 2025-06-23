@@ -163,6 +163,7 @@ fn test_output_config_defaults() {
     assert!(config.store_in_memory);
     assert!(!config.quiet);
     assert!(config.update_in_place);
+    assert!(!config.write_metadata);
 }
 
 #[test]
@@ -174,6 +175,7 @@ fn test_output_config_builder() {
         .store_in_memory(false)
         .quiet(true)
         .update_in_place(false)
+        .write_metadata(true)
         .build();
 
     assert_eq!(config.output_file, Some(PathBuf::from("output.json")));
@@ -181,6 +183,7 @@ fn test_output_config_builder() {
     assert!(!config.store_in_memory);
     assert!(config.quiet);
     assert!(!config.update_in_place);
+    assert!(config.write_metadata);
 
     // Test format_str method
     let result = OutputConfigBuilder::default().format_str("csv");
@@ -193,6 +196,21 @@ fn test_output_config_builder() {
     let result = OutputConfigBuilder::default().format_str("invalid");
 
     assert!(result.is_err());
+}
+
+#[test]
+fn test_output_config_builder_write_metadata() {
+    let config = OutputConfigBuilder::default().write_metadata(true).build();
+    assert!(config.write_metadata);
+
+    let config = OutputConfigBuilder::default().write_metadata(false).build();
+    assert!(!config.write_metadata);
+}
+
+#[test]
+fn test_output_config_builder_write_metadata_default() {
+    let config = OutputConfigBuilder::default().build();
+    assert!(!config.write_metadata); // Should default to false
 }
 
 #[test]

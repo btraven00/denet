@@ -54,6 +54,7 @@ def execute_with_monitoring(
     pause_for_attachment: bool = True,
     quiet: bool = False,
     include_children: bool = True,
+    write_metadata: bool = False,
 ) -> Tuple[int, "ProcessMonitor"]:
     """
     Execute a command with monitoring from the very start using signal-based process control.
@@ -79,6 +80,7 @@ def execute_with_monitoring(
         pause_for_attachment: Whether to use signal-based pausing (set False to disable)
         quiet: Whether to suppress output
         include_children: Whether to monitor child processes (default True)
+        write_metadata: Whether to write metadata as first line to output file (default False)
 
     Returns:
         Tuple of (exit_code, monitor)
@@ -130,6 +132,7 @@ def execute_with_monitoring(
                 store_in_memory=store_in_memory,
                 quiet=quiet,
                 include_children=include_children,
+                write_metadata=write_metadata,
             )
 
             # 4. Resume the process if it was paused
