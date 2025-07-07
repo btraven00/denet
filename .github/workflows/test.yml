@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.12", "3.13"]
 
     steps:
@@ -57,13 +57,18 @@ jobs:
           cargo fmt --all -- --check
           pixi run lint-all
 
-      # Run Rust tests with coverage
-      - name: Run Rust tests with coverage
+      # Run Rust tests with coverage on Linux, regular tests on macOS
+      - name: Run Rust tests
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         run: |
-          echo "Running Rust tests with coverage on Linux"
-          pixi run coverage-rust
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            echo "Running Rust tests with coverage on Linux"
+            pixi run coverage-rust
+          else
+            echo "Running Rust tests on macOS"
+            pixi run test-rust
+          fi
 
       - name: Build and install Python package
         env:
@@ -73,9 +78,14 @@ jobs:
 
       - name: Run python tests
         run: |
-          pixi run pytest-with-coverage
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            pixi run pytest-with-coverage
+          else
+            pixi run pytest
+          fi
 
       - name: Upload Python coverage to Codecov
+        if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v3
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -86,6 +96,7 @@ jobs:
           verbose: true
 
       - name: Upload Rust coverage to Codecov
+        if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v3
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -101,7 +112,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.12", "3.13"]
 
     steps:
@@ -141,7 +152,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.12", "3.13"]
 
     steps:

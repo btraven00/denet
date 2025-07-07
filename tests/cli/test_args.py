@@ -77,7 +77,7 @@ class TestCliArgs(unittest.TestCase):
                     # First line is metadata, subsequent lines are tree metrics
                     if "pid" in data and "cmd" in data and "aggregated" not in data:
                         # This is the metadata line
-                        self.assertIn("exe", data)
+                        self.assertIn("executable", data)
                         self.assertIn("t0_ms", data)
                         metadata_found = True
                     elif "aggregated" in data:
@@ -127,7 +127,7 @@ class TestCliArgs(unittest.TestCase):
                         # First line is metadata, subsequent lines are tree metrics
                         if "pid" in data and "cmd" in data and "aggregated" not in data:
                             # This is the metadata line
-                            self.assertIn("exe", data)
+                            self.assertIn("executable", data)
                             self.assertIn("t0_ms", data)
                             metadata_found = True
                         elif "aggregated" in data:

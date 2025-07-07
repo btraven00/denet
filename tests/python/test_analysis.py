@@ -566,9 +566,7 @@ class TestAnalysisEdgeCases:
                 "cpu_usage": 5.0,
                 "mem_rss_kb": 1000,
                 "thread_count": 1,
-                "child_processes": [
-                    {"pid": 5678, "cpu_usage": 3.0, "mem_rss_kb": 500, "thread_count": 1}
-                ]
+                "child_processes": [{"pid": 5678, "cpu_usage": 3.0, "mem_rss_kb": 500, "thread_count": 1}],
             }
         ]
 
@@ -582,10 +580,11 @@ class TestAnalysisEdgeCases:
         import unittest.mock
 
         # Patch the list slicing to return empty list for specific conditions
-        with unittest.mock.patch('builtins.list') as mock_list:
+        with unittest.mock.patch("builtins.list") as mock_list:
             original_list = list
+
             def mock_list_constructor(iterable):
-                if hasattr(iterable, '__getitem__') and hasattr(iterable, 'start'):
+                if hasattr(iterable, "__getitem__") and hasattr(iterable, "start"):
                     # This is a slice object, return empty list to trigger line 39
                     return []
                 return original_list(iterable)
@@ -608,7 +607,8 @@ class TestAnalysisEdgeCases:
         import unittest.mock
 
         # Mock the list comprehension to return empty values list
-        with unittest.mock.patch('denet.analysis.aggregate_metrics') as mock_agg:
+        with unittest.mock.patch("denet.analysis.aggregate_metrics") as mock_agg:
+
             def patched_aggregate(metrics, window_size=10, method="mean"):
                 # Simulate the internal logic to hit line 64
                 if not metrics:
@@ -660,7 +660,8 @@ class TestAnalysisEdgeCases:
         import unittest.mock
 
         # Mock the function to simulate empty CPU data scenario
-        with unittest.mock.patch('denet.analysis.process_tree_analysis') as mock_func:
+        with unittest.mock.patch("denet.analysis.process_tree_analysis") as mock_func:
+
             def patched_analysis(metrics):
                 if not metrics:
                     return {}
@@ -668,7 +669,7 @@ class TestAnalysisEdgeCases:
                 # Simulate internal processes dict with empty CPU data
                 processes = {
                     1234: {"cpu": [5.0], "memory": [1000], "threads": [1]},
-                    5678: {"cpu": [], "memory": [500], "threads": [1]}  # Empty CPU data
+                    5678: {"cpu": [], "memory": [500], "threads": [1]},  # Empty CPU data
                 }
 
                 result = {"main_process": {}, "child_processes": {}, "total": {}}

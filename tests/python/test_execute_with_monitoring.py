@@ -178,10 +178,7 @@ class TestExecuteWithMonitoring:
 
         # Normal execution should clean up properly
         exit_code, monitor = execute_with_monitoring(
-            cmd,
-            stdout_file=temp_stdout_file,
-            stderr_file=temp_stderr_file,
-            quiet=True
+            cmd, stdout_file=temp_stdout_file, stderr_file=temp_stderr_file, quiet=True
         )
 
         assert exit_code == 0
@@ -198,7 +195,7 @@ class TestExecuteWithMonitoring:
         cmd = [sys.executable, "-c", "import time; time.sleep(0.3)"]
 
         # We'll test by making the monitor.sample_once() method raise an exception
-        with unittest.mock.patch('denet.ProcessMonitor.from_pid') as mock_from_pid:
+        with unittest.mock.patch("denet.ProcessMonitor.from_pid") as mock_from_pid:
             # Create a mock monitor that raises an exception on sample_once
             mock_monitor = unittest.mock.MagicMock()
             mock_monitor.is_running.return_value = True
@@ -231,7 +228,7 @@ class TestExecuteWithMonitoring:
                 raise ProcessLookupError("Process group not found")
             return original_killpg(pgid, sig)
 
-        with unittest.mock.patch('os.killpg', side_effect=mock_killpg):
+        with unittest.mock.patch("os.killpg", side_effect=mock_killpg):
             with pytest.raises(subprocess.TimeoutExpired):
                 execute_with_monitoring(
                     cmd,
@@ -267,7 +264,7 @@ class TestExecuteWithMonitoring:
         exit_code, monitor = execute_with_monitoring(
             cmd,
             store_in_memory=True,
-            output_file=None  # No file output
+            output_file=None,  # No file output
         )
 
         assert exit_code == 0
@@ -282,10 +279,7 @@ class TestExecuteWithMonitoring:
         cmd = ["sleep", "1"]  # Use a longer-running process to ensure sampling
 
         exit_code, monitor = execute_with_monitoring(
-            cmd,
-            output_file=temp_output_file,
-            write_metadata=True,
-            base_interval_ms=200
+            cmd, output_file=temp_output_file, write_metadata=True, base_interval_ms=200
         )
 
         assert exit_code == 0
@@ -328,7 +322,7 @@ class TestExecuteWithMonitoring:
             cmd,
             output_file=temp_output_file,
             write_metadata=False,  # Explicitly disabled
-            base_interval_ms=200
+            base_interval_ms=200,
         )
 
         assert exit_code == 0
@@ -361,7 +355,7 @@ class TestExecuteWithMonitoring:
             cmd,
             output_file=temp_output_file,
             # write_metadata not specified, should default to False
-            base_interval_ms=200
+            base_interval_ms=200,
         )
 
         assert exit_code == 0
@@ -389,7 +383,7 @@ class TestExecuteWithMonitoring:
             store_in_memory=True,
             output_file=None,  # No file output
             write_metadata=True,  # Should not affect in-memory storage
-            base_interval_ms=200
+            base_interval_ms=200,
         )
 
         assert exit_code == 0

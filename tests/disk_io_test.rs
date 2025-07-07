@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 #[test]
+#[cfg(target_os = "linux")]
 fn test_disk_write_metrics_accuracy() {
     // Create a temporary directory for our test
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
@@ -161,16 +162,19 @@ fn create_random_file(path: &std::path::Path, size_bytes: usize) -> std::io::Res
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn test_disk_read_small_file() {
     test_disk_read_with_size("small", 1024 * 1024); // 1MB
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn test_disk_read_medium_file() {
     test_disk_read_with_size("medium", 4 * 1024 * 1024); // 4MB
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn test_disk_read_large_file() {
     test_disk_read_with_size("large", 10 * 1024 * 1024); // 10MB
 }
@@ -186,6 +190,7 @@ fn test_disk_read_with_size(test_name: &str, file_size: usize) {
 
     // Create a command that reads the file multiple times with delays
     // Use dd with sync to force actual disk reads and avoid caching
+    // Note: This is Linux-specific behavior, particularly the drop_caches command
     let cmd = vec![
         "bash".to_string(),
         "-c".to_string(),
@@ -249,6 +254,7 @@ fn test_disk_read_with_size(test_name: &str, file_size: usize) {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn test_simple_disk_write_accuracy() {
     // Create a temporary file for testing
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
