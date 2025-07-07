@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/btraven00/denet/compare/v0.4.1...v0.4.2) (2025-07-07)
+
+
+### Bug Fixes
+
+* **build:** allow to build in osx ([b38d333](https://github.com/btraven00/denet/commit/b38d33327864c2345c9999eaf34bf3f2e10c823e))
+
 ## [0.4.1](https://github.com/btraven00/denet/compare/v0.4.0...v0.4.1) (2025-06-23)
 
 
