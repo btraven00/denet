@@ -32,7 +32,7 @@ fn test_error_display() {
     assert!(err.to_string().contains("System time error"));
 
     // Test serialization error
-    let json_err = serde_json::Error::io(io::Error::new(io::ErrorKind::Other, "JSON error"));
+    let json_err = serde_json::Error::io(io::Error::other("JSON error"));
     let err = DenetError::Serialization(json_err);
     assert!(err.to_string().contains("Serialization error"));
 
@@ -80,7 +80,7 @@ fn test_error_source() {
     assert!(denet_err.source().is_some());
 
     // Test serialization error source
-    let json_err = serde_json::Error::io(io::Error::new(io::ErrorKind::Other, "JSON error"));
+    let json_err = serde_json::Error::io(io::Error::other("JSON error"));
     let denet_err = DenetError::Serialization(json_err);
     assert!(denet_err.source().is_some());
 
@@ -113,7 +113,7 @@ fn test_error_conversions() {
     }
 
     // Test From<serde_json::Error>
-    let json_err = serde_json::Error::io(io::Error::new(io::ErrorKind::Other, "JSON error"));
+    let json_err = serde_json::Error::io(io::Error::other("JSON error"));
     let denet_err: DenetError = json_err.into();
     match denet_err {
         DenetError::Serialization(_) => (),
@@ -135,7 +135,10 @@ fn test_error_conversions() {
 fn test_result_type() {
     // Test with success
     let result: Result<i32> = Ok(42);
-    assert_eq!(result.unwrap(), 42);
+    match result {
+        Ok(v) => assert_eq!(v, 42),
+        Err(_) => panic!("Expected Ok but got Err"),
+    }
 
     // Test with error
     let error_result: Result<i32> = Err(DenetError::Other("test error".to_string()));

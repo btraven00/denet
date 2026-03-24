@@ -8,7 +8,7 @@ use std::process::Command;
 #[test]
 fn test_cli_help_output() {
     let output = Command::new("cargo")
-        .args(&["run", "--bin", "denet", "--", "--help"])
+        .args(["run", "--bin", "denet", "--", "--help"])
         .output()
         .expect("Failed to execute command");
 
@@ -25,7 +25,7 @@ fn test_cli_help_output() {
 #[test]
 fn test_cli_version_output() {
     let output = Command::new("cargo")
-        .args(&["run", "--bin", "denet", "--", "--version"])
+        .args(["run", "--bin", "denet", "--", "--version"])
         .output()
         .expect("Failed to execute command");
 
@@ -39,7 +39,7 @@ fn test_cli_version_output() {
 #[test]
 fn test_cli_run_subcommand_help() {
     let output = Command::new("cargo")
-        .args(&["run", "--bin", "denet", "--", "run", "--help"])
+        .args(["run", "--bin", "denet", "--", "run", "--help"])
         .output()
         .expect("Failed to execute command");
 
@@ -54,7 +54,7 @@ fn test_cli_run_subcommand_help() {
 #[test]
 fn test_cli_stats_subcommand_help() {
     let output = Command::new("cargo")
-        .args(&["run", "--bin", "denet", "--", "stats", "--help"])
+        .args(["run", "--bin", "denet", "--", "stats", "--help"])
         .output()
         .expect("Failed to execute command");
 
@@ -69,7 +69,7 @@ fn test_cli_stats_subcommand_help() {
 #[test]
 fn test_cli_invalid_subcommand() {
     let output = Command::new("cargo")
-        .args(&["run", "--bin", "denet", "--", "invalid_command"])
+        .args(["run", "--bin", "denet", "--", "invalid_command"])
         .output()
         .expect("Failed to execute command");
 
@@ -83,7 +83,7 @@ fn test_cli_invalid_subcommand() {
 #[test]
 fn test_cli_run_with_simple_command() {
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "--bin",
             "denet",
@@ -115,7 +115,7 @@ fn test_cli_run_with_output_file() {
     let temp_path = temp_file.path().to_str().unwrap();
 
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "--bin",
             "denet",
@@ -143,7 +143,7 @@ fn test_cli_run_with_output_file() {
 #[test]
 fn test_cli_run_with_json_output() {
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "--bin",
             "denet",
@@ -155,7 +155,7 @@ fn test_cli_run_with_json_output() {
             "1",
             "run",
             "--",
-            "python",
+            "python3",
             "-c",
             "print('test')",
         ])
@@ -172,7 +172,7 @@ fn test_cli_run_with_json_output() {
 #[test]
 fn test_cli_run_with_custom_intervals() {
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "--bin",
             "denet",
@@ -196,7 +196,7 @@ fn test_cli_run_with_custom_intervals() {
 #[test]
 fn test_cli_run_with_no_update_flag() {
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "--bin",
             "denet",
@@ -219,7 +219,7 @@ fn test_cli_run_with_no_update_flag() {
 #[test]
 fn test_cli_run_nonexistent_command() {
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "--bin",
             "denet",
@@ -262,7 +262,7 @@ fn test_cli_stats_with_sample_file() {
     let temp_path = temp_file.path().to_str().unwrap();
 
     let output = Command::new("cargo")
-        .args(&["run", "--bin", "denet", "--", "stats", temp_path])
+        .args(["run", "--bin", "denet", "--", "stats", temp_path])
         .output()
         .expect("Failed to execute command");
 
@@ -282,7 +282,7 @@ fn test_cli_stats_with_sample_file() {
 #[test]
 fn test_cli_stats_nonexistent_file() {
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "--bin",
             "denet",
@@ -321,7 +321,7 @@ fn test_cli_stats_with_json_output() {
     let temp_path = temp_file.path().to_str().unwrap();
 
     let output = Command::new("cargo")
-        .args(&["run", "--bin", "denet", "--", "--json", "stats", temp_path])
+        .args(["run", "--bin", "denet", "--", "--json", "stats", temp_path])
         .output()
         .expect("Failed to execute command");
 
@@ -337,7 +337,7 @@ fn test_cli_stats_with_json_output() {
 fn test_cli_invalid_arguments() {
     // Test invalid interval
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "--bin",
             "denet",
@@ -355,7 +355,7 @@ fn test_cli_invalid_arguments() {
 
     // Test negative duration - may be handled at parsing level
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "--bin",
             "denet",
@@ -379,7 +379,7 @@ fn test_cli_attach_with_pid() {
     let current_pid = std::process::id();
 
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "--bin",
             "denet",
@@ -408,7 +408,7 @@ fn test_cli_attach_with_pid() {
 #[test]
 fn test_cli_comprehensive_options() {
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "--bin",
             "denet",
@@ -423,7 +423,7 @@ fn test_cli_comprehensive_options() {
             "--no-update",
             "run",
             "--",
-            "python",
+            "python3",
             "-c",
             "import time; time.sleep(0.5); print('done')",
         ])
@@ -445,7 +445,7 @@ fn test_cli_signal_handling() {
 
     // Start a long-running monitoring process
     let mut child = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "--bin",
             "denet",

@@ -15,6 +15,7 @@ authors = ["ben <ben.uzh@proton.me>"]
 default = []
 python = ["dep:pyo3"]
 ebpf = ["dep:aya", "dep:aya-log"]
+gpu = ["dep:nvml-wrapper"]
 
 [dependencies]
 sysinfo = { version = "0.35.2" }
@@ -40,6 +41,9 @@ procfs = "0.17"
 # eBPF dependencies (optional)
 aya = { version = "0.12.0", optional = true }
 aya-log = { version = "0.2", optional = true }
+
+# GPU dependencies (optional)
+nvml-wrapper = { version = "0.10.0", optional = true }
 
 [lib]
 # Only build cdylib when python feature is enabled

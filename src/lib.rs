@@ -35,6 +35,10 @@ pub mod cpu_sampler;
 #[cfg(feature = "ebpf")]
 pub mod ebpf;
 
+// GPU monitoring (optional feature)
+#[cfg(feature = "gpu")]
+pub mod gpu;
+
 // Python bindings
 #[cfg(feature = "python")]
 mod python;
