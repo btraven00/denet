@@ -520,6 +520,53 @@ impl PyProcessMonitor {
 
         Ok(result)
     }
+
+    /// Check if GPU monitoring is enabled
+    #[cfg(feature = "gpu")]
+    fn is_gpu_enabled(&self) -> PyResult<bool> {
+        Ok(self.inner.is_gpu_enabled())
+    }
+
+    /// Get the number of GPU devices
+    #[cfg(feature = "gpu")]
+    fn gpu_device_count(&self) -> PyResult<u32> {
+        Ok(self.inner.gpu_device_count())
+    }
+
+    /// Get GPU monitoring summary as JSON string
+    #[cfg(feature = "gpu")]
+    fn get_gpu_summary(&self) -> PyResult<String> {
+        let summary = self.inner.get_gpu_summary();
+        serde_json::to_string(&summary)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Check if GPU monitoring is enabled (no-op when gpu feature disabled)
+    #[cfg(not(feature = "gpu"))]
+    fn is_gpu_enabled(&self) -> PyResult<bool> {
+        Ok(false)
+    }
+
+    /// Get the number of GPU devices (returns 0 when gpu feature disabled)
+    #[cfg(not(feature = "gpu"))]
+    fn gpu_device_count(&self) -> PyResult<u32> {
+        Ok(0)
+    }
+
+    /// Get GPU monitoring summary as JSON string (returns empty summary when gpu feature disabled)
+    #[cfg(not(feature = "gpu"))]
+    fn get_gpu_summary(&self) -> PyResult<String> {
+        let empty_summary = serde_json::json!({
+            "enabled": false,
+            "device_count": 0,
+            "total_memory_gb": 0.0,
+            "total_memory_used_gb": 0.0,
+            "max_gpu_utilization": 0,
+            "max_memory_utilization": 0
+        });
+        Ok(serde_json::to_string(&empty_summary)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?)
+    }
 }
 
 #[pyfunction]

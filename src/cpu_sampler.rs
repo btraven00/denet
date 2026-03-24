@@ -512,14 +512,14 @@ mod tests {
     fn test_sampler_with_terminated_process() {
         let mut sampler = CpuSampler::new();
 
-        let child = Command::new("true")
+        let mut child = Command::new("true")
             .spawn()
             .expect("Failed to spawn test process");
 
         let pid = child.id() as usize;
 
         // Wait for process to terminate
-        std::thread::sleep(Duration::from_millis(100));
+        let _ = child.wait();
 
         // Try to measure CPU usage of terminated process
         let result = sampler.get_cpu_usage(pid);

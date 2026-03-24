@@ -15,7 +15,6 @@ mod linux_tests {
     fn test_cpu_sampler_creation() {
         let _sampler = CpuSampler::new();
         // Just testing that we can create a sampler without errors
-        assert!(true, "CpuSampler should be created successfully");
     }
 
     // Basic CPU usage test
@@ -77,7 +76,7 @@ mod linux_tests {
 
         // The usage should be a percentage between 0 and 100
         assert!(
-            usage >= 0.0 && usage <= 100.0,
+            (0.0..=100.0).contains(&usage),
             "CPU usage should be between 0-100%, got: {}",
             usage
         );
@@ -101,7 +100,7 @@ mod linux_tests {
         let start = std::time::Instant::now();
         while start.elapsed() < Duration::from_millis(100) {
             // Busy loop to consume CPU
-            let _ = (0..10000).fold(0, |acc, x| acc + x);
+            let _ = (0..10000).sum::<i32>();
         }
 
         // Wait a bit to ensure the CPU usage is registered
@@ -115,7 +114,7 @@ mod linux_tests {
 
         // The usage should be a valid percentage
         assert!(
-            cpu_value >= 0.0 && cpu_value <= 100.0,
+            (0.0..=100.0).contains(&cpu_value),
             "CPU usage should be between 0-100%, got: {}",
             cpu_value
         );

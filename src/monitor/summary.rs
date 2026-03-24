@@ -238,7 +238,7 @@ mod tests {
     fn test_summary_from_json_file_with_empty_lines() -> Result<()> {
         let mut temp_file = NamedTempFile::new()?;
 
-        writeln!(temp_file, "")?; // Empty line
+        writeln!(temp_file)?; // Empty line
         writeln!(
             temp_file,
             r#"{{"ts_ms":1000,"cpu_usage":25.0,"mem_rss_kb":512,"mem_vms_kb":1024,"disk_read_bytes":0,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":1,"uptime_secs":10,"cpu_core":null}}"#

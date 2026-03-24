@@ -45,6 +45,15 @@ pub struct Metrics {
     pub thread_count: usize,
     pub uptime_secs: u64,
     pub cpu_core: Option<u32>,
+
+    /// GPU metrics (optional, only present when gpu feature is enabled)
+    #[cfg(feature = "gpu")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<crate::gpu::GpuMetrics>,
+
+    #[cfg(not(feature = "gpu"))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<serde_json::Value>,
 }
 
 impl Metrics {
@@ -67,6 +76,7 @@ impl Metrics {
             thread_count: 0,
             uptime_secs: 0,
             cpu_core: None,
+            gpu: None,
         }
     }
 }
@@ -117,6 +127,15 @@ pub struct AggregatedMetrics {
     #[cfg(not(feature = "ebpf"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ebpf: Option<serde_json::Value>,
+
+    /// GPU metrics aggregated across all processes
+    #[cfg(feature = "gpu")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<crate::gpu::GpuMetrics>,
+
+    #[cfg(not(feature = "gpu"))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<serde_json::Value>,
 }
 
 impl AggregatedMetrics {
@@ -162,6 +181,7 @@ impl AggregatedMetrics {
             process_count: metrics.len(),
             uptime_secs: max_uptime,
             ebpf: None, // eBPF metrics are added separately
+            gpu: None,  // GPU metrics are added separately
         }
     }
 }
@@ -186,6 +206,7 @@ impl Default for AggregatedMetrics {
             process_count: 0,
             uptime_secs: 0,
             ebpf: None,
+            gpu: None,
         }
     }
 }
@@ -213,6 +234,14 @@ pub struct Summary {
     pub peak_mem_rss_kb: u64,
     /// Average CPU usage (percent)
     pub avg_cpu_usage: f32,
+    /// GPU monitoring summary
+    #[cfg(feature = "gpu")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<crate::gpu::GpuSummary>,
+
+    #[cfg(not(feature = "gpu"))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<serde_json::Value>,
 }
 
 impl Summary {
@@ -253,6 +282,7 @@ impl Summary {
             } else {
                 total_cpu / metrics.len() as f32
             },
+            gpu: None,
         }
     }
 
@@ -290,6 +320,7 @@ impl Summary {
             } else {
                 total_cpu / metrics.len() as f32
             },
+            gpu: None,
         }
     }
 }
@@ -307,6 +338,7 @@ impl Default for Summary {
             total_net_tx_bytes: 0,
             peak_mem_rss_kb: 0,
             avg_cpu_usage: 0.0,
+            gpu: None,
         }
     }
 }
@@ -509,25 +541,29 @@ mod tests {
 
     #[test]
     fn test_summary_from_aggregated_metrics() {
-        let mut metric1 = AggregatedMetrics::default();
-        metric1.cpu_usage = 40.0;
-        metric1.mem_rss_kb = 2000;
-        metric1.disk_read_bytes = 800;
-        metric1.disk_write_bytes = 400;
-        metric1.net_rx_bytes = 150;
-        metric1.net_tx_bytes = 75;
-        metric1.thread_count = 8;
-        metric1.process_count = 2;
+        let metric1 = AggregatedMetrics {
+            cpu_usage: 40.0,
+            mem_rss_kb: 2000,
+            disk_read_bytes: 800,
+            disk_write_bytes: 400,
+            net_rx_bytes: 150,
+            net_tx_bytes: 75,
+            thread_count: 8,
+            process_count: 2,
+            ..Default::default()
+        };
 
-        let mut metric2 = AggregatedMetrics::default();
-        metric2.cpu_usage = 60.0;
-        metric2.mem_rss_kb = 3000;
-        metric2.disk_read_bytes = 1600;
-        metric2.disk_write_bytes = 800;
-        metric2.net_rx_bytes = 300;
-        metric2.net_tx_bytes = 150;
-        metric2.thread_count = 12;
-        metric2.process_count = 3;
+        let metric2 = AggregatedMetrics {
+            cpu_usage: 60.0,
+            mem_rss_kb: 3000,
+            disk_read_bytes: 1600,
+            disk_write_bytes: 800,
+            net_rx_bytes: 300,
+            net_tx_bytes: 150,
+            thread_count: 12,
+            process_count: 3,
+            ..Default::default()
+        };
 
         let metrics = vec![metric1, metric2];
         let summary = Summary::from_aggregated_metrics(&metrics, 25.0);

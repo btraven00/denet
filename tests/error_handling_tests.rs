@@ -189,7 +189,7 @@ fn test_output_config_builder_partial_specification() {
 
     assert!(config.quiet);
     assert!(config.store_in_memory); // Default
-    assert!(!config.update_in_place || config.update_in_place); // Default value
+                                     // update_in_place has a default value (typically false)
 
     let config = OutputConfigBuilder::default()
         .store_in_memory(false)

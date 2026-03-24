@@ -18,7 +18,7 @@ fn create_test_process(duration_ms: u64) -> Vec<String> {
         "import time; time.sleep({}); print('test complete')",
         duration_ms as f64 / 1000.0
     );
-    vec!["python".to_string(), "-c".to_string(), script]
+    vec!["python3".to_string(), "-c".to_string(), script]
 }
 
 /// Helper function to create a CPU-intensive test process
@@ -40,7 +40,7 @@ time.sleep({})
         duration_ms as f64 / 1000.0,
         duration_ms as f64 / 1000.0
     );
-    vec!["python".to_string(), "-c".to_string(), script]
+    vec!["python3".to_string(), "-c".to_string(), script]
 }
 
 #[test]
@@ -221,7 +221,7 @@ fn test_convenience_function_monitor_with_progress() {
 
 #[test]
 fn test_monitoring_result_edge_cases() {
-    let cmd = create_test_process(100);
+    let cmd = create_test_process(400);
     let monitor = ProcessMonitor::new(cmd, Duration::from_millis(10), Duration::from_millis(1000))
         .expect("Failed to create monitor");
 
@@ -242,7 +242,7 @@ fn test_monitoring_result_edge_cases() {
 
 #[test]
 fn test_monitoring_with_cpu_intensive_process() {
-    let cmd = create_cpu_intensive_process(300);
+    let cmd = create_cpu_intensive_process(600);
     let monitor = ProcessMonitor::new(cmd, Duration::from_millis(50), Duration::from_millis(1000))
         .expect("Failed to create monitor");
 
@@ -307,11 +307,7 @@ fn test_monitoring_duration_tracking() {
     let actual_duration = start_time.elapsed();
 
     // Result duration should be close to actual duration
-    let duration_diff = if result.duration > actual_duration {
-        result.duration - actual_duration
-    } else {
-        actual_duration - result.duration
-    };
+    let duration_diff = result.duration.abs_diff(actual_duration);
 
     assert!(duration_diff < Duration::from_millis(100)); // Should be within 100ms
 }
@@ -319,7 +315,7 @@ fn test_monitoring_duration_tracking() {
 #[test]
 fn test_monitoring_with_no_samples() {
     // Test behavior when process exits immediately
-    let cmd = vec!["python".to_string(), "-c".to_string(), "pass".to_string()]; // Immediate exit
+    let cmd = vec!["python3".to_string(), "-c".to_string(), "pass".to_string()]; // Immediate exit
 
     let monitor = ProcessMonitor::new(cmd, Duration::from_millis(100), Duration::from_millis(1000))
         .expect("Failed to create monitor");

@@ -142,6 +142,8 @@ pub struct ProcessMonitor {
     last_refresh_time: Instant,
     #[cfg(target_os = "linux")]
     cpu_sampler: crate::cpu_sampler::CpuSampler,
+    #[cfg(feature = "gpu")]
+    gpu_monitor: crate::gpu::GpuMonitor,
 }
 
 // We'll use a Result type directly instead of a custom ErrorType to avoid orphan rule issues
@@ -206,6 +208,8 @@ impl ProcessMonitor {
             last_refresh_time: now,
             #[cfg(target_os = "linux")]
             cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
+            #[cfg(feature = "gpu")]
+            gpu_monitor: crate::gpu::GpuMonitor::new(),
         })
     }
 
@@ -284,6 +288,8 @@ impl ProcessMonitor {
             last_refresh_time: now,
             #[cfg(target_os = "linux")]
             cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
+            #[cfg(feature = "gpu")]
+            gpu_monitor: crate::gpu::GpuMonitor::new(),
         })
     }
 
@@ -521,7 +527,15 @@ impl ProcessMonitor {
                 )
             } else {
                 // Show delta I/O since monitoring start
-                if self.io_baseline.is_none() {
+                if let Some(baseline) = self.io_baseline.as_ref() {
+                    // Calculate delta from baseline
+                    (
+                        current_disk_read.saturating_sub(baseline.disk_read_bytes),
+                        current_disk_write.saturating_sub(baseline.disk_write_bytes),
+                        current_net_rx.saturating_sub(baseline.net_rx_bytes),
+                        current_net_tx.saturating_sub(baseline.net_tx_bytes),
+                    )
+                } else {
                     // First sample - establish baseline
                     self.io_baseline = Some(IoBaseline {
                         disk_read_bytes: current_disk_read,
@@ -530,15 +544,6 @@ impl ProcessMonitor {
                         net_tx_bytes: current_net_tx,
                     });
                     (0, 0, 0, 0) // First sample shows 0 delta
-                } else {
-                    // Calculate delta from baseline
-                    let baseline = self.io_baseline.as_ref().unwrap();
-                    (
-                        current_disk_read.saturating_sub(baseline.disk_read_bytes),
-                        current_disk_write.saturating_sub(baseline.disk_write_bytes),
-                        current_net_rx.saturating_sub(baseline.net_rx_bytes),
-                        current_net_tx.saturating_sub(baseline.net_tx_bytes),
-                    )
                 }
             };
 
@@ -546,6 +551,17 @@ impl ProcessMonitor {
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
             .as_millis() as u64;
+
+        // Sample GPU metrics if available
+        #[cfg(feature = "gpu")]
+        let gpu_metrics = if self.gpu_monitor.is_enabled() {
+            Some(self.gpu_monitor.sample_metrics(&[self.pid as u32]))
+        } else {
+            None
+        };
+
+        #[cfg(not(feature = "gpu"))]
+        let gpu_metrics = None;
 
         Some(Metrics {
             ts_ms,
@@ -559,6 +575,7 @@ impl ProcessMonitor {
             thread_count,
             uptime_secs,
             cpu_core: Self::get_process_cpu_core(self.pid),
+            gpu: gpu_metrics,
         })
     }
 
@@ -762,6 +779,7 @@ impl ProcessMonitor {
                     thread_count: get_thread_count(*child_pid),
                     uptime_secs: proc.run_time(),
                     cpu_core: Self::get_process_cpu_core(*child_pid),
+                    gpu: None, // Child processes don't get individual GPU metrics
                 };
 
                 child_metrics.push(ChildProcessMetrics {
@@ -796,6 +814,7 @@ impl ProcessMonitor {
                 process_count: 1, // Parent
                 uptime_secs: parent.uptime_secs,
                 ebpf: None, // Will be populated below if eBPF is enabled
+                gpu: None,  // Will be populated below if GPU is enabled
             };
 
             // Add child metrics
@@ -845,6 +864,20 @@ impl ProcessMonitor {
             #[cfg(not(feature = "ebpf"))]
             {
                 // eBPF is already None from initialization
+            }
+
+            // Add GPU metrics if enabled
+            #[cfg(feature = "gpu")]
+            if self.gpu_monitor.is_enabled() {
+                let all_pids: Vec<u32> = std::iter::once(self.pid as u32)
+                    .chain(child_pids.iter().map(|&pid| pid as u32))
+                    .collect();
+                agg.gpu = Some(self.gpu_monitor.sample_metrics(&all_pids));
+            }
+
+            #[cfg(not(feature = "gpu"))]
+            {
+                // GPU is already None from initialization
             }
 
             Some(agg)
@@ -965,6 +998,26 @@ impl ProcessMonitor {
     #[cfg(not(target_os = "linux"))]
     fn get_process_cpu_core(_pid: usize) -> Option<u32> {
         None // Not implemented for non-Linux platforms
+    }
+
+    /// Get GPU monitoring summary
+    #[cfg(feature = "gpu")]
+    pub fn get_gpu_summary(&self) -> crate::gpu::GpuSummary {
+        // For a simple summary, we'll just use current metrics
+        let current_metrics = self.gpu_monitor.sample_metrics(&[self.pid as u32]);
+        self.gpu_monitor.get_summary(&[current_metrics])
+    }
+
+    /// Check if GPU monitoring is enabled
+    #[cfg(feature = "gpu")]
+    pub fn is_gpu_enabled(&self) -> bool {
+        self.gpu_monitor.is_enabled()
+    }
+
+    /// Get the number of GPU devices
+    #[cfg(feature = "gpu")]
+    pub fn gpu_device_count(&self) -> u32 {
+        self.gpu_monitor.device_count()
     }
 }
 
@@ -1841,9 +1894,8 @@ mod tests {
 
         // Test tree metrics work without embedded metadata
         let tree_metrics = monitor.sample_tree_metrics();
-        assert_eq!(
+        assert!(
             tree_metrics.parent.is_some(),
-            true,
             "Tree should have parent metrics"
         );
     }
@@ -1992,7 +2044,7 @@ mod tests {
         use tempfile::NamedTempFile;
 
         let mut temp_file = NamedTempFile::new().unwrap();
-        writeln!(temp_file, "").unwrap(); // Empty line
+        writeln!(temp_file).unwrap(); // Empty line
         writeln!(temp_file, "   ").unwrap(); // Whitespace only
         writeln!(
             temp_file,
@@ -2189,7 +2241,10 @@ mod tests {
     fn test_process_result_type_alias() {
         // Test that ProcessResult works correctly
         let success: ProcessResult<i32> = Ok(42);
-        assert_eq!(success.unwrap(), 42);
+        match success {
+            Ok(v) => assert_eq!(v, 42),
+            Err(_) => panic!("Expected Ok but got Err"),
+        }
 
         let error: ProcessResult<i32> = Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -2227,7 +2282,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
 
         // Process should be running initially
-        let initial_state = monitor.is_running();
+        let _initial_state = monitor.is_running();
         // May or may not be running depending on system timing, but shouldn't panic
 
         // Wait for process to complete
@@ -2242,7 +2297,6 @@ mod tests {
         // Should handle gracefully regardless of process state
 
         // Just ensure we don't crash - timing is unpredictable in CI environments
-        assert!(initial_state || !initial_state); // Always true, just exercises the code path
     }
 
     #[test]
