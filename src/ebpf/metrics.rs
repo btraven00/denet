@@ -285,7 +285,15 @@ pub struct OffCpuMetrics {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub thread_stats: HashMap<String, ThreadOffCpuStats>,
 
-    /// Top blocking threads by off-CPU time
+    /// Top threads ranked by total off-CPU time, descending (max 10 entries).
+    ///
+    /// Each entry is a summary across all off-CPU events for that thread since
+    /// profiling started. `percentage` is the thread's share of the total
+    /// off-CPU time accumulated across all monitored threads — not a share of
+    /// wall-clock time.
+    ///
+    /// This is derived directly from the raw per-thread event counters in
+    /// `thread_stats`, not from a separate analysis step.
     pub top_blocking_threads: Vec<ThreadOffCpuInfo>,
 
     /// Analysis of off-CPU bottlenecks
@@ -323,20 +331,29 @@ pub struct ThreadOffCpuStats {
     pub min_time_ns: u64,
 }
 
-/// Thread off-CPU summary for reporting
+/// One entry in `top_blocking_threads`: a per-thread off-CPU summary.
+///
+/// Appears in JSON as:
+/// ```json
+/// { "pid": 1234, "tid": 1235, "time_ms": 450.2, "percentage": 33.33 }
+/// ```
+///
+/// `time_ms` is the cumulative off-CPU time for this thread since monitoring
+/// started. `percentage` is its share of the combined off-CPU time across all
+/// monitored threads (not of wall-clock time).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadOffCpuInfo {
     /// Thread ID
     pub tid: u32,
 
-    /// Process ID
+    /// Process ID (TGID)
     pub pid: u32,
 
-    /// Total time spent off-CPU (milliseconds)
+    /// Total time spent off-CPU in milliseconds
     #[serde(rename = "time_ms")]
     pub total_time_ms: f64,
 
-    /// Percentage of total off-CPU time (with 2 decimal places)
+    /// This thread's share of total off-CPU time across all monitored threads
     #[serde(serialize_with = "serialize_percentage_2dp")]
     pub percentage: f64,
 }
