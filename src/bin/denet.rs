@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use tabled::{builder::Builder, settings::Style};
 #[cfg(feature = "ebpf")]
 use denet::ebpf::debug;
 use denet::error::Result;
@@ -13,10 +14,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
-use tabled::{
-    builder::Builder,
-    settings::{object::Rows, Alignment, Modify, Style},
-};
 
 /// Dynamic Explorer of Nested Executions Tool (DENET)
 #[derive(Parser, Debug)]
@@ -200,7 +197,7 @@ fn create_monitor_for_command(command: &[String], args: &Args) -> Result<Process
         args.since_process_start,
     ) {
         Ok(monitor) => {
-            if args.debug && !args.quiet {
+            if args.debug && !args.quiet && !args.json {
                 println!("Monitoring process: {}", command.join(" ").cyan());
             }
             Ok(monitor)
@@ -221,7 +218,7 @@ fn create_monitor_for_pid(pid: usize, args: &Args) -> Result<ProcessMonitor> {
         args.since_process_start,
     ) {
         Ok(monitor) => {
-            if !args.quiet {
+            if !args.quiet && !args.json {
                 println!(
                     "Monitoring existing process with PID: {}",
                     pid.to_string().cyan()
@@ -242,10 +239,14 @@ fn execute_monitoring_with_output(
     mut file_handles: OutputHandles,
     args: &Args,
 ) -> Result<()> {
+    // In JSON mode all human-readable UI is suppressed so stdout stays
+    // parseable (e.g. piping to jq). Errors still go to stderr.
+    let ui_quiet = args.quiet || args.json;
+
     // Set debug mode if requested
     if args.debug {
         monitor.set_debug_mode(true);
-        if !args.quiet {
+        if !ui_quiet {
             println!("Debug mode enabled - verbose output will be shown");
         }
     }
@@ -253,7 +254,7 @@ fn execute_monitoring_with_output(
     // Set debug mode for eBPF if requested
     #[cfg(feature = "ebpf")]
     {
-        if args.debug && !args.quiet {
+        if args.debug && !ui_quiet {
             println!("Debug mode enabled for eBPF profiling - verbose output will be shown");
             // Set debug mode in the eBPF module
             unsafe {
@@ -283,7 +284,7 @@ fn execute_monitoring_with_output(
 
                 eprintln!("Continuing without eBPF profiling...");
             }
-        } else if !args.quiet {
+        } else if !ui_quiet {
             println!("eBPF profiling enabled");
         }
     }
@@ -291,17 +292,16 @@ fn execute_monitoring_with_output(
     // Setup signal handling for clean shutdown
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
-    let quiet = args.quiet;
 
     ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);
-        if !quiet {
+        if !ui_quiet {
             println!("\nReceived Ctrl-C, finishing...");
         }
     })
     .expect("Error setting Ctrl-C handler");
 
-    if !args.quiet {
+    if !ui_quiet {
         println!("Press Ctrl+C to stop monitoring");
         println!();
     }
@@ -529,8 +529,8 @@ fn execute_monitoring_with_output(
     // Calculate summary
     let runtime = start_time.elapsed();
 
-    // Only print if not in quiet mode
-    if !args.quiet {
+    // Only print if not in quiet/json mode
+    if !args.quiet && !args.json {
         // Clean up and ensure we have a newline if we were updating in place
         if needs_newline_on_exit {
             println!();
@@ -830,64 +830,36 @@ fn format_bytes(bytes: u64) -> String {
 
 /// Generate and print a summary from metrics
 /// Print a summary of collected metrics
+fn summary_rows(summary: &Summary) -> Vec<(&'static str, String)> {
+    vec![
+        ("Duration",         format!("{:.2} seconds", summary.total_time_secs)),
+        ("Samples",          format!("{}", summary.sample_count)),
+        ("Max Processes",    format!("{}", summary.max_processes)),
+        ("Max Threads",      format!("{}", summary.max_threads)),
+        ("Peak Memory",      format!("{} MB", (summary.peak_mem_rss_kb as f64 / 1024.0).round())),
+        ("Avg CPU Usage",    format!("{:.1}%", summary.avg_cpu_usage)),
+        ("Disk Read",        format_bytes(summary.total_disk_read_bytes)),
+        ("Disk Write",       format_bytes(summary.total_disk_write_bytes)),
+        ("Network Received", format_bytes(summary.total_net_rx_bytes)),
+        ("Network Sent",     format_bytes(summary.total_net_tx_bytes)),
+    ]
+}
+
+fn print_summary_rows(summary: &Summary) {
+    let rows = summary_rows(summary);
+    let mut builder = Builder::default();
+    for (key, val) in &rows {
+        builder.push_record([key, val.as_str()]);
+    }
+    let mut table = builder.build();
+    table.with(Style::blank());
+    println!("{table}");
+}
+
 fn print_summary(metrics: &[Metrics], duration: f64) {
     let summary = Summary::from_metrics(metrics, duration);
-
-    println!("\n📈 {}", "EXECUTION SUMMARY".cyan().bold());
-
-    let mut builder = Builder::default();
-
-    // Two-column layout with metric names and values
-    builder.push_record(vec![
-        "⏱️  Duration",
-        &format!("{:.2} seconds", summary.total_time_secs),
-    ]);
-
-    builder.push_record(vec!["📊 Samples", &format!("{}", summary.sample_count)]);
-
-    builder.push_record(vec![
-        "🔄 Max Processes",
-        &format!("{}", summary.max_processes),
-    ]);
-
-    builder.push_record(vec!["🧵 Max Threads", &format!("{}", summary.max_threads)]);
-
-    builder.push_record(vec![
-        "💾 Peak Memory",
-        &format!("{} MB", (summary.peak_mem_rss_kb as f64 / 1024.0).round()),
-    ]);
-
-    builder.push_record(vec![
-        "⚡ Avg CPU Usage",
-        &format!("{:.1}%", summary.avg_cpu_usage),
-    ]);
-
-    builder.push_record(vec![
-        "📖 Disk Read",
-        &format_bytes(summary.total_disk_read_bytes),
-    ]);
-
-    builder.push_record(vec![
-        "💿 Disk Write",
-        &format_bytes(summary.total_disk_write_bytes),
-    ]);
-
-    builder.push_record(vec![
-        "📥 Network Received",
-        &format_bytes(summary.total_net_rx_bytes),
-    ]);
-
-    builder.push_record(vec![
-        "📤 Network Sent",
-        &format_bytes(summary.total_net_tx_bytes),
-    ]);
-
-    let mut table = builder.build();
-    table
-        .with(Style::modern_rounded())
-        .with(Modify::new(Rows::new(..)).with(Alignment::left()));
-
-    println!("{table}");
+    println!("\n{}", "EXECUTION SUMMARY".cyan().bold());
+    print_summary_rows(&summary);
 }
 
 /// Generate a summary from a JSON file with metrics
@@ -951,62 +923,8 @@ fn generate_summary_from_file(
                     )?;
                 } else {
                     // Otherwise print to stdout
-                    println!("\n📊 {}", "FILE STATISTICS".cyan().bold());
-
-                    let mut builder = Builder::default();
-
-                    // Two-column layout with metric names and values
-                    builder.push_record(vec![
-                        "⏱️  Duration",
-                        &format!("{:.2} seconds", summary.total_time_secs),
-                    ]);
-
-                    builder.push_record(vec!["📊 Samples", &format!("{}", summary.sample_count)]);
-
-                    builder.push_record(vec![
-                        "🔄 Max Processes",
-                        &format!("{}", summary.max_processes),
-                    ]);
-
-                    builder
-                        .push_record(vec!["🧵 Max Threads", &format!("{}", summary.max_threads)]);
-
-                    builder.push_record(vec![
-                        "💾 Peak Memory",
-                        &format!("{} MB", (summary.peak_mem_rss_kb as f64 / 1024.0).round()),
-                    ]);
-
-                    builder.push_record(vec![
-                        "⚡ Avg CPU Usage",
-                        &format!("{:.1}%", summary.avg_cpu_usage),
-                    ]);
-
-                    builder.push_record(vec![
-                        "📖 Disk Read",
-                        &format_bytes(summary.total_disk_read_bytes),
-                    ]);
-
-                    builder.push_record(vec![
-                        "💿 Disk Write",
-                        &format_bytes(summary.total_disk_write_bytes),
-                    ]);
-
-                    builder.push_record(vec![
-                        "📥 Network Received",
-                        &format_bytes(summary.total_net_rx_bytes),
-                    ]);
-
-                    builder.push_record(vec![
-                        "📤 Network Sent",
-                        &format_bytes(summary.total_net_tx_bytes),
-                    ]);
-
-                    let mut table = builder.build();
-                    table
-                        .with(Style::modern_rounded())
-                        .with(Modify::new(Rows::new(..)).with(Alignment::left()));
-
-                    println!("{table}");
+                    println!("\n{}", "FILE STATISTICS".cyan().bold());
+                    print_summary_rows(&summary);
                 }
             }
             Ok(())
