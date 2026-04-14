@@ -1,6 +1,5 @@
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use tabled::{builder::Builder, settings::Style};
 #[cfg(feature = "ebpf")]
 use denet::ebpf::debug;
 use denet::error::Result;
@@ -14,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
+use tabled::{builder::Builder, settings::Style};
 
 /// Dynamic Explorer of Nested Executions Tool (DENET)
 #[derive(Parser, Debug)]
@@ -832,16 +832,22 @@ fn format_bytes(bytes: u64) -> String {
 /// Print a summary of collected metrics
 fn summary_rows(summary: &Summary) -> Vec<(&'static str, String)> {
     vec![
-        ("Duration",         format!("{:.2} seconds", summary.total_time_secs)),
-        ("Samples",          format!("{}", summary.sample_count)),
-        ("Max Processes",    format!("{}", summary.max_processes)),
-        ("Max Threads",      format!("{}", summary.max_threads)),
-        ("Peak Memory",      format!("{} MB", (summary.peak_mem_rss_kb as f64 / 1024.0).round())),
-        ("Avg CPU Usage",    format!("{:.1}%", summary.avg_cpu_usage)),
-        ("Disk Read",        format_bytes(summary.total_disk_read_bytes)),
-        ("Disk Write",       format_bytes(summary.total_disk_write_bytes)),
+        (
+            "Duration",
+            format!("{:.2} seconds", summary.total_time_secs),
+        ),
+        ("Samples", format!("{}", summary.sample_count)),
+        ("Max Processes", format!("{}", summary.max_processes)),
+        ("Max Threads", format!("{}", summary.max_threads)),
+        (
+            "Peak Memory",
+            format!("{} MB", (summary.peak_mem_rss_kb as f64 / 1024.0).round()),
+        ),
+        ("Avg CPU Usage", format!("{:.1}%", summary.avg_cpu_usage)),
+        ("Disk Read", format_bytes(summary.total_disk_read_bytes)),
+        ("Disk Write", format_bytes(summary.total_disk_write_bytes)),
         ("Network Received", format_bytes(summary.total_net_rx_bytes)),
-        ("Network Sent",     format_bytes(summary.total_net_tx_bytes)),
+        ("Network Sent", format_bytes(summary.total_net_tx_bytes)),
     ]
 }
 
