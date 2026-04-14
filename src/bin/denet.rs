@@ -593,30 +593,36 @@ fn format_metrics(metrics: &Metrics) -> String {
     {
         if let Some(ref gpu_metrics) = metrics.gpu {
             if gpu_metrics.has_process_data {
-                // Show process-specific GPU utilization if available
                 if let Some(process_util) = gpu_metrics.max_process_utilization() {
                     let process_mem_gb = gpu_metrics.total_process_memory_usage() as f64
                         / (1024.0 * 1024.0 * 1024.0);
-
                     let gpu_color = match process_util {
                         u if u < 30 => "green",
                         u if u < 70 => "yellow",
                         _ => "red",
                     };
-
                     return format!(
                         "{} | GPU: {}%, {:.1}GB",
                         base_metrics,
                         format!("{}", process_util).color(gpu_color),
                         process_mem_gb
                     );
-                }
-                // Fallback: show process memory usage without utilization
-                else if gpu_metrics.total_process_memory_usage() > 0 {
+                } else if gpu_metrics.total_process_memory_usage() > 0 {
                     let process_mem_gb = gpu_metrics.total_process_memory_usage() as f64
                         / (1024.0 * 1024.0 * 1024.0);
                     return format!("{} | GPU: {:.1}GB", base_metrics, process_mem_gb);
                 }
+            } else if let Some(sys_util) = gpu_metrics.max_system_utilization() {
+                let gpu_color = match sys_util {
+                    u if u < 30 => "green",
+                    u if u < 70 => "yellow",
+                    _ => "red",
+                };
+                return format!(
+                    "{} | GPU: {}% (sys)",
+                    base_metrics,
+                    format!("{}", sys_util).color(gpu_color)
+                );
             }
         }
     }
@@ -653,26 +659,33 @@ fn format_metrics_compact(metrics: &Metrics) -> String {
     {
         if let Some(ref gpu_metrics) = metrics.gpu {
             if gpu_metrics.has_process_data {
-                // Show process-specific GPU utilization if available
                 if let Some(process_util) = gpu_metrics.max_process_utilization() {
                     let gpu_color = match process_util {
                         u if u < 30 => "green",
                         u if u < 70 => "yellow",
                         _ => "red",
                     };
-
                     return format!(
                         "{} | GPU {}%",
                         base_metrics,
                         format!("{}", process_util).color(gpu_color)
                     );
-                }
-                // Fallback: show process memory if no utilization available
-                else if gpu_metrics.total_process_memory_usage() > 0 {
+                } else if gpu_metrics.total_process_memory_usage() > 0 {
                     let mem_mb =
                         gpu_metrics.total_process_memory_usage() as f64 / (1024.0 * 1024.0);
                     return format!("{} | GPU {:.0}M", base_metrics, mem_mb);
                 }
+            } else if let Some(sys_util) = gpu_metrics.max_system_utilization() {
+                let gpu_color = match sys_util {
+                    u if u < 30 => "green",
+                    u if u < 70 => "yellow",
+                    _ => "red",
+                };
+                return format!(
+                    "{} | GPU {}% (sys)",
+                    base_metrics,
+                    format!("{}", sys_util).color(gpu_color)
+                );
             }
         }
     }
@@ -711,30 +724,36 @@ fn format_aggregated_metrics(metrics: &AggregatedMetrics) -> String {
     {
         if let Some(ref gpu_metrics) = metrics.gpu {
             if gpu_metrics.has_process_data {
-                // Show process-specific GPU utilization for aggregated metrics
                 if let Some(process_util) = gpu_metrics.max_process_utilization() {
                     let process_mem_gb = gpu_metrics.total_process_memory_usage() as f64
                         / (1024.0 * 1024.0 * 1024.0);
-
                     let gpu_color = match process_util {
                         u if u < 30 => "green",
                         u if u < 70 => "yellow",
                         _ => "red",
                     };
-
                     return format!(
                         "{} | GPU: {}%, {:.1}GB",
                         base_metrics,
                         format!("{}", process_util).color(gpu_color),
                         process_mem_gb
                     );
-                }
-                // Fallback: show process memory usage without utilization
-                else if gpu_metrics.total_process_memory_usage() > 0 {
+                } else if gpu_metrics.total_process_memory_usage() > 0 {
                     let process_mem_gb = gpu_metrics.total_process_memory_usage() as f64
                         / (1024.0 * 1024.0 * 1024.0);
                     return format!("{} | GPU: {:.1}GB", base_metrics, process_mem_gb);
                 }
+            } else if let Some(sys_util) = gpu_metrics.max_system_utilization() {
+                let gpu_color = match sys_util {
+                    u if u < 30 => "green",
+                    u if u < 70 => "yellow",
+                    _ => "red",
+                };
+                return format!(
+                    "{} | GPU: {}% (sys)",
+                    base_metrics,
+                    format!("{}", sys_util).color(gpu_color)
+                );
             }
         }
     }
@@ -772,26 +791,33 @@ fn format_aggregated_metrics_compact(metrics: &AggregatedMetrics) -> String {
     {
         if let Some(ref gpu_metrics) = metrics.gpu {
             if gpu_metrics.has_process_data {
-                // Show process-specific GPU utilization for compact aggregated view
                 if let Some(process_util) = gpu_metrics.max_process_utilization() {
                     let gpu_color = match process_util {
                         u if u < 30 => "green",
                         u if u < 70 => "yellow",
                         _ => "red",
                     };
-
                     return format!(
                         "{} | GPU {}%",
                         base_metrics,
                         format!("{}", process_util).color(gpu_color)
                     );
-                }
-                // Fallback: show process memory if no utilization available
-                else if gpu_metrics.total_process_memory_usage() > 0 {
+                } else if gpu_metrics.total_process_memory_usage() > 0 {
                     let mem_mb =
                         gpu_metrics.total_process_memory_usage() as f64 / (1024.0 * 1024.0);
                     return format!("{} | GPU {:.0}M", base_metrics, mem_mb);
                 }
+            } else if let Some(sys_util) = gpu_metrics.max_system_utilization() {
+                let gpu_color = match sys_util {
+                    u if u < 30 => "green",
+                    u if u < 70 => "yellow",
+                    _ => "red",
+                };
+                return format!(
+                    "{} | GPU {}% (sys)",
+                    base_metrics,
+                    format!("{}", sys_util).color(gpu_color)
+                );
             }
         }
     }
@@ -831,7 +857,8 @@ fn format_bytes(bytes: u64) -> String {
 /// Generate and print a summary from metrics
 /// Print a summary of collected metrics
 fn summary_rows(summary: &Summary) -> Vec<(&'static str, String)> {
-    vec![
+    #[allow(unused_mut)]
+    let mut rows = vec![
         (
             "Duration",
             format!("{:.2} seconds", summary.total_time_secs),
@@ -848,7 +875,36 @@ fn summary_rows(summary: &Summary) -> Vec<(&'static str, String)> {
         ("Disk Write", format_bytes(summary.total_disk_write_bytes)),
         ("Network Received", format_bytes(summary.total_net_rx_bytes)),
         ("Network Sent", format_bytes(summary.total_net_tx_bytes)),
-    ]
+    ];
+
+    #[cfg(feature = "gpu")]
+    if let Some(ref gpu) = summary.gpu {
+        if gpu.enabled {
+            rows.push(("GPU Devices", format!("{}", gpu.device_count)));
+            rows.push((
+                "Peak GPU VRAM Used",
+                format!(
+                    "{:.2} GB / {:.1} GB",
+                    gpu.peak_used_memory_gb, gpu.total_memory_gb
+                ),
+            ));
+            rows.push((
+                "Peak GPU Utilization",
+                format!("{}%", gpu.max_system_gpu_utilization),
+            ));
+            if let Some(proc_util) = gpu.max_process_gpu_utilization {
+                rows.push(("Peak Process GPU", format!("{}%", proc_util)));
+            }
+            if gpu.process_memory_usage_gb > 0.0 {
+                rows.push((
+                    "Process GPU Memory",
+                    format!("{:.2} GB", gpu.process_memory_usage_gb),
+                ));
+            }
+        }
+    }
+
+    rows
 }
 
 fn print_summary_rows(summary: &Summary) {

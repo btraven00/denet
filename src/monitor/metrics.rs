@@ -267,6 +267,25 @@ impl Summary {
             peak_mem_rss_kb = peak_mem_rss_kb.max(metric.mem_rss_kb);
         }
 
+        #[cfg(feature = "gpu")]
+        let gpu = {
+            let gpu_samples: Vec<crate::gpu::GpuMetrics> =
+                metrics.iter().filter_map(|m| m.gpu.clone()).collect();
+            if gpu_samples.is_empty() {
+                None
+            } else {
+                let monitor = crate::gpu::GpuMonitor::new();
+                let summary = monitor.get_summary(&gpu_samples);
+                if summary.enabled {
+                    Some(summary)
+                } else {
+                    None
+                }
+            }
+        };
+        #[cfg(not(feature = "gpu"))]
+        let gpu = None;
+
         Self {
             total_time_secs: elapsed_time,
             sample_count: metrics.len(),
@@ -282,7 +301,7 @@ impl Summary {
             } else {
                 total_cpu / metrics.len() as f32
             },
-            gpu: None,
+            gpu,
         }
     }
 
@@ -305,6 +324,25 @@ impl Summary {
             peak_mem_rss_kb = peak_mem_rss_kb.max(metric.mem_rss_kb);
         }
 
+        #[cfg(feature = "gpu")]
+        let gpu = {
+            let gpu_samples: Vec<crate::gpu::GpuMetrics> =
+                metrics.iter().filter_map(|m| m.gpu.clone()).collect();
+            if gpu_samples.is_empty() {
+                None
+            } else {
+                let monitor = crate::gpu::GpuMonitor::new();
+                let summary = monitor.get_summary(&gpu_samples);
+                if summary.enabled {
+                    Some(summary)
+                } else {
+                    None
+                }
+            }
+        };
+        #[cfg(not(feature = "gpu"))]
+        let gpu = None;
+
         Self {
             total_time_secs: elapsed_time,
             sample_count: metrics.len(),
@@ -320,7 +358,7 @@ impl Summary {
             } else {
                 total_cpu / metrics.len() as f32
             },
-            gpu: None,
+            gpu,
         }
     }
 }
