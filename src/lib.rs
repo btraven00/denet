@@ -35,10 +35,13 @@ pub mod cpu_sampler;
 #[cfg(feature = "ebpf")]
 pub mod ebpf;
 
+// Symbolication (eBPF stack traces, optional feature)
+#[cfg(feature = "ebpf")]
+pub mod symbolication;
+
 // GPU monitoring (optional feature)
 #[cfg(feature = "gpu")]
 pub mod gpu;
-
 // Python bindings
 #[cfg(feature = "python")]
 mod python;

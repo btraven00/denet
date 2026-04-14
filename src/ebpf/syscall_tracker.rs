@@ -38,6 +38,16 @@ pub struct SyscallTracker {
     _attached_programs: bool,
 }
 
+#[cfg(feature = "ebpf")]
+impl std::fmt::Debug for SyscallTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SyscallTracker")
+            .field("monitored_pids", &self.monitored_pids)
+            .field("bpf_loaded", &self.bpf.is_some())
+            .finish()
+    }
+}
+
 impl SyscallTracker {
     /// Set the debug mode for eBPF operations
     #[cfg(feature = "ebpf")]
