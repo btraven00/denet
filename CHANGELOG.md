@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/btraven00/denet/compare/v0.4.2...v0.5.0) (2026-04-14)
+
+
+### Features
+
+* **ebpf:** add off-CPU profiler module (no integration yet) ([2b5a46e](https://github.com/btraven00/denet/commit/2b5a46e9da014c897d99f3e791db72fc3a3d3a48))
+* **ebpf:** wire off-CPU profiler into ProcessMonitor ([ccf670d](https://github.com/btraven00/denet/commit/ccf670d8823961e7de1f375133a740547582d0c1))
+* **gpu:** add NVIDIA GPU monitoring support ([bd1a942](https://github.com/btraven00/denet/commit/bd1a9423947ea4ebc92df2838a9165225fcf2d96))
+
+
+### Bug Fixes
+
+* **build:** remove spurious cargo:warning= from informational build messages ([66803d9](https://github.com/btraven00/denet/commit/66803d9b4965c07a63703b1c94ebb60fb1621f8a))
+* **cli:** add gpu report to summary and progress ([#16](https://github.com/btraven00/denet/issues/16)) ([e335c2e](https://github.com/btraven00/denet/commit/e335c2efde50555dc16695f54c17d82818e3e41a))
+* **cli:** suppress UI output in --json mode; fix summary table alignment ([9d28cef](https://github.com/btraven00/denet/commit/9d28cef5e0dfa6c02444fde9e427f907907a9f3e))
+* **ebpf:** correct PID attribution in off-CPU events ([b45553f](https://github.com/btraven00/denet/commit/b45553ff125a145b9208831c2e78ef2a0ec19647))
+* **ebpf:** return empty syscall metrics instead of error for zero-syscall workloads ([08372c7](https://github.com/btraven00/denet/commit/08372c7e5fee027cd3cff0865e7e0f142af7f922))
+
 ## [0.4.2](https://github.com/btraven00/denet/compare/v0.4.1...v0.4.2) (2025-07-07)
 
 
