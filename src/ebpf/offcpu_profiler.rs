@@ -220,6 +220,15 @@ fn create_offcpu_stats() -> OffCpuStats {
     }
 }
 
+impl std::fmt::Debug for OffCpuProfiler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OffCpuProfiler")
+            .field("monitored_pids", &self.monitored_pids)
+            .field("debug_mode", &self.debug_mode)
+            .finish()
+    }
+}
+
 impl OffCpuProfiler {
     /// Create a new Off-CPU profiler
     pub fn new(pids: Vec<u32>) -> crate::error::Result<Self> {

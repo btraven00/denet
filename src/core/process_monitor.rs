@@ -139,6 +139,8 @@ pub struct ProcessMonitor {
     debug_mode: bool,
     #[cfg(feature = "ebpf")]
     ebpf_tracker: Option<crate::ebpf::SyscallTracker>,
+    #[cfg(feature = "ebpf")]
+    offcpu_profiler: Option<crate::ebpf::OffCpuProfiler>,
     last_refresh_time: Instant,
     #[cfg(target_os = "linux")]
     cpu_sampler: crate::cpu_sampler::CpuSampler,
@@ -205,6 +207,8 @@ impl ProcessMonitor {
             enable_ebpf: false,
             #[cfg(feature = "ebpf")]
             ebpf_tracker: None,
+            #[cfg(feature = "ebpf")]
+            offcpu_profiler: None,
             last_refresh_time: now,
             #[cfg(target_os = "linux")]
             cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
@@ -285,6 +289,8 @@ impl ProcessMonitor {
             enable_ebpf: false,
             #[cfg(feature = "ebpf")]
             ebpf_tracker: None,
+            #[cfg(feature = "ebpf")]
+            offcpu_profiler: None,
             last_refresh_time: now,
             #[cfg(target_os = "linux")]
             cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
@@ -370,7 +376,7 @@ impl ProcessMonitor {
             }
 
             // Initialize eBPF tracker
-            match crate::ebpf::SyscallTracker::new(pids) {
+            match crate::ebpf::SyscallTracker::new(pids.clone()) {
                 Ok(tracker) => {
                     self.ebpf_tracker = Some(tracker);
                     self.enable_ebpf = true;
@@ -378,7 +384,6 @@ impl ProcessMonitor {
                     if self.debug_mode {
                         println!("DEBUG: eBPF profiling successfully enabled");
                     }
-                    Ok(())
                 }
                 Err(e) => {
                     log::warn!("Failed to enable eBPF: {}", e);
@@ -399,9 +404,25 @@ impl ProcessMonitor {
                         }
                     }
 
-                    Err(e)
+                    return Err(e);
                 }
             }
+
+            // Initialize off-CPU profiler
+            match crate::ebpf::OffCpuProfiler::new(pids) {
+                Ok(mut profiler) => {
+                    if self.debug_mode {
+                        profiler.enable_debug_mode();
+                    }
+                    self.offcpu_profiler = Some(profiler);
+                    log::info!("Off-CPU profiler enabled");
+                }
+                Err(e) => {
+                    log::warn!("Failed to enable off-CPU profiler: {}", e);
+                }
+            }
+
+            Ok(())
         } else {
             // Already enabled, just return success
             Ok(())
@@ -839,7 +860,7 @@ impl ProcessMonitor {
                         .chain(child_pids.iter().map(|&pid| pid as u32))
                         .collect();
 
-                    if let Err(e) = tracker.update_pids(all_pids) {
+                    if let Err(e) = tracker.update_pids(all_pids.clone()) {
                         log::warn!("Failed to update eBPF PIDs: {}", e);
                     }
 
@@ -855,6 +876,15 @@ impl ProcessMonitor {
                             agg.cpu_usage,
                             elapsed_time,
                         ));
+                    }
+
+                    // Collect off-CPU profiling data
+                    if let Some(ref mut profiler) = self.offcpu_profiler {
+                        profiler.update_pids(all_pids.clone());
+                        let stats = profiler.get_stats();
+                        if !stats.is_empty() {
+                            ebpf_metrics.offcpu = Some(build_offcpu_metrics(&stats));
+                        }
                     }
 
                     agg.ebpf = Some(ebpf_metrics);
@@ -1018,6 +1048,83 @@ impl ProcessMonitor {
     #[cfg(feature = "gpu")]
     pub fn gpu_device_count(&self) -> u32 {
         self.gpu_monitor.device_count()
+    }
+}
+
+/// Build `OffCpuMetrics` from the raw per-thread stats map.
+#[cfg(feature = "ebpf")]
+fn build_offcpu_metrics(
+    stats: &std::collections::HashMap<(u32, u32), crate::ebpf::OffCpuStats>,
+) -> crate::ebpf::metrics::OffCpuMetrics {
+    use crate::ebpf::metrics::{OffCpuMetrics, ThreadOffCpuInfo, ThreadOffCpuStats};
+
+    let mut total_time_ns: u64 = 0;
+    let mut total_events: u64 = 0;
+    let mut max_time_ns: u64 = 0;
+    let mut min_time_ns: u64 = u64::MAX;
+    let mut thread_stats = std::collections::HashMap::new();
+
+    for ((pid, tid), s) in stats {
+        total_time_ns = total_time_ns.saturating_add(s.total_time_ns);
+        total_events = total_events.saturating_add(s.count);
+        if s.max_time_ns > max_time_ns {
+            max_time_ns = s.max_time_ns;
+        }
+        if s.min_time_ns > 0 && s.min_time_ns < min_time_ns {
+            min_time_ns = s.min_time_ns;
+        }
+        thread_stats.insert(
+            format!("{pid}:{tid}"),
+            ThreadOffCpuStats {
+                tid: *tid,
+                total_time_ns: s.total_time_ns,
+                count: s.count,
+                avg_time_ns: s.avg_time_ns,
+                max_time_ns: s.max_time_ns,
+                min_time_ns: s.min_time_ns,
+            },
+        );
+    }
+
+    let avg_time_ns = if total_events > 0 {
+        total_time_ns / total_events
+    } else {
+        0
+    };
+    let min_time_ns = if min_time_ns == u64::MAX { 0 } else { min_time_ns };
+
+    // Build top-blocking-threads list (sorted by total off-CPU time, descending)
+    let mut top_blocking_threads: Vec<ThreadOffCpuInfo> = stats
+        .iter()
+        .map(|((pid, tid), s)| ThreadOffCpuInfo {
+            tid: *tid,
+            pid: *pid,
+            total_time_ms: s.total_time_ns as f64 / 1_000_000.0,
+            percentage: if total_time_ns > 0 {
+                s.total_time_ns as f64 / total_time_ns as f64 * 100.0
+            } else {
+                0.0
+            },
+        })
+        .collect();
+    top_blocking_threads.sort_by(|a, b| {
+        b.total_time_ms
+            .partial_cmp(&a.total_time_ms)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    top_blocking_threads.truncate(10);
+
+    OffCpuMetrics {
+        total_time_ns,
+        total_events,
+        avg_time_ns,
+        max_time_ns,
+        min_time_ns,
+        thread_stats,
+        top_blocking_threads,
+        bottlenecks: vec![],
+        stack_traces: vec![],
+        stacks: None,
     }
 }
 
