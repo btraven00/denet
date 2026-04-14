@@ -84,6 +84,8 @@ pub struct GpuSummary {
     pub device_count: u32,
     /// Total GPU memory across all devices (GB)
     pub total_memory_gb: f64,
+    /// Peak used GPU memory observed across all devices (GB)
+    pub peak_used_memory_gb: f64,
     /// Maximum system-wide GPU utilization observed (%)
     pub max_system_gpu_utilization: u32,
     /// Maximum process-specific GPU utilization observed (%)
@@ -98,6 +100,7 @@ impl Default for GpuSummary {
             enabled: false,
             device_count: 0,
             total_memory_gb: 0.0,
+            peak_used_memory_gb: 0.0,
             max_system_gpu_utilization: 0,
             max_process_gpu_utilization: None,
             process_memory_usage_gb: 0.0,
@@ -421,6 +424,7 @@ impl GpuMonitor {
         let mut max_system_gpu_utilization = 0;
         let mut max_process_gpu_utilization = None;
         let mut total_memory_gb = 0.0;
+        let mut peak_used_memory_gb = 0.0;
         let mut max_process_memory = 0;
 
         for metrics in metrics_history {
@@ -431,6 +435,12 @@ impl GpuMonitor {
                 }
                 if let Some(total_mem) = system_metric.memory_total {
                     total_memory_gb = (total_mem as f64) / (1024.0 * 1024.0 * 1024.0);
+                }
+                if let Some(used_mem) = system_metric.memory_used {
+                    let used_gb = (used_mem as f64) / (1024.0 * 1024.0 * 1024.0);
+                    if used_gb > peak_used_memory_gb {
+                        peak_used_memory_gb = used_gb;
+                    }
                 }
             }
 
@@ -450,6 +460,7 @@ impl GpuMonitor {
             enabled: true,
             device_count: self.device_count(),
             total_memory_gb,
+            peak_used_memory_gb,
             max_system_gpu_utilization,
             max_process_gpu_utilization,
             process_memory_usage_gb: (max_process_memory as f64) / (1024.0 * 1024.0 * 1024.0),
