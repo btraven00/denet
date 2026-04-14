@@ -60,6 +60,11 @@ name = "ebpf_diag"
 path = "src/bin/ebpf_diag.rs"
 required-features = ["ebpf"]
 
+[[example]]
+name = "offcpu_basic"
+path = "examples/offcpu_basic.rs"
+required-features = ["ebpf"]
+
 [dev-dependencies]
 once_cell = "1.21"
 tempfile = "3.0"

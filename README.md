@@ -19,12 +19,11 @@ Denet is a streaming process monitoring tool that provides detailed metrics on r
 - I/O bytes read/written tracking
 - Thread count monitoring
 - **GPU monitoring with NVIDIA NVML support (optional)**
+- **eBPF-based profiling on Linux: off-CPU time and syscall tracking (optional)**
 - Recursive child process tracking
 - Command-line interface with colorized output
 - Multiple output formats (JSON, JSONL, CSV)
 - In-memory sample collection for Python API
-- **GPU utilization, memory usage, temperature, and power monitoring**
-
 - Analysis utilities for metrics aggregation, peak detection, and resource utilization
 - Process metadata preserved in output files (pid, command, executable path)
 
@@ -33,6 +32,7 @@ Denet is a streaming process monitoring tool that provides detailed metrics on r
 - Python 3.6+ (Python 3.12 recommended for best performance)
 - Rust (for development)
 - [pixi](https://prefix.dev/docs/pixi/overview) (for development only)
+- **eBPF features**: Linux kernel 5.5+, `clang` at build time, `CAP_BPF` + `CAP_PERFMON` or root at runtime
 
 ## Installation
 
@@ -43,6 +43,9 @@ cargo install denet  # Rust binary
 # For GPU monitoring support (requires NVIDIA drivers and CUDA)
 pip install denet[gpu]  # Python package with GPU support
 cargo install denet --features gpu  # Rust binary with GPU support
+
+# For eBPF profiling support (Linux only, requires clang)
+cargo install denet --features ebpf
 ```
 
 ## Usage
@@ -90,6 +93,9 @@ denet run python cpu_intensive_script.py
 
 # Monitor a GPU workload (requires --features gpu or denet[gpu])
 denet run python gpu_training_script.py
+
+# Enable eBPF profiling — off-CPU time and syscall tracking (Linux only, requires root or CAP_BPF)
+sudo denet --enable-ebpf run python io_bound_script.py
 
 # Disable child process monitoring (only track the parent process)
 denet --no-include-children run python multi_process_script.py
@@ -291,6 +297,82 @@ GPU metrics are included in the JSON output:
   }
 }
 ```
+
+## eBPF Profiling
+
+Denet provides optional eBPF-based profiling on Linux for deeper insight into
+what processes are doing when they're not running on a CPU.
+
+### Features
+
+- **Off-CPU profiling**: Captures every `sched_switch` event to measure how long
+  threads are blocked — waiting for I/O, locks, or sleep. Useful for diagnosing
+  latency in I/O-bound workloads.
+- **Syscall tracking**: Counts syscall frequency by category (file I/O, memory,
+  network, …) and classifies process behaviour (I/O-bound, CPU-bound, etc.).
+
+### Requirements
+
+- Linux kernel 5.5+
+- `clang` available at build time
+- `CAP_BPF` + `CAP_PERFMON` capabilities, or root at runtime
+
+### Build
+
+```bash
+cargo build --features ebpf
+```
+
+### Usage
+
+```bash
+# Monitor an I/O-bound workload
+sudo denet --enable-ebpf run python io_bound_script.py
+
+# With JSON output
+sudo denet --enable-ebpf --json run sleep 5
+
+# Set capabilities on the binary to avoid running as root every time
+sudo setcap cap_bpf,cap_perfmon=ep ./target/debug/denet
+denet --enable-ebpf run sleep 5
+```
+
+### Sample JSON output
+
+```json
+{
+  "ts_ms": 1714000000000,
+  "cpu_usage": 12.5,
+  "mem_rss_kb": 8192,
+  "ebpf": {
+    "offcpu": {
+      "total_time_ns": 1500000000,
+      "total_events": 30,
+      "avg_time_ns": 50000000,
+      "max_time_ns": 500000000,
+      "top_blocking_threads": [
+        { "pid": 1234, "tid": 1234, "time_ms": 500.0, "percentage": 33.33 }
+      ]
+    },
+    "syscalls": {
+      "total": 1500,
+      "by_category": { "file_io": 900, "memory": 300, "time": 200, "other": 100 },
+      "top_syscalls": [
+        { "name": "read", "count": 450 },
+        { "name": "write", "count": 350 }
+      ]
+    }
+  }
+}
+```
+
+### Notes on stack traces
+
+Stack symbolication uses `/proc/{pid}/maps` and `addr2line`. For best results:
+
+- Build monitored programs with debug symbols (`-g`)
+- JIT-compiled languages (Python, Java, Node.js) produce limited stack information
+- See `docs/offcpu.md` for troubleshooting and architecture details
 
 ## Analysis Utilities
 

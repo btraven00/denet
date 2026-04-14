@@ -1,133 +1,117 @@
 # eBPF Profiling Module
 
-This module provides fine-grained profiling capabilities using eBPF (Extended Berkeley Packet Filter) for Linux systems. It enhances the process monitoring with low-overhead kernel-level instrumentation.
+This module provides fine-grained profiling capabilities using eBPF (Extended Berkeley Packet Filter) for Linux systems. It enhances process monitoring with low-overhead kernel-level instrumentation.
 
 ## Current Implementation
 
-### Enhanced Syscall Tracking (Real Data Collection)
-- **Purpose**: Track system call frequency across process trees using real Linux interfaces
-- **Scope**: Aggregated metrics for all monitored processes and their children
-- **Data Sources**: 
-  - `/proc/[pid]/syscall` for current syscall detection
-  - `/proc/[pid]/io` for I/O-based syscall estimation
-  - `/proc/[pid]/stat` for CPU-time-based syscall estimation
-  - Intelligent process-type-aware syscall pattern simulation
-- **Overhead**: Very low - lightweight procfs reading
-- **Output**: Real syscall counts per category (file_io, memory, time, network, etc.)
-- **Features**:
-  - Real-time syscall detection from kernel interfaces
-  - Process-type-aware intelligent estimation (Python, compiler, sleep, etc.)
-  - Realistic syscall pattern generation based on actual process characteristics
-  - Fallback to enhanced simulation when direct data unavailable
+### Off-CPU Profiling
+- **Purpose**: Measure time threads spend waiting (blocked on I/O, locks, sleep, scheduling)
+- **Mechanism**: `tracepoint/sched/sched_switch` captures every context switch
+- **Output**: Per-thread blocked time, event counts, top blocking threads
+- **Symbolication**: User-space stack frames resolved via `/proc/pid/maps` + `addr2line`
+- **Overhead**: Low — event-driven, only fires on context switches
+
+### Syscall Tracking
+- **Purpose**: Track system call frequency across process trees
+- **Mechanism**: `tracepoint/syscalls/sys_enter_*` tracepoints
+- **Output**: Syscall counts by category (file_io, memory, network, time, …), top-10 syscalls, behavior classification
+- **Overhead**: Very low — counts only, no data copying
 
 ## Architecture
 
 ```
 src/ebpf/
-├── mod.rs              # Main module interface
-├── syscall_tracker.rs  # Syscall tracking implementation
-├── metrics.rs          # eBPF-specific metrics structures
-└── programs/           # eBPF bytecode programs
-    └── syscall_count.rs # eBPF program for syscall counting
+├── mod.rs                # Module interface, re-exports, non-Linux stubs
+├── metrics.rs            # EbpfMetrics, OffCpuMetrics, SyscallMetrics types
+├── offcpu_profiler.rs    # Off-CPU profiler (sched_switch tracepoint)
+├── memory_map_cache.rs   # /proc/pid/maps caching for symbolication
+├── syscall_tracker.rs    # Syscall frequency tracking
+├── debug.rs              # Debug logging utilities
+└── programs/
+    ├── offcpu_profiler.c # eBPF program: sched_switch → perf event ring buffer
+    ├── syscall_tracer.c  # eBPF program: syscall entry counting
+    └── simple_test.c     # Minimal tracepoint for smoke testing
+```
+
+Data flow for off-CPU:
+
+```
+sched_switch tracepoint
+  └─▶ offcpu_profiler.c (kernel)
+        └─▶ PerfEventArray (ring buffer)
+              └─▶ OffCpuProfiler::poll_events() (userspace thread)
+                    └─▶ stats HashMap + symbolication
+                          └─▶ OffCpuMetrics → JSON output
 ```
 
 ## Usage
 
 ```bash
-# Enable enhanced eBPF profiling (works with standard user permissions)
-denet run --enable-ebpf <command>
+# Build with eBPF support
+cargo build --features ebpf
 
-# Example with Python process
-denet run --enable-ebpf --json python3 -c "import time; time.sleep(1)"
+# Run with off-CPU profiling (requires root or CAP_BPF + CAP_PERFMON)
+sudo denet --enable-ebpf run sleep 5
 
-# Example with compiler
-denet run --enable-ebpf --json gcc --version
+# JSON output with eBPF metrics
+sudo denet --enable-ebpf --json run python io_bound.py
 ```
 
 ## Requirements
 
-- **Linux System**: Works on any modern Linux system
-- **Permissions**: Standard user permissions (reads from /proc)
-- **Feature Flag**: Build with `--features ebpf`
-- **Future eBPF**: For true eBPF implementation, would require:
-  - Linux Kernel 4.15+ (for BPF_PROG_TYPE_TRACEPOINT)
-  - CAP_BPF capability or root privileges
-  - Compiled eBPF bytecode
+- Linux kernel 5.5+ (for `sched_switch` perf buffer support)
+- `CAP_BPF` + `CAP_PERFMON` capabilities, or root
+- `clang` available at build time (to compile eBPF C programs)
+- Feature flag: `cargo build --features ebpf`
 
-## Future Exploration Avenues
+## Output Schema
 
-### 1. Memory Profiling
-- **Allocation Tracking**: Hook malloc/free syscalls and mmap operations
-- **Memory Access Patterns**: Track page faults (minor/major)
-- **Memory Bandwidth**: Monitor memory controller events
-- **NUMA Awareness**: Track cross-NUMA memory access
+Off-CPU data appears under `ebpf.offcpu` in the JSON output:
 
-### 2. CPU Performance Monitoring
-- **Cache Misses**: L1/L2/L3 cache miss rates using perf events
-- **Branch Prediction**: Track branch mispredictions
-- **TLB Misses**: Translation Lookaside Buffer performance
-- **Context Switches**: Track voluntary/involuntary context switches
+```json
+{
+  "ebpf": {
+    "offcpu": {
+      "total_time_ns": 1234567890,
+      "total_events": 42,
+      "avg_time_ns": 29394000,
+      "max_time_ns": 500000000,
+      "min_time_ns": 1000000,
+      "top_blocking_threads": [
+        { "pid": 1234, "tid": 1234, "time_ms": 500.0, "percentage": 40.52 }
+      ],
+      "thread_stats": {
+        "1234:1234": { "tid": 1234, "total_time_ns": 500000000, "count": 10, ... }
+      }
+    }
+  }
+}
+```
 
-### 3. I/O Performance
-- **Block I/O Latency**: Track disk read/write latencies per operation
-- **Network I/O**: Detailed packet-level network statistics
-- **File System Events**: Track file open/close/read/write patterns
-- **I/O Queue Depth**: Monitor I/O scheduling behavior
+## Future Exploration
 
-### 4. Advanced Process Monitoring
-- **Lock Contention**: Track mutex/spinlock contention times
-- **Scheduler Events**: Monitor CFS scheduler decisions
-- **Signal Delivery**: Track signal handling and delivery
-- **Resource Limits**: Monitor approaches to resource limits
-
-### 5. Security and Compliance
-- **Security Events**: Track security-relevant syscalls
-- **Capability Usage**: Monitor capability checks
-- **Container Events**: Track container lifecycle events
-- **Audit Trail**: Detailed audit logging for compliance
-
-### 6. Application-Specific Profiling
-- **Language Runtime**: Hook into Python/Java/Node.js runtimes
-- **Database Operations**: Track database query patterns
-- **HTTP Requests**: Monitor web application request handling
-- **Custom Tracepoints**: User-defined tracepoints in applications
-
-## Implementation Considerations
-
-### Performance
-- **Map Types**: Use appropriate BPF map types (hash, array, per-CPU)
-- **Sampling**: Implement sampling for high-frequency events
-- **Batching**: Batch updates to reduce overhead
-- **Per-CPU Data**: Use per-CPU maps to avoid contention
-
-### Portability
-- **Kernel Compatibility**: Handle different kernel versions gracefully
-- **CO-RE (Compile Once, Run Everywhere)**: Use BTF for portability
-- **Fallback Mechanisms**: Graceful degradation when eBPF unavailable
-
-### User Experience
-- **Permission Handling**: Clear error messages for permission issues
-- **Configuration**: Granular control over which probes to enable
-- **Output Integration**: Seamless integration with existing JSON output
-- **Documentation**: Clear examples and troubleshooting guides
+- **Cache miss tracking**: L1/L2/L3 miss rates via perf hardware counters
+- **Memory profiling**: Allocation tracking via `uprobe` on malloc/free
+- **Lock contention**: `futex` wait times
+- **Block I/O latency**: Per-operation disk latency via `block_rq_*` tracepoints
+- **Network packet latency**: Socket send/receive latency
 
 ## Development Notes
 
-### Building eBPF Programs
 ```bash
-# Build with eBPF support
-cargo build --features ebpf
-
-# Run tests requiring root
+# Run tests (some require root for eBPF attachment)
+cargo test --features ebpf
 sudo -E cargo test --features ebpf -- --nocapture
-```
 
-### Debugging eBPF
-- Use `bpftool` to inspect loaded programs and maps
-- Enable eBPF verifier logs for debugging
-- Use `aya-log` for logging from eBPF programs
+# Inspect loaded eBPF programs at runtime
+sudo bpftool prog list
+sudo bpftool map list
+
+# Read bpf_printk debug output from eBPF programs
+sudo cat /sys/kernel/debug/tracing/trace_pipe
+```
 
 ### References
 - [Aya Book](https://aya-rs.dev/book/)
-- [BPF Performance Tools by Brendan Gregg](http://www.brendangregg.com/bpf-performance-tools-book.html)
-- [Linux Observability with BPF](https://www.oreilly.com/library/view/linux-observability-with/9781492050193/)
+- [BPF Performance Tools – Brendan Gregg](http://www.brendangregg.com/bpf-performance-tools-book.html)
+- [Linux kernel tracepoints](https://www.kernel.org/doc/html/latest/trace/tracepoints.html)
