@@ -578,9 +578,13 @@ impl OffCpuProfiler {
                                             )
                                         };
 
-                                        // Process the event if it's from a monitored PID
+                                        // Process the event if it's from a monitored PID.
+                                        // Also check by tid as a fallback: for single-threaded
+                                        // processes tid == pid, and the tid_to_tgid map may not
+                                        // be populated yet for the very first off-CPU event.
                                         if cpu_monitored_pids.is_empty()
                                             || cpu_monitored_pids.contains(&event.pid)
+                                            || cpu_monitored_pids.contains(&event.tid)
                                         {
                                             if cpu_debug {
                                                 debug::debug_println(&format!(
