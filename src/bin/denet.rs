@@ -857,6 +857,7 @@ fn format_bytes(bytes: u64) -> String {
 /// Generate and print a summary from metrics
 /// Print a summary of collected metrics
 fn summary_rows(summary: &Summary) -> Vec<(&'static str, String)> {
+    #[allow(unused_mut)]
     let mut rows = vec![
         (
             "Duration",
