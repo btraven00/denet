@@ -7,7 +7,11 @@
 #[cfg(target_os = "linux")]
 pub mod debug;
 #[cfg(target_os = "linux")]
+pub mod memory_map_cache;
+#[cfg(target_os = "linux")]
 pub mod metrics;
+#[cfg(target_os = "linux")]
+pub mod offcpu_profiler;
 #[cfg(target_os = "linux")]
 pub mod syscall_tracker;
 
@@ -15,6 +19,10 @@ pub use metrics::*;
 
 #[cfg(target_os = "linux")]
 pub use debug::debug_println;
+#[cfg(target_os = "linux")]
+pub use memory_map_cache::MemoryMapCache;
+#[cfg(target_os = "linux")]
+pub use offcpu_profiler::{OffCpuProfiler, OffCpuStats};
 #[cfg(target_os = "linux")]
 pub use syscall_tracker::SyscallTracker;
 
@@ -37,4 +45,32 @@ impl SyscallTracker {
     pub fn update_pids(&mut self, _pids: Vec<u32>) -> Result<(), crate::error::DenetError> {
         Ok(())
     }
+}
+
+#[cfg(not(target_os = "linux"))]
+/// Placeholder for non-Linux platforms
+pub struct OffCpuProfiler;
+
+#[cfg(not(target_os = "linux"))]
+impl OffCpuProfiler {
+    pub fn new(_pids: Vec<u32>) -> Result<Self, crate::error::DenetError> {
+        Err(crate::error::DenetError::EbpfNotSupported(
+            "eBPF profiling is only supported on Linux".to_string(),
+        ))
+    }
+
+    pub fn get_stats(&self) -> std::collections::HashMap<(u32, u32), OffCpuStats> {
+        std::collections::HashMap::new()
+    }
+
+    pub fn update_pids(&mut self, _pids: Vec<u32>) {}
+}
+
+#[cfg(not(target_os = "linux"))]
+/// Placeholder stats type for non-Linux platforms
+#[derive(Debug, Clone, Default)]
+pub struct OffCpuStats {
+    pub count: u64,
+    pub total_time_ns: u64,
+    pub max_time_ns: u64,
 }
