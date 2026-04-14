@@ -1091,7 +1091,11 @@ fn build_offcpu_metrics(
     } else {
         0
     };
-    let min_time_ns = if min_time_ns == u64::MAX { 0 } else { min_time_ns };
+    let min_time_ns = if min_time_ns == u64::MAX {
+        0
+    } else {
+        min_time_ns
+    };
 
     // Build top-blocking-threads list (sorted by total off-CPU time, descending)
     let mut top_blocking_threads: Vec<ThreadOffCpuInfo> = stats
