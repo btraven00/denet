@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 // Real eBPF implementation using aya
 #[cfg(feature = "ebpf")]
-use aya::{maps::HashMap as BpfHashMap, Bpf, BpfLoader};
+use aya::{maps::HashMap as BpfHashMap, Ebpf, EbpfLoader};
 
 // Include compiled eBPF bytecode at compile time
 #[cfg(feature = "ebpf")]
@@ -20,7 +20,7 @@ const SYSCALL_TRACER_BYTECODE: &[u8] =
 #[cfg(feature = "ebpf")]
 pub struct SyscallTracker {
     #[cfg(feature = "ebpf")]
-    bpf: Option<Bpf>,
+    bpf: Option<Ebpf>,
 
     #[cfg(feature = "ebpf")]
     syscall_counts: Option<BpfHashMap<aya::maps::MapData, u32, u64>>,
@@ -182,7 +182,7 @@ impl SyscallTracker {
     /// For this implementation, we'll use a hybrid approach with real Linux interfaces
     #[cfg(feature = "ebpf")]
     fn init_ebpf() -> Result<(
-        Bpf,
+        Ebpf,
         BpfHashMap<aya::maps::MapData, u32, u32>,
         BpfHashMap<aya::maps::MapData, u32, u64>,
     )> {
@@ -385,7 +385,7 @@ impl SyscallTracker {
         crate::ebpf::debug::debug_println("Creating BPF loader");
 
         // Create loader with default options
-        let mut loader = BpfLoader::new();
+        let mut loader = EbpfLoader::new();
 
         // Log the Aya usage
         crate::ebpf::debug::debug_println("Using Aya for eBPF loading");
@@ -490,7 +490,7 @@ impl SyscallTracker {
                 "Trying to load from file: {}",
                 bytecode_path.display()
             ));
-            let load_attempt = Bpf::load_file(&bytecode_path);
+            let load_attempt = Ebpf::load_file(&bytecode_path);
             if let Err(ref e) = load_attempt {
                 crate::ebpf::debug::debug_println(&format!("File load error: {}", e));
                 // Check error message for verifier logs
@@ -935,7 +935,8 @@ impl SyscallTracker {
             }
 
             match self.collect_syscall_metrics() {
-                Ok(metrics) => EbpfMetrics::with_syscalls(metrics),
+                Ok(metrics) if metrics.total > 0 => EbpfMetrics::with_syscalls(metrics),
+                Ok(_) => EbpfMetrics::default(),
                 Err(e) => EbpfMetrics::error(&format!("Failed to collect syscall metrics: {}", e)),
             }
         }
@@ -1048,11 +1049,14 @@ impl SyscallTracker {
             }
         }
 
-        // Return error if no eBPF data available
-        log::debug!("No eBPF data available");
-        Err(crate::error::DenetError::EbpfInitError(
-            "No eBPF data available from monitored PIDs".to_string(),
-        ))
+        // No tracked syscalls for these PIDs — valid (e.g. sleep-only workloads).
+        log::debug!("No tracked syscalls found for monitored PIDs");
+        Ok(SyscallMetrics {
+            total: 0,
+            by_category: HashMap::new(),
+            top_syscalls: vec![],
+            analysis: None,
+        })
     }
 }
 
@@ -1098,8 +1102,7 @@ mod tests {
 
         let metrics = tracker.get_metrics();
 
-        // Should either have syscalls or an error, but not both
-        assert!(metrics.syscalls.is_some() || metrics.error.is_some());
+        // Should not have both syscalls and error at the same time
         assert!(!(metrics.syscalls.is_some() && metrics.error.is_some()));
     }
 
