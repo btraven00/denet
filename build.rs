@@ -14,12 +14,10 @@ fn main() {
 
     // Only compile eBPF when the feature is enabled
     if env::var("CARGO_FEATURE_EBPF").is_ok() {
-        println!("cargo:warning=Building with eBPF support - checking for clang...");
-
         // Check if clang is available
         if !check_clang_available() {
             panic!(
-                "\n\n🚫 ERROR: clang is required to build eBPF programs!\n\n\
+                "\n\nERROR: clang is required to build eBPF programs!\n\n\
                 Please install clang:\n\
                 - Ubuntu/Debian: sudo apt install clang llvm libbpf-dev\n\
                 - CentOS/RHEL: sudo yum install clang llvm-devel libbpf-devel\n\
@@ -28,14 +26,8 @@ fn main() {
             );
         }
 
-        println!("cargo:warning=✓ clang found - compiling eBPF programs...");
-
         // Compile eBPF programs
         compile_ebpf_programs();
-
-        println!("cargo:warning=✓ eBPF programs compiled successfully");
-    } else {
-        println!("cargo:warning=Building without eBPF support (no --features ebpf)");
     }
 }
 
@@ -79,7 +71,7 @@ fn compile_ebpf_programs() {
 
         // Only compile if source file exists
         if !src_path.exists() {
-            println!("cargo:warning=Creating placeholder for {program}");
+            println!("cargo:warning=eBPF source not found, creating placeholder for {program}");
             create_placeholder_ebpf_program(&src_path);
         }
 
@@ -110,7 +102,7 @@ fn compile_ebpf_programs() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     panic!("Failed to compile {program}: {stderr}");
                 }
-                println!("cargo:warning=✓ Compiled {program} -> {obj_name}");
+                println!("cargo:rerun-if-changed={}", obj_path.display());
             }
             Err(e) => {
                 panic!("Failed to run clang for {program}: {e}");
