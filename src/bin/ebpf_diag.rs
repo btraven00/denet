@@ -10,7 +10,7 @@
 //! cargo run --bin ebpf_diag --features ebpf -- --debug  # For verbose output
 //! ```
 
-use aya::BpfLoader;
+use aya::EbpfLoader;
 use std::env;
 
 use std::process::{exit, Command};
@@ -215,7 +215,7 @@ fn try_load_ebpf() -> bool {
 
         // Create BPF loader
         println!("Creating BPF loader...");
-        let mut loader = BpfLoader::new();
+        let mut loader = EbpfLoader::new();
 
         // Try to load the bytecode
         match loader.load(SYSCALL_TRACER_BYTECODE) {
