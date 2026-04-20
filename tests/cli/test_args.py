@@ -91,9 +91,6 @@ class TestCliArgs(unittest.TestCase):
 
         self.assertTrue(json_found or metadata_found, "No valid JSON output found")
 
-        # Check if out.json was created (default behavior)
-        self.assertTrue(os.path.exists("out.json"), "Default output file out.json was not created")
-
     def test_attach_pid(self):
         """Test that attach subcommand works with valid PID"""
         # Start a background process and get its PID
@@ -202,18 +199,12 @@ class TestCliArgs(unittest.TestCase):
 
     def test_quiet_flag(self):
         """Test that --quiet flag significantly reduces stdout output"""
-        # Clean up any existing out.json
-        try:
-            os.unlink("out.json")
-        except Exception:
-            pass
-
         # First run without quiet to get baseline
-        cmd = [self.binary, "--nodump", "run", "sleep", "0.5"]
+        cmd = [self.binary, "run", "sleep", "0.5"]
         normal_result = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
 
         # Now run with quiet flag
-        cmd = [self.binary, "--quiet", "--nodump", "run", "sleep", "0.5"]
+        cmd = [self.binary, "--quiet", "run", "sleep", "0.5"]
         quiet_result = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
 
         # Should succeed
@@ -226,42 +217,18 @@ class TestCliArgs(unittest.TestCase):
             f"Quiet mode didn't reduce output enough: {len(quiet_result.stdout)} vs {len(normal_result.stdout)}",
         )
 
-        # Should not create out.json with --nodump
-        self.assertFalse(os.path.exists("out.json"), "out.json was created despite --nodump flag")
-
-        # In quiet mode, we don't explicitly test JSON output
-        # Instead we focus on ensuring --quiet reduces output compared to normal mode
-        # and that it doesn't create out.json with --nodump
-
-        # Now test with default output file creation
-        try:
-            os.unlink("out.json")  # Make sure it doesn't exist from before
-        except Exception:
-            pass
-
-        # Run with quiet but without nodump
-        cmd = [self.binary, "--quiet", "run", "sleep", "0.5"]
-        _ = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
-
-        # Should create out.json by default
-        self.assertTrue(os.path.exists("out.json"), "Default output file out.json was not created")
-
-    def test_nodump_flag(self):
-        """Test that --nodump flag prevents creation of default out.json file"""
-        # First remove any existing out.json
+    def test_no_default_output_file(self):
+        """Test that no out.json is created by default"""
         try:
             os.unlink("out.json")
         except Exception:
             pass
 
-        cmd = [self.binary, "--nodump", "run", "sleep", "0.5"]
+        cmd = [self.binary, "run", "sleep", "0.5"]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
 
-        # Should succeed
         self.assertEqual(result.returncode, 0)
-
-        # Should not create out.json
-        self.assertFalse(os.path.exists("out.json"), "out.json was created despite --nodump flag")
+        self.assertFalse(os.path.exists("out.json"), "out.json was created but should not exist by default")
 
     def test_custom_output_file(self):
         """Test that --out flag works with a custom file"""
