@@ -7,8 +7,13 @@ This is an experimental, gated feature that enables advanced system monitoring u
 To build with eBPF support, you need:
 
 ```bash
-sudo apt install libbpf-dev clang libcap2-bin
+sudo apt install clang libcap2-bin
 ```
+
+libbpf headers are vendored in the repo (`src/ebpf/include/bpf/`), so
+`libbpf-dev` is no longer required. See [portability.md](portability.md)
+for details on other distros and what the `.o` bytecode needs at
+runtime.
 
 ### Critical Kernel Settings
 
