@@ -106,15 +106,6 @@ fn test_output_config_with_metadata_various_formats() {
     assert_eq!(config.format, OutputFormat::Json);
     assert!(config.write_metadata);
 
-    // Test with CSV format
-    let config = OutputConfigBuilder::default()
-        .format(OutputFormat::Csv)
-        .write_metadata(true)
-        .build();
-
-    assert_eq!(config.format, OutputFormat::Csv);
-    assert!(config.write_metadata);
-
     // Test with JSONL format (default)
     let config = OutputConfigBuilder::default().write_metadata(true).build();
 

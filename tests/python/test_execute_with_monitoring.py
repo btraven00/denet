@@ -129,7 +129,7 @@ class TestExecuteWithMonitoring:
         cmd = [sys.executable, "-c", "import time; time.sleep(0.2)"]
 
         # Test each format separately
-        formats = ["jsonl", "json", "csv"]
+        formats = ["jsonl", "json"]
         for fmt in formats:
             output_file = str(tmp_path / f"metrics.{fmt}")
 
@@ -138,24 +138,11 @@ class TestExecuteWithMonitoring:
             assert exit_code == 0
             assert os.path.exists(output_file)
 
-            # Basic content check based on format
             with open(output_file, "r") as f:
                 content = f.read()
                 assert len(content) > 0
-
-                if fmt == "csv":
-                    # CSV should have header with common fields
-                    assert "ts_ms" in content
-                    assert "cpu_usage" in content
-                    assert "," in content
-                elif fmt == "json":
-                    # For denet, json format might not be an array but JSON object format
-                    assert "{" in content
-                    assert "}" in content
-                elif fmt == "jsonl":
-                    # JSONL has one JSON object per line
-                    assert "{" in content
-                    assert "}" in content
+                assert "{" in content
+                assert "}" in content
 
     def test_without_children(self, temp_output_file):
         """Test execution without monitoring child processes."""

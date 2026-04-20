@@ -21,15 +21,12 @@ fn test_output_format_from_str() {
         OutputFormat::from_str("jsonlines").unwrap(),
         OutputFormat::JsonLines
     );
-    assert_eq!(OutputFormat::from_str("csv").unwrap(), OutputFormat::Csv);
-
     // Test case insensitivity
     assert_eq!(OutputFormat::from_str("JSON").unwrap(), OutputFormat::Json);
     assert_eq!(
         OutputFormat::from_str("JSONL").unwrap(),
         OutputFormat::JsonLines
     );
-    assert_eq!(OutputFormat::from_str("CSV").unwrap(), OutputFormat::Csv);
 
     // Test invalid format
     let result = OutputFormat::from_str("invalid");
@@ -46,7 +43,6 @@ fn test_output_format_from_str() {
 fn test_output_format_display() {
     assert_eq!(OutputFormat::Json.to_string(), "json");
     assert_eq!(OutputFormat::JsonLines.to_string(), "jsonl");
-    assert_eq!(OutputFormat::Csv.to_string(), "csv");
 }
 
 #[test]
@@ -185,13 +181,6 @@ fn test_output_config_builder() {
     assert!(!config.update_in_place);
     assert!(config.write_metadata);
 
-    // Test format_str method
-    let result = OutputConfigBuilder::default().format_str("csv");
-
-    assert!(result.is_ok());
-    let config = result.unwrap().build();
-    assert_eq!(config.format, OutputFormat::Csv);
-
     // Test format_str with invalid value
     let result = OutputConfigBuilder::default().format_str("invalid");
 
@@ -229,7 +218,7 @@ fn test_denet_config_builder() {
     };
 
     let output_config = OutputConfig {
-        format: OutputFormat::Csv,
+        format: OutputFormat::Json,
         quiet: true,
         ..OutputConfig::default()
     };

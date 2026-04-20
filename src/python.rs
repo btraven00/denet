@@ -422,62 +422,6 @@ impl PyProcessMonitor {
                 file.write_all(json_array.as_bytes())
                     .map_err(map_io_error)?;
             }
-            OutputFormat::Csv => {
-                // Write CSV header
-                writeln!(file, "ts_ms,cpu_usage,mem_rss_kb,mem_vms_kb,disk_read_bytes,disk_write_bytes,sys_net_rx_bytes,sys_net_tx_bytes,thread_count,uptime_secs")
-                    .map_err(map_io_error)?;
-
-                // Write data rows
-                for metrics_json in &self.samples {
-                    // Parse each JSON string to extract values
-                    if let Ok(metrics) = serde_json::from_str::<serde_json::Value>(metrics_json) {
-                        // Extract values with fallbacks to 0
-                        let ts_ms = metrics.get("ts_ms").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let cpu_usage = metrics
-                            .get("cpu_usage")
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(0.0);
-                        let mem_rss_kb = metrics
-                            .get("mem_rss_kb")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        let mem_vms_kb = metrics
-                            .get("mem_vms_kb")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        let disk_read_bytes = metrics
-                            .get("disk_read_bytes")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        let disk_write_bytes = metrics
-                            .get("disk_write_bytes")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        let sys_net_rx_bytes = metrics
-                            .get("sys_net_rx_bytes")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        let sys_net_tx_bytes = metrics
-                            .get("sys_net_tx_bytes")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        let thread_count = metrics
-                            .get("thread_count")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-                        let uptime_secs = metrics
-                            .get("uptime_secs")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-
-                        writeln!(
-                            file,
-                            "{ts_ms},{cpu_usage},{mem_rss_kb},{mem_vms_kb},{disk_read_bytes},{disk_write_bytes},{sys_net_rx_bytes},{sys_net_tx_bytes},{thread_count},{uptime_secs}"
-                        )
-                        .map_err(map_io_error)?;
-                    }
-                }
-            }
             OutputFormat::JsonLines => {
                 // Default to jsonl (one JSON object per line)
                 // The samples are already JSON strings, so just write them

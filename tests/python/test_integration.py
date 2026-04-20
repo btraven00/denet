@@ -93,7 +93,7 @@ class TestExecuteWithMonitoring:
 
     def test_output_format_integration(self, tmp_path):
         """Test different output formats work end-to-end."""
-        formats = ["jsonl", "json", "csv"]
+        formats = ["jsonl", "json"]
 
         for fmt in formats:
             output_file = tmp_path / f"test_output.{fmt}"

@@ -212,28 +212,6 @@ class TestProcessMonitorFileOutput:
         assert isinstance(data, list)
         assert len(data) > 0
 
-    def test_save_samples_csv(self, tmp_path):
-        """Test saving samples in CSV format."""
-        monitor = denet.ProcessMonitor(
-            cmd=["sleep", "0.2"], base_interval_ms=50, max_interval_ms=1000, store_in_memory=True
-        )
-
-        # Take samples
-        for _ in range(3):
-            monitor.sample_once()
-            time.sleep(0.05)
-
-        temp_file = tmp_path / "test_samples.csv"
-
-        monitor.save_samples(str(temp_file), "csv")
-        assert temp_file.exists()
-
-        with open(temp_file, "r") as f:
-            lines = [line.strip() for line in f if line.strip()]
-
-        assert len(lines) > 0
-        # First line should be header
-        assert "ts_ms" in lines[0] or "cpu_usage" in lines[0]
 
 
 class TestProcessMonitorSummary:

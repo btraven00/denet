@@ -370,7 +370,7 @@ class TestBackwardsCompatibilityAPI:
         monitor.sample_once()
 
         # Test save operations in different formats
-        formats = ["jsonl", "json", "csv"]
+        formats = ["jsonl", "json"]
         for fmt in formats:
             temp_file = tmp_path / f"test_output.{fmt}"
 

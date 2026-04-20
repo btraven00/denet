@@ -14,7 +14,6 @@ pub enum OutputFormat {
     #[default]
     JsonLines,
     Json,
-    Csv,
 }
 
 impl std::str::FromStr for OutputFormat {
@@ -24,7 +23,6 @@ impl std::str::FromStr for OutputFormat {
         match s.to_lowercase().as_str() {
             "json" => Ok(OutputFormat::Json),
             "jsonl" | "jsonlines" => Ok(OutputFormat::JsonLines),
-            "csv" => Ok(OutputFormat::Csv),
             _ => Err(DenetError::InvalidConfiguration(format!(
                 "Unknown output format: {s}"
             ))),
@@ -37,7 +35,6 @@ impl std::fmt::Display for OutputFormat {
         match self {
             OutputFormat::Json => write!(f, "json"),
             OutputFormat::JsonLines => write!(f, "jsonl"),
-            OutputFormat::Csv => write!(f, "csv"),
         }
     }
 }
@@ -320,15 +317,12 @@ mod tests {
             OutputFormat::from_str("jsonlines").unwrap(),
             OutputFormat::JsonLines
         );
-        assert_eq!(OutputFormat::from_str("csv").unwrap(), OutputFormat::Csv);
-
         // Test case insensitivity
         assert_eq!(OutputFormat::from_str("JSON").unwrap(), OutputFormat::Json);
         assert_eq!(
             OutputFormat::from_str("JSONL").unwrap(),
             OutputFormat::JsonLines
         );
-        assert_eq!(OutputFormat::from_str("CSV").unwrap(), OutputFormat::Csv);
 
         // Test invalid format
         let result = OutputFormat::from_str("invalid");
@@ -339,7 +333,6 @@ mod tests {
     fn test_output_format_display() {
         assert_eq!(OutputFormat::Json.to_string(), "json");
         assert_eq!(OutputFormat::JsonLines.to_string(), "jsonl");
-        assert_eq!(OutputFormat::Csv.to_string(), "csv");
     }
 
     #[test]
@@ -500,10 +493,10 @@ mod tests {
 
     #[test]
     fn test_output_config_builder_format_str() {
-        let result = OutputConfigBuilder::default().format_str("csv");
+        let result = OutputConfigBuilder::default().format_str("jsonl");
         assert!(result.is_ok());
         let config = result.unwrap().build();
-        assert_eq!(config.format, OutputFormat::Csv);
+        assert_eq!(config.format, OutputFormat::JsonLines);
     }
 
     #[test]
@@ -548,7 +541,7 @@ mod tests {
             ..Default::default()
         };
         let output_config = OutputConfig {
-            format: OutputFormat::Csv,
+            format: OutputFormat::Json,
             ..Default::default()
         };
 
