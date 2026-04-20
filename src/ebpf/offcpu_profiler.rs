@@ -271,24 +271,6 @@ impl OffCpuProfiler {
             }
         }
 
-        // Cache memory maps for all monitored PIDs
-        #[cfg(feature = "ebpf")]
-        for pid in &pids {
-            profiler.memory_map_cache.refresh_maps_for_pid(*pid);
-        }
-
-        // Cache memory maps for all monitored PIDs
-        #[cfg(feature = "ebpf")]
-        for pid in &pids {
-            profiler.memory_map_cache.refresh_maps_for_pid(*pid);
-        }
-
-        // Cache memory maps for all monitored PIDs
-        #[cfg(feature = "ebpf")]
-        for pid in &pids {
-            profiler.memory_map_cache.refresh_maps_for_pid(*pid);
-        }
-
         // Initialize eBPF if the feature is enabled
         #[cfg(feature = "ebpf")]
         {
