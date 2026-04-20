@@ -38,8 +38,8 @@ class TestSummaryFromMetricsJson:
             "max_threads",
             "total_disk_read_bytes",
             "total_disk_write_bytes",
-            "total_net_rx_bytes",
-            "total_net_tx_bytes",
+            "total_sys_net_rx_bytes",
+            "total_sys_net_tx_bytes",
             "peak_mem_rss_kb",
             "avg_cpu_usage",
         ]
@@ -391,5 +391,5 @@ class TestSummaryDataIntegrity:
         # Should use the highest cumulative values
         assert summary["total_disk_read_bytes"] == 4096
         assert summary["total_disk_write_bytes"] == 8192
-        assert summary["total_net_rx_bytes"] == 2048
-        assert summary["total_net_tx_bytes"] == 1024
+        assert summary["total_sys_net_rx_bytes"] == 2048
+        assert summary["total_sys_net_tx_bytes"] == 1024
