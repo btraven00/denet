@@ -76,9 +76,7 @@ fn target_arch_define(cargo_arch: &str) -> &'static str {
         "powerpc64" => "__TARGET_ARCH_powerpc",
         "riscv64" => "__TARGET_ARCH_riscv",
         "s390x" => "__TARGET_ARCH_s390",
-        other => panic!(
-            "Unsupported target arch for eBPF: {other}. Add a mapping in build.rs."
-        ),
+        other => panic!("Unsupported target arch for eBPF: {other}. Add a mapping in build.rs."),
     }
 }
 
@@ -97,8 +95,8 @@ fn compile_ebpf_programs() {
     // the programs keep their `#include <bpf/bpf_helpers.h>` spelling.
     let vendored_include = PathBuf::from(&manifest_dir).join("src/ebpf/include");
 
-    let target_arch = env::var("CARGO_CFG_TARGET_ARCH")
-        .expect("CARGO_CFG_TARGET_ARCH must be set by cargo");
+    let target_arch =
+        env::var("CARGO_CFG_TARGET_ARCH").expect("CARGO_CFG_TARGET_ARCH must be set by cargo");
     let arch_define = format!("-D{}", target_arch_define(&target_arch));
 
     // On Debian/Ubuntu multiarch layouts, <asm/types.h> lives under
