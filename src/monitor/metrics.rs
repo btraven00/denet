@@ -211,14 +211,17 @@ impl Default for AggregatedMetrics {
     }
 }
 
-/// Average syscall intensity ratios across a monitoring run.
+/// Average syscall category fractions and rate across a monitoring run.
+/// Each `avg_*_syscall_fraction` field is the mean of (category_count / total_syscalls)
+/// across all samples — a value in [0.0, 1.0]. They do not sum to 1.0 because
+/// uncategorized syscalls are excluded. `avg_syscall_rate_per_sec` is unbounded.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SyscallIntensitySummary {
     pub avg_syscall_rate_per_sec: f64,
-    pub avg_io_intensity: f64,
-    pub avg_memory_intensity: f64,
-    pub avg_cpu_intensity: f64,
-    pub avg_network_intensity: f64,
+    pub avg_io_syscall_fraction: f64,
+    pub avg_memory_syscall_fraction: f64,
+    pub avg_cpu_syscall_fraction: f64,
+    pub avg_network_syscall_fraction: f64,
 }
 
 /// Summarizes metrics collected during a monitoring session
@@ -376,11 +379,16 @@ impl Summary {
                         .map(|a| a.syscall_rate_per_sec)
                         .sum::<f64>()
                         / n,
-                    avg_io_intensity: analyses.iter().map(|a| a.io_intensity).sum::<f64>() / n,
-                    avg_memory_intensity: analyses.iter().map(|a| a.memory_intensity).sum::<f64>()
+                    avg_io_syscall_fraction: analyses.iter().map(|a| a.io_intensity).sum::<f64>()
                         / n,
-                    avg_cpu_intensity: analyses.iter().map(|a| a.cpu_intensity).sum::<f64>() / n,
-                    avg_network_intensity: analyses
+                    avg_memory_syscall_fraction: analyses
+                        .iter()
+                        .map(|a| a.memory_intensity)
+                        .sum::<f64>()
+                        / n,
+                    avg_cpu_syscall_fraction: analyses.iter().map(|a| a.cpu_intensity).sum::<f64>()
+                        / n,
+                    avg_network_syscall_fraction: analyses
                         .iter()
                         .map(|a| a.network_intensity)
                         .sum::<f64>()
