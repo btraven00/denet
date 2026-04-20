@@ -11,10 +11,19 @@ use std::collections::HashMap;
 #[cfg(feature = "ebpf")]
 use aya::{maps::HashMap as BpfHashMap, Ebpf, EbpfLoader};
 
-// Include compiled eBPF bytecode at compile time
+// Include compiled eBPF bytecode with 8-byte alignment required by the `object`
+// crate's ELF parser (it casts the slice directly to FileHeader64).
 #[cfg(feature = "ebpf")]
-const SYSCALL_TRACER_BYTECODE: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/ebpf/syscall_tracer.o"));
+#[repr(align(8))]
+struct AlignedBytes<const N: usize>([u8; N]);
+
+#[cfg(feature = "ebpf")]
+static SYSCALL_TRACER_BYTECODE_ALIGNED: AlignedBytes<
+    { include_bytes!(concat!(env!("OUT_DIR"), "/ebpf/syscall_tracer.o")).len() },
+> = AlignedBytes(*include_bytes!(concat!(env!("OUT_DIR"), "/ebpf/syscall_tracer.o")));
+
+#[cfg(feature = "ebpf")]
+const SYSCALL_TRACER_BYTECODE: &[u8] = &SYSCALL_TRACER_BYTECODE_ALIGNED.0;
 
 /// Syscall tracker using eBPF
 #[cfg(feature = "ebpf")]
@@ -36,6 +45,9 @@ pub struct SyscallTracker {
 
     #[cfg(feature = "ebpf")]
     _attached_programs: bool,
+
+    #[cfg(feature = "ebpf")]
+    init_error: Option<String>,
 }
 
 #[cfg(feature = "ebpf")]
@@ -104,9 +116,11 @@ impl SyscallTracker {
                         monitored_pids: pids.clone(),
                         _last_metrics: HashMap::new(),
                         _attached_programs: true,
+                        init_error: None,
                     })
                 }
                 Err(e) => {
+                    let init_error_msg = e.to_string();
                     log::warn!("Failed to initialize eBPF syscall tracking: {}", e);
                     crate::ebpf::debug::debug_println(&format!(
                         "Failed to initialize eBPF syscall tracking: {}",
@@ -164,6 +178,7 @@ impl SyscallTracker {
                         monitored_pids: pids.clone(),
                         _last_metrics: HashMap::new(),
                         _attached_programs: false,
+                        init_error: Some(init_error_msg),
                     })
                 }
             }
@@ -636,8 +651,14 @@ impl SyscallTracker {
                     ));
                 }
 
+                let mut chain = format!("{}", e);
+                let mut src: Option<&dyn std::error::Error> = std::error::Error::source(&e);
+                while let Some(s) = src {
+                    chain.push_str(&format!(" -> {}", s));
+                    src = s.source();
+                }
                 return Err(crate::error::DenetError::EbpfInitError(
-                    format!("Failed to load eBPF program: {}. Ensure you have CAP_BPF capability or run as root.", e)
+                    format!("Failed to load eBPF program: {}. Ensure you have CAP_BPF capability or run as root.", chain)
                 ));
             }
         };
@@ -925,10 +946,15 @@ impl SyscallTracker {
                     .trim()
                     .to_string();
 
+                let cause = self
+                    .init_error
+                    .as_deref()
+                    .unwrap_or("no init error captured");
                 return EbpfMetrics::error(&format!(
-                    "eBPF not initialized. Running as root: {}, Capabilities: {}, unprivileged_bpf_disabled: {}, tracefs access: {}. Please run with root privileges or set CAP_BPF capability.",
+                    "eBPF not initialized: {}. Running as root: {}, Capabilities: {}, unprivileged_bpf_disabled: {}, tracefs access: {}. Please run with root privileges or set CAP_BPF capability.",
+                    cause,
                     euid == 0,
-                    cap_str,
+                    cap_str.trim(),
                     kernel_bpf,
                     tracefs_access
                 ));

@@ -156,8 +156,10 @@ sudo denet --enable-ebpf run python io_bound_script.py
 # With JSON output
 sudo denet --enable-ebpf --json run sleep 5
 
-# Set capabilities on the binary to avoid running as root every time
-sudo setcap cap_bpf,cap_perfmon=ep ./target/debug/denet
+# Set capabilities on the binary to avoid running as root every time.
+# cap_dac_read_search is needed to read /sys/kernel/tracing/events/*/id
+# (mode 0400, root-owned) when attaching syscall tracepoints.
+sudo setcap cap_bpf,cap_perfmon,cap_dac_read_search=ep ./target/debug/denet
 denet --enable-ebpf run sleep 5
 ```
 
