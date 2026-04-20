@@ -211,6 +211,16 @@ impl Default for AggregatedMetrics {
     }
 }
 
+/// Average syscall intensity ratios across a monitoring run.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SyscallIntensitySummary {
+    pub avg_syscall_rate_per_sec: f64,
+    pub avg_io_intensity: f64,
+    pub avg_memory_intensity: f64,
+    pub avg_cpu_intensity: f64,
+    pub avg_network_intensity: f64,
+}
+
 /// Summarizes metrics collected during a monitoring session
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Summary {
@@ -234,6 +244,10 @@ pub struct Summary {
     pub peak_mem_rss_kb: u64,
     /// Average CPU usage (percent)
     pub avg_cpu_usage: f32,
+    /// Averaged syscall intensity ratios (only present when eBPF data was collected)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syscalls: Option<SyscallIntensitySummary>,
+
     /// GPU monitoring summary
     #[cfg(feature = "gpu")]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -301,6 +315,7 @@ impl Summary {
             } else {
                 total_cpu / metrics.len() as f32
             },
+            syscalls: None,
             gpu,
         }
     }
@@ -343,6 +358,39 @@ impl Summary {
         #[cfg(not(feature = "gpu"))]
         let gpu = None;
 
+        #[cfg(feature = "ebpf")]
+        let syscalls = {
+            let analyses: Vec<&crate::ebpf::metrics::SyscallAnalysis> = metrics
+                .iter()
+                .filter_map(|m| m.ebpf.as_ref())
+                .filter_map(|e| e.syscalls.as_ref())
+                .filter_map(|s| s.analysis.as_ref())
+                .collect();
+            if analyses.is_empty() {
+                None
+            } else {
+                let n = analyses.len() as f64;
+                Some(SyscallIntensitySummary {
+                    avg_syscall_rate_per_sec: analyses
+                        .iter()
+                        .map(|a| a.syscall_rate_per_sec)
+                        .sum::<f64>()
+                        / n,
+                    avg_io_intensity: analyses.iter().map(|a| a.io_intensity).sum::<f64>() / n,
+                    avg_memory_intensity: analyses.iter().map(|a| a.memory_intensity).sum::<f64>()
+                        / n,
+                    avg_cpu_intensity: analyses.iter().map(|a| a.cpu_intensity).sum::<f64>() / n,
+                    avg_network_intensity: analyses
+                        .iter()
+                        .map(|a| a.network_intensity)
+                        .sum::<f64>()
+                        / n,
+                })
+            }
+        };
+        #[cfg(not(feature = "ebpf"))]
+        let syscalls: Option<SyscallIntensitySummary> = None;
+
         Self {
             total_time_secs: elapsed_time,
             sample_count: metrics.len(),
@@ -358,6 +406,7 @@ impl Summary {
             } else {
                 total_cpu / metrics.len() as f32
             },
+            syscalls,
             gpu,
         }
     }
@@ -376,6 +425,7 @@ impl Default for Summary {
             total_net_tx_bytes: 0,
             peak_mem_rss_kb: 0,
             avg_cpu_usage: 0.0,
+            syscalls: None,
             gpu: None,
         }
     }
