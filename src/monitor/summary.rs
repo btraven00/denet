@@ -132,11 +132,11 @@ mod tests {
         // Write some test metrics
         writeln!(
             temp_file,
-            r#"{{"ts_ms":1000,"cpu_usage":50.0,"mem_rss_kb":1024,"mem_vms_kb":2048,"disk_read_bytes":0,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":1,"uptime_secs":10,"cpu_core":null}}"#
+            r#"{{"ts_ms":1000,"cpu_usage":50.0,"mem_rss_kb":1024,"mem_vms_kb":2048,"disk_read_bytes":0,"disk_write_bytes":0,"sys_net_rx_bytes":0,"sys_net_tx_bytes":0,"thread_count":1,"uptime_secs":10,"cpu_core":null}}"#
         )?;
         writeln!(
             temp_file,
-            r#"{{"ts_ms":2000,"cpu_usage":75.0,"mem_rss_kb":1536,"mem_vms_kb":3072,"disk_read_bytes":100,"disk_write_bytes":200,"net_rx_bytes":50,"net_tx_bytes":75,"thread_count":2,"uptime_secs":20,"cpu_core":null}}"#
+            r#"{{"ts_ms":2000,"cpu_usage":75.0,"mem_rss_kb":1536,"mem_vms_kb":3072,"disk_read_bytes":100,"disk_write_bytes":200,"sys_net_rx_bytes":50,"sys_net_tx_bytes":75,"thread_count":2,"uptime_secs":20,"cpu_core":null}}"#
         )?;
 
         temp_file.flush()?;
@@ -154,8 +154,8 @@ mod tests {
     #[test]
     fn test_summary_from_json_strings() -> Result<()> {
         let json_strings = vec![
-            r#"{"ts_ms":1000,"cpu_usage":25.0,"mem_rss_kb":512,"mem_vms_kb":1024,"disk_read_bytes":0,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":1,"uptime_secs":5,"cpu_core":null}"#.to_string(),
-            r#"{"ts_ms":2000,"cpu_usage":50.0,"mem_rss_kb":768,"mem_vms_kb":1536,"disk_read_bytes":50,"disk_write_bytes":100,"net_rx_bytes":25,"net_tx_bytes":50,"thread_count":1,"uptime_secs":10,"cpu_core":null}"#.to_string(),
+            r#"{"ts_ms":1000,"cpu_usage":25.0,"mem_rss_kb":512,"mem_vms_kb":1024,"disk_read_bytes":0,"disk_write_bytes":0,"sys_net_rx_bytes":0,"sys_net_tx_bytes":0,"thread_count":1,"uptime_secs":5,"cpu_core":null}"#.to_string(),
+            r#"{"ts_ms":2000,"cpu_usage":50.0,"mem_rss_kb":768,"mem_vms_kb":1536,"disk_read_bytes":50,"disk_write_bytes":100,"sys_net_rx_bytes":25,"sys_net_tx_bytes":50,"thread_count":1,"uptime_secs":10,"cpu_core":null}"#.to_string(),
         ];
 
         let summary = SummaryGenerator::from_json_strings(&json_strings, 1.0)?;
@@ -175,11 +175,11 @@ mod tests {
         // Write test metrics as Metrics, not AggregatedMetrics since that's what gets parsed
         writeln!(
             temp_file,
-            r#"{{"ts_ms":1000,"cpu_usage":30.0,"mem_rss_kb":2048,"mem_vms_kb":4096,"disk_read_bytes":0,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":3,"uptime_secs":15,"cpu_core":null}}"#
+            r#"{{"ts_ms":1000,"cpu_usage":30.0,"mem_rss_kb":2048,"mem_vms_kb":4096,"disk_read_bytes":0,"disk_write_bytes":0,"sys_net_rx_bytes":0,"sys_net_tx_bytes":0,"thread_count":3,"uptime_secs":15,"cpu_core":null}}"#
         )?;
         writeln!(
             temp_file,
-            r#"{{"ts_ms":3000,"cpu_usage":60.0,"mem_rss_kb":3072,"mem_vms_kb":6144,"disk_read_bytes":200,"disk_write_bytes":400,"net_rx_bytes":100,"net_tx_bytes":150,"thread_count":4,"uptime_secs":25,"cpu_core":null}}"#
+            r#"{{"ts_ms":3000,"cpu_usage":60.0,"mem_rss_kb":3072,"mem_vms_kb":6144,"disk_read_bytes":200,"disk_write_bytes":400,"sys_net_rx_bytes":100,"sys_net_tx_bytes":150,"thread_count":4,"uptime_secs":25,"cpu_core":null}}"#
         )?;
 
         temp_file.flush()?;
@@ -202,7 +202,7 @@ mod tests {
         // Write nested structure with aggregated field
         writeln!(
             temp_file,
-            r#"{{"parent":null,"children":[],"aggregated":{{"ts_ms":1000,"cpu_usage":40.0,"mem_rss_kb":1024,"mem_vms_kb":2048,"disk_read_bytes":0,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":2,"process_count":1,"uptime_secs":10,"ebpf":null}}}}"#
+            r#"{{"parent":null,"children":[],"aggregated":{{"ts_ms":1000,"cpu_usage":40.0,"mem_rss_kb":1024,"mem_vms_kb":2048,"disk_read_bytes":0,"disk_write_bytes":0,"sys_net_rx_bytes":0,"sys_net_tx_bytes":0,"thread_count":2,"process_count":1,"uptime_secs":10,"ebpf":null}}}}"#
         )?;
 
         temp_file.flush()?;
@@ -241,12 +241,12 @@ mod tests {
         writeln!(temp_file)?; // Empty line
         writeln!(
             temp_file,
-            r#"{{"ts_ms":1000,"cpu_usage":25.0,"mem_rss_kb":512,"mem_vms_kb":1024,"disk_read_bytes":0,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":1,"uptime_secs":10,"cpu_core":null}}"#
+            r#"{{"ts_ms":1000,"cpu_usage":25.0,"mem_rss_kb":512,"mem_vms_kb":1024,"disk_read_bytes":0,"disk_write_bytes":0,"sys_net_rx_bytes":0,"sys_net_tx_bytes":0,"thread_count":1,"uptime_secs":10,"cpu_core":null}}"#
         )?;
         writeln!(temp_file, "   ")?; // Whitespace only line
         writeln!(
             temp_file,
-            r#"{{"ts_ms":2000,"cpu_usage":50.0,"mem_rss_kb":768,"mem_vms_kb":1536,"disk_read_bytes":50,"disk_write_bytes":100,"net_rx_bytes":25,"net_tx_bytes":50,"thread_count":1,"uptime_secs":15,"cpu_core":null}}"#
+            r#"{{"ts_ms":2000,"cpu_usage":50.0,"mem_rss_kb":768,"mem_vms_kb":1536,"disk_read_bytes":50,"disk_write_bytes":100,"sys_net_rx_bytes":25,"sys_net_tx_bytes":50,"thread_count":1,"uptime_secs":15,"cpu_core":null}}"#
         )?;
 
         temp_file.flush()?;
@@ -278,8 +278,8 @@ mod tests {
     #[test]
     fn test_summary_from_json_strings_with_aggregated() -> Result<()> {
         let json_strings = vec![
-            r#"{"ts_ms":1000,"cpu_usage":20.0,"mem_rss_kb":1024,"mem_vms_kb":2048,"disk_read_bytes":0,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":2,"uptime_secs":10,"cpu_core":null}"#.to_string(),
-            r#"{"ts_ms":2000,"cpu_usage":40.0,"mem_rss_kb":1536,"mem_vms_kb":3072,"disk_read_bytes":100,"disk_write_bytes":200,"net_rx_bytes":50,"net_tx_bytes":75,"thread_count":3,"uptime_secs":15,"cpu_core":null}"#.to_string(),
+            r#"{"ts_ms":1000,"cpu_usage":20.0,"mem_rss_kb":1024,"mem_vms_kb":2048,"disk_read_bytes":0,"disk_write_bytes":0,"sys_net_rx_bytes":0,"sys_net_tx_bytes":0,"thread_count":2,"uptime_secs":10,"cpu_core":null}"#.to_string(),
+            r#"{"ts_ms":2000,"cpu_usage":40.0,"mem_rss_kb":1536,"mem_vms_kb":3072,"disk_read_bytes":100,"disk_write_bytes":200,"sys_net_rx_bytes":50,"sys_net_tx_bytes":75,"thread_count":3,"uptime_secs":15,"cpu_core":null}"#.to_string(),
         ];
 
         let summary = SummaryGenerator::from_json_strings(&json_strings, 1.5)?;
@@ -295,7 +295,7 @@ mod tests {
     #[test]
     fn test_summary_from_json_strings_with_nested() -> Result<()> {
         let json_strings = vec![
-            r#"{"aggregated":{"ts_ms":1000,"cpu_usage":35.0,"mem_rss_kb":2048,"mem_vms_kb":4096,"disk_read_bytes":0,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":4,"process_count":2,"uptime_secs":20,"ebpf":null}}"#.to_string(),
+            r#"{"aggregated":{"ts_ms":1000,"cpu_usage":35.0,"mem_rss_kb":2048,"mem_vms_kb":4096,"disk_read_bytes":0,"disk_write_bytes":0,"sys_net_rx_bytes":0,"sys_net_tx_bytes":0,"thread_count":4,"process_count":2,"uptime_secs":20,"ebpf":null}}"#.to_string(),
         ];
 
         let summary = SummaryGenerator::from_json_strings(&json_strings, 2.0)?;
@@ -311,7 +311,7 @@ mod tests {
     fn test_summary_from_json_strings_invalid_json() -> Result<()> {
         let json_strings = vec![
             "invalid json".to_string(),
-            r#"{"ts_ms":1000,"cpu_usage":25.0,"mem_rss_kb":512,"mem_vms_kb":1024,"disk_read_bytes":0,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":1,"uptime_secs":10,"cpu_core":null}"#.to_string(),
+            r#"{"ts_ms":1000,"cpu_usage":25.0,"mem_rss_kb":512,"mem_vms_kb":1024,"disk_read_bytes":0,"disk_write_bytes":0,"sys_net_rx_bytes":0,"sys_net_tx_bytes":0,"thread_count":1,"uptime_secs":10,"cpu_core":null}"#.to_string(),
         ];
 
         let summary = SummaryGenerator::from_json_strings(&json_strings, 1.0)?;

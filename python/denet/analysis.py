@@ -48,8 +48,8 @@ def aggregate_metrics(
             "mem_vms_kb",
             "disk_read_bytes",
             "disk_write_bytes",
-            "net_rx_bytes",
-            "net_tx_bytes",
+            "sys_net_rx_bytes",
+            "sys_net_tx_bytes",
             "thread_count",
             "uptime_secs",
         ]
@@ -179,11 +179,11 @@ def resource_utilization(metrics: list[dict[str, Any]]) -> dict[str, Any]:
         result["total_write_mb"] = metrics[-1]["disk_write_bytes"] / (1024 * 1024)
 
     # Network statistics
-    if all("net_rx_bytes" in metric for metric in metrics):
-        result["total_net_rx_mb"] = metrics[-1]["net_rx_bytes"] / (1024 * 1024)
+    if all("sys_net_rx_bytes" in metric for metric in metrics):
+        result["total_sys_net_rx_mb"] = metrics[-1]["sys_net_rx_bytes"] / (1024 * 1024)
 
-    if all("net_tx_bytes" in metric for metric in metrics):
-        result["total_net_tx_mb"] = metrics[-1]["net_tx_bytes"] / (1024 * 1024)
+    if all("sys_net_tx_bytes" in metric for metric in metrics):
+        result["total_sys_net_tx_mb"] = metrics[-1]["sys_net_tx_bytes"] / (1024 * 1024)
 
     # Thread statistics
     if all("thread_count" in metric for metric in metrics):
