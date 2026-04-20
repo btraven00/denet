@@ -424,7 +424,7 @@ impl PyProcessMonitor {
             }
             OutputFormat::Csv => {
                 // Write CSV header
-                writeln!(file, "ts_ms,cpu_usage,mem_rss_kb,mem_vms_kb,disk_read_bytes,disk_write_bytes,net_rx_bytes,net_tx_bytes,thread_count,uptime_secs")
+                writeln!(file, "ts_ms,cpu_usage,mem_rss_kb,mem_vms_kb,disk_read_bytes,disk_write_bytes,sys_net_rx_bytes,sys_net_tx_bytes,thread_count,uptime_secs")
                     .map_err(map_io_error)?;
 
                 // Write data rows
@@ -453,12 +453,12 @@ impl PyProcessMonitor {
                             .get("disk_write_bytes")
                             .and_then(|v| v.as_u64())
                             .unwrap_or(0);
-                        let net_rx_bytes = metrics
-                            .get("net_rx_bytes")
+                        let sys_net_rx_bytes = metrics
+                            .get("sys_net_rx_bytes")
                             .and_then(|v| v.as_u64())
                             .unwrap_or(0);
-                        let net_tx_bytes = metrics
-                            .get("net_tx_bytes")
+                        let sys_net_tx_bytes = metrics
+                            .get("sys_net_tx_bytes")
                             .and_then(|v| v.as_u64())
                             .unwrap_or(0);
                         let thread_count = metrics
@@ -472,7 +472,7 @@ impl PyProcessMonitor {
 
                         writeln!(
                             file,
-                            "{ts_ms},{cpu_usage},{mem_rss_kb},{mem_vms_kb},{disk_read_bytes},{disk_write_bytes},{net_rx_bytes},{net_tx_bytes},{thread_count},{uptime_secs}"
+                            "{ts_ms},{cpu_usage},{mem_rss_kb},{mem_vms_kb},{disk_read_bytes},{disk_write_bytes},{sys_net_rx_bytes},{sys_net_tx_bytes},{thread_count},{uptime_secs}"
                         )
                         .map_err(map_io_error)?;
                     }

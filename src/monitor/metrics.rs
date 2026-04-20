@@ -40,8 +40,8 @@ pub struct Metrics {
     pub mem_vms_kb: u64,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
-    pub net_rx_bytes: u64,
-    pub net_tx_bytes: u64,
+    pub sys_net_rx_bytes: u64,
+    pub sys_net_tx_bytes: u64,
     pub thread_count: usize,
     pub uptime_secs: u64,
     pub cpu_core: Option<u32>,
@@ -71,8 +71,8 @@ impl Metrics {
             mem_vms_kb: 0,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
-            net_rx_bytes: 0,
-            net_tx_bytes: 0,
+            sys_net_rx_bytes: 0,
+            sys_net_tx_bytes: 0,
             thread_count: 0,
             uptime_secs: 0,
             cpu_core: None,
@@ -113,8 +113,8 @@ pub struct AggregatedMetrics {
     pub mem_vms_kb: u64,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
-    pub net_rx_bytes: u64,
-    pub net_tx_bytes: u64,
+    pub sys_net_rx_bytes: u64,
+    pub sys_net_tx_bytes: u64,
     pub thread_count: usize,
     pub process_count: usize,
     pub uptime_secs: u64,
@@ -151,8 +151,8 @@ impl AggregatedMetrics {
         let mut mem_vms_kb = 0;
         let mut disk_read_bytes = 0;
         let mut disk_write_bytes = 0;
-        let mut net_rx_bytes = 0;
-        let mut net_tx_bytes = 0;
+        let mut sys_net_rx_bytes = 0;
+        let mut sys_net_tx_bytes = 0;
         let mut thread_count = 0;
         let mut max_uptime = 0;
 
@@ -162,8 +162,8 @@ impl AggregatedMetrics {
             mem_vms_kb += metric.mem_vms_kb;
             disk_read_bytes += metric.disk_read_bytes;
             disk_write_bytes += metric.disk_write_bytes;
-            net_rx_bytes += metric.net_rx_bytes;
-            net_tx_bytes += metric.net_tx_bytes;
+            sys_net_rx_bytes += metric.sys_net_rx_bytes;
+            sys_net_tx_bytes += metric.sys_net_tx_bytes;
             thread_count += metric.thread_count;
             max_uptime = max_uptime.max(metric.uptime_secs);
         }
@@ -175,8 +175,8 @@ impl AggregatedMetrics {
             mem_vms_kb,
             disk_read_bytes,
             disk_write_bytes,
-            net_rx_bytes,
-            net_tx_bytes,
+            sys_net_rx_bytes,
+            sys_net_tx_bytes,
             thread_count,
             process_count: metrics.len(),
             uptime_secs: max_uptime,
@@ -200,8 +200,8 @@ impl Default for AggregatedMetrics {
             mem_vms_kb: 0,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
-            net_rx_bytes: 0,
-            net_tx_bytes: 0,
+            sys_net_rx_bytes: 0,
+            sys_net_tx_bytes: 0,
             thread_count: 0,
             process_count: 0,
             uptime_secs: 0,
@@ -240,9 +240,9 @@ pub struct Summary {
     /// Cumulative disk write bytes
     pub total_disk_write_bytes: u64,
     /// Cumulative network received bytes
-    pub total_net_rx_bytes: u64,
+    pub total_sys_net_rx_bytes: u64,
     /// Cumulative network transmitted bytes
-    pub total_net_tx_bytes: u64,
+    pub total_sys_net_tx_bytes: u64,
     /// Maximum memory RSS observed across all processes (in KB)
     pub peak_mem_rss_kb: u64,
     /// Average CPU usage (percent)
@@ -310,8 +310,8 @@ impl Summary {
             max_threads,
             total_disk_read_bytes: last_metrics.disk_read_bytes,
             total_disk_write_bytes: last_metrics.disk_write_bytes,
-            total_net_rx_bytes: last_metrics.net_rx_bytes,
-            total_net_tx_bytes: last_metrics.net_tx_bytes,
+            total_sys_net_rx_bytes: last_metrics.sys_net_rx_bytes,
+            total_sys_net_tx_bytes: last_metrics.sys_net_tx_bytes,
             peak_mem_rss_kb,
             avg_cpu_usage: if metrics.is_empty() {
                 0.0
@@ -406,8 +406,8 @@ impl Summary {
             max_threads,
             total_disk_read_bytes: last_metrics.disk_read_bytes,
             total_disk_write_bytes: last_metrics.disk_write_bytes,
-            total_net_rx_bytes: last_metrics.net_rx_bytes,
-            total_net_tx_bytes: last_metrics.net_tx_bytes,
+            total_sys_net_rx_bytes: last_metrics.sys_net_rx_bytes,
+            total_sys_net_tx_bytes: last_metrics.sys_net_tx_bytes,
             peak_mem_rss_kb,
             avg_cpu_usage: if metrics.is_empty() {
                 0.0
@@ -429,8 +429,8 @@ impl Default for Summary {
             max_threads: 0,
             total_disk_read_bytes: 0,
             total_disk_write_bytes: 0,
-            total_net_rx_bytes: 0,
-            total_net_tx_bytes: 0,
+            total_sys_net_rx_bytes: 0,
+            total_sys_net_tx_bytes: 0,
             peak_mem_rss_kb: 0,
             avg_cpu_usage: 0.0,
             syscalls: None,
@@ -467,8 +467,8 @@ mod tests {
         assert_eq!(metrics.mem_vms_kb, 0);
         assert_eq!(metrics.disk_read_bytes, 0);
         assert_eq!(metrics.disk_write_bytes, 0);
-        assert_eq!(metrics.net_rx_bytes, 0);
-        assert_eq!(metrics.net_tx_bytes, 0);
+        assert_eq!(metrics.sys_net_rx_bytes, 0);
+        assert_eq!(metrics.sys_net_tx_bytes, 0);
         assert_eq!(metrics.thread_count, 0);
         assert_eq!(metrics.uptime_secs, 0);
         assert_eq!(metrics.cpu_core, None);
@@ -500,8 +500,8 @@ mod tests {
         metric.mem_vms_kb = 2048;
         metric.disk_read_bytes = 512;
         metric.disk_write_bytes = 256;
-        metric.net_rx_bytes = 128;
-        metric.net_tx_bytes = 64;
+        metric.sys_net_rx_bytes = 128;
+        metric.sys_net_tx_bytes = 64;
         metric.thread_count = 4;
         metric.uptime_secs = 60;
 
@@ -513,8 +513,8 @@ mod tests {
         assert_eq!(aggregated.mem_vms_kb, 2048);
         assert_eq!(aggregated.disk_read_bytes, 512);
         assert_eq!(aggregated.disk_write_bytes, 256);
-        assert_eq!(aggregated.net_rx_bytes, 128);
-        assert_eq!(aggregated.net_tx_bytes, 64);
+        assert_eq!(aggregated.sys_net_rx_bytes, 128);
+        assert_eq!(aggregated.sys_net_tx_bytes, 64);
         assert_eq!(aggregated.thread_count, 4);
         assert_eq!(aggregated.process_count, 1);
         assert_eq!(aggregated.uptime_secs, 60);
@@ -567,8 +567,8 @@ mod tests {
         assert_eq!(summary.max_threads, 0);
         assert_eq!(summary.total_disk_read_bytes, 0);
         assert_eq!(summary.total_disk_write_bytes, 0);
-        assert_eq!(summary.total_net_rx_bytes, 0);
-        assert_eq!(summary.total_net_tx_bytes, 0);
+        assert_eq!(summary.total_sys_net_rx_bytes, 0);
+        assert_eq!(summary.total_sys_net_tx_bytes, 0);
         assert_eq!(summary.peak_mem_rss_kb, 0);
         assert_eq!(summary.avg_cpu_usage, 0.0);
     }
@@ -597,8 +597,8 @@ mod tests {
         metric1.mem_rss_kb = 1000;
         metric1.disk_read_bytes = 500;
         metric1.disk_write_bytes = 250;
-        metric1.net_rx_bytes = 100;
-        metric1.net_tx_bytes = 50;
+        metric1.sys_net_rx_bytes = 100;
+        metric1.sys_net_tx_bytes = 50;
         metric1.thread_count = 4;
 
         let mut metric2 = Metrics::new();
@@ -606,8 +606,8 @@ mod tests {
         metric2.mem_rss_kb = 1500;
         metric2.disk_read_bytes = 1000;
         metric2.disk_write_bytes = 500;
-        metric2.net_rx_bytes = 200;
-        metric2.net_tx_bytes = 100;
+        metric2.sys_net_rx_bytes = 200;
+        metric2.sys_net_tx_bytes = 100;
         metric2.thread_count = 6;
 
         let metrics = vec![metric1, metric2];
@@ -619,8 +619,8 @@ mod tests {
         assert_eq!(summary.max_threads, 6);
         assert_eq!(summary.total_disk_read_bytes, 1000);
         assert_eq!(summary.total_disk_write_bytes, 500);
-        assert_eq!(summary.total_net_rx_bytes, 200);
-        assert_eq!(summary.total_net_tx_bytes, 100);
+        assert_eq!(summary.total_sys_net_rx_bytes, 200);
+        assert_eq!(summary.total_sys_net_tx_bytes, 100);
         assert_eq!(summary.peak_mem_rss_kb, 1500);
         assert_eq!(summary.avg_cpu_usage, 25.0);
     }
@@ -642,8 +642,8 @@ mod tests {
             mem_rss_kb: 2000,
             disk_read_bytes: 800,
             disk_write_bytes: 400,
-            net_rx_bytes: 150,
-            net_tx_bytes: 75,
+            sys_net_rx_bytes: 150,
+            sys_net_tx_bytes: 75,
             thread_count: 8,
             process_count: 2,
             ..Default::default()
@@ -654,8 +654,8 @@ mod tests {
             mem_rss_kb: 3000,
             disk_read_bytes: 1600,
             disk_write_bytes: 800,
-            net_rx_bytes: 300,
-            net_tx_bytes: 150,
+            sys_net_rx_bytes: 300,
+            sys_net_tx_bytes: 150,
             thread_count: 12,
             process_count: 3,
             ..Default::default()
@@ -670,8 +670,8 @@ mod tests {
         assert_eq!(summary.max_threads, 12);
         assert_eq!(summary.total_disk_read_bytes, 1600);
         assert_eq!(summary.total_disk_write_bytes, 800);
-        assert_eq!(summary.total_net_rx_bytes, 300);
-        assert_eq!(summary.total_net_tx_bytes, 150);
+        assert_eq!(summary.total_sys_net_rx_bytes, 300);
+        assert_eq!(summary.total_sys_net_tx_bytes, 150);
         assert_eq!(summary.peak_mem_rss_kb, 3000);
         assert_eq!(summary.avg_cpu_usage, 50.0);
     }

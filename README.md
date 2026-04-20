@@ -61,6 +61,15 @@ CPU usage is reported in a `top`-compatible format where 100% represents one ful
 
 This is consistent with standard tools like `top` and `htop`. For example, a process using 3 CPU cores at full capacity will show 300% CPU usage, regardless of how many cores your system has.
 
+### Understanding Network Metrics (`sys_net_rx_bytes` / `sys_net_tx_bytes`)
+
+Network I/O is reported as **namespace-wide** totals, not per-process. The values come from `/proc/<pid>/net/dev` when it exists, falling back to `/proc/net/dev`. This means:
+
+- **Containers (Docker, Podman, etc.)**: each container gets its own network namespace, so `sys_net_rx_bytes`/`sys_net_tx_bytes` reflect only traffic on that container's interfaces. Values are accurate for the monitored workload.
+- **Conda environments / venvs / bare processes**: these share the host network namespace. The numbers reflect all traffic on the host's interfaces, not just the monitored process. The `sys_net_` prefix signals this: it is a system-level counter scoped to the network namespace, not a process-level counter.
+
+If you need per-process socket-level attribution, eBPF (enabled with `--features ebpf --enable-ebpf`) tracks individual syscalls and can give more precise network activity signals via the syscall intensity metrics.
+
 ### Command-Line Interface
 
 ```bash

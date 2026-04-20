@@ -107,8 +107,8 @@ pub fn summary_from_json_file<P: AsRef<Path>>(path: P) -> io::Result<Summary> {
 pub struct IoBaseline {
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
-    pub net_rx_bytes: u64,
-    pub net_tx_bytes: u64,
+    pub sys_net_rx_bytes: u64,
+    pub sys_net_tx_bytes: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -116,8 +116,8 @@ pub struct ChildIoBaseline {
     pub pid: usize,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
-    pub net_rx_bytes: u64,
-    pub net_tx_bytes: u64,
+    pub sys_net_rx_bytes: u64,
+    pub sys_net_tx_bytes: u64,
 }
 
 // Main process monitor implementation
@@ -533,11 +533,11 @@ impl ProcessMonitor {
         };
 
         // Get network I/O
-        let current_net_rx = self.get_process_net_rx_bytes();
-        let current_net_tx = self.get_process_net_tx_bytes();
+        let current_net_rx = self.get_process_sys_net_rx_bytes();
+        let current_net_tx = self.get_process_sys_net_tx_bytes();
 
         // Handle I/O baseline for delta calculation
-        let (disk_read_bytes, disk_write_bytes, net_rx_bytes, net_tx_bytes) =
+        let (disk_read_bytes, disk_write_bytes, sys_net_rx_bytes, sys_net_tx_bytes) =
             if self.since_process_start {
                 // Show cumulative I/O since process start
                 (
@@ -553,16 +553,16 @@ impl ProcessMonitor {
                     (
                         current_disk_read.saturating_sub(baseline.disk_read_bytes),
                         current_disk_write.saturating_sub(baseline.disk_write_bytes),
-                        current_net_rx.saturating_sub(baseline.net_rx_bytes),
-                        current_net_tx.saturating_sub(baseline.net_tx_bytes),
+                        current_net_rx.saturating_sub(baseline.sys_net_rx_bytes),
+                        current_net_tx.saturating_sub(baseline.sys_net_tx_bytes),
                     )
                 } else {
                     // First sample - establish baseline
                     self.io_baseline = Some(IoBaseline {
                         disk_read_bytes: current_disk_read,
                         disk_write_bytes: current_disk_write,
-                        net_rx_bytes: current_net_rx,
-                        net_tx_bytes: current_net_tx,
+                        sys_net_rx_bytes: current_net_rx,
+                        sys_net_tx_bytes: current_net_tx,
                     });
                     (0, 0, 0, 0) // First sample shows 0 delta
                 }
@@ -591,8 +591,8 @@ impl ProcessMonitor {
             mem_vms_kb,
             disk_read_bytes,
             disk_write_bytes,
-            net_rx_bytes,
-            net_tx_bytes,
+            sys_net_rx_bytes,
+            sys_net_tx_bytes,
             thread_count,
             uptime_secs,
             cpu_core: Self::get_process_cpu_core(self.pid),
@@ -740,7 +740,7 @@ impl ProcessMonitor {
                 let current_net_tx = 0;
 
                 // Handle I/O baseline for child processes
-                let (disk_read_bytes, disk_write_bytes, net_rx_bytes, net_tx_bytes) =
+                let (disk_read_bytes, disk_write_bytes, sys_net_rx_bytes, sys_net_tx_bytes) =
                     if self.since_process_start {
                         // Show cumulative I/O since process start
                         (
@@ -758,8 +758,8 @@ impl ProcessMonitor {
                                     pid: *child_pid,
                                     disk_read_bytes: current_disk_read,
                                     disk_write_bytes: current_disk_write,
-                                    net_rx_bytes: current_net_rx,
-                                    net_tx_bytes: current_net_tx,
+                                    sys_net_rx_bytes: current_net_rx,
+                                    sys_net_tx_bytes: current_net_tx,
                                 });
                                 (0, 0, 0, 0) // First sample shows 0 delta
                             }
@@ -769,8 +769,8 @@ impl ProcessMonitor {
                                 (
                                     current_disk_read.saturating_sub(baseline.disk_read_bytes),
                                     current_disk_write.saturating_sub(baseline.disk_write_bytes),
-                                    current_net_rx.saturating_sub(baseline.net_rx_bytes),
-                                    current_net_tx.saturating_sub(baseline.net_tx_bytes),
+                                    current_net_rx.saturating_sub(baseline.sys_net_rx_bytes),
+                                    current_net_tx.saturating_sub(baseline.sys_net_tx_bytes),
                                 )
                             }
                         }
@@ -795,8 +795,8 @@ impl ProcessMonitor {
                     mem_vms_kb: proc.virtual_memory() / 1024,
                     disk_read_bytes,
                     disk_write_bytes,
-                    net_rx_bytes,
-                    net_tx_bytes,
+                    sys_net_rx_bytes,
+                    sys_net_tx_bytes,
                     thread_count: get_thread_count(*child_pid),
                     uptime_secs: proc.run_time(),
                     cpu_core: Self::get_process_cpu_core(*child_pid),
@@ -829,8 +829,8 @@ impl ProcessMonitor {
                 mem_vms_kb: parent.mem_vms_kb,
                 disk_read_bytes: parent.disk_read_bytes,
                 disk_write_bytes: parent.disk_write_bytes,
-                net_rx_bytes: parent.net_rx_bytes,
-                net_tx_bytes: parent.net_tx_bytes,
+                sys_net_rx_bytes: parent.sys_net_rx_bytes,
+                sys_net_tx_bytes: parent.sys_net_tx_bytes,
                 thread_count: parent.thread_count,
                 process_count: 1, // Parent
                 uptime_secs: parent.uptime_secs,
@@ -845,8 +845,8 @@ impl ProcessMonitor {
                 agg.mem_vms_kb += child.metrics.mem_vms_kb;
                 agg.disk_read_bytes += child.metrics.disk_read_bytes;
                 agg.disk_write_bytes += child.metrics.disk_write_bytes;
-                agg.net_rx_bytes += child.metrics.net_rx_bytes;
-                agg.net_tx_bytes += child.metrics.net_tx_bytes;
+                agg.sys_net_rx_bytes += child.metrics.sys_net_rx_bytes;
+                agg.sys_net_tx_bytes += child.metrics.sys_net_tx_bytes;
                 agg.thread_count += child.metrics.thread_count;
                 agg.process_count += 1;
             }
@@ -923,7 +923,7 @@ impl ProcessMonitor {
     }
 
     // Get network receive bytes for the process
-    fn get_process_net_rx_bytes(&self) -> u64 {
+    fn get_process_sys_net_rx_bytes(&self) -> u64 {
         #[cfg(target_os = "linux")]
         {
             self.get_linux_process_net_stats().0
@@ -935,7 +935,7 @@ impl ProcessMonitor {
     }
 
     // Get network transmit bytes for the process
-    fn get_process_net_tx_bytes(&self) -> u64 {
+    fn get_process_sys_net_tx_bytes(&self) -> u64 {
         #[cfg(target_os = "linux")]
         {
             self.get_linux_process_net_stats().1
@@ -1735,11 +1735,11 @@ mod tests {
         // Check that all children have 0 network I/O (current limitation)
         for child in &tree_metrics.children {
             assert_eq!(
-                child.metrics.net_rx_bytes, 0,
+                child.metrics.sys_net_rx_bytes, 0,
                 "Child network RX should be 0 (known limitation)"
             );
             assert_eq!(
-                child.metrics.net_tx_bytes, 0,
+                child.metrics.sys_net_tx_bytes, 0,
                 "Child network TX should be 0 (known limitation)"
             );
         }
@@ -1750,11 +1750,11 @@ mod tests {
             if let Some(agg) = tree_metrics.aggregated {
                 // Aggregated network should equal parent network (since children are 0)
                 assert_eq!(
-                    agg.net_rx_bytes, parent.net_rx_bytes,
+                    agg.sys_net_rx_bytes, parent.sys_net_rx_bytes,
                     "Aggregated network RX should equal parent (children are 0)"
                 );
                 assert_eq!(
-                    agg.net_tx_bytes, parent.net_tx_bytes,
+                    agg.sys_net_tx_bytes, parent.sys_net_tx_bytes,
                     "Aggregated network TX should equal parent (children are 0)"
                 );
             }
@@ -2091,11 +2091,11 @@ mod tests {
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(
             temp_file,
-            r#"{{"ts_ms":1000,"cpu_usage":25.0,"mem_rss_kb":1024,"mem_vms_kb":2048,"disk_read_bytes":0,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":2,"process_count":1,"uptime_secs":10,"ebpf":null}}"#
+            r#"{{"ts_ms":1000,"cpu_usage":25.0,"mem_rss_kb":1024,"mem_vms_kb":2048,"disk_read_bytes":0,"disk_write_bytes":0,"sys_net_rx_bytes":0,"sys_net_tx_bytes":0,"thread_count":2,"process_count":1,"uptime_secs":10,"ebpf":null}}"#
         ).unwrap();
         writeln!(
             temp_file,
-            r#"{{"ts_ms":2000,"cpu_usage":50.0,"mem_rss_kb":1536,"mem_vms_kb":3072,"disk_read_bytes":100,"disk_write_bytes":200,"net_rx_bytes":50,"net_tx_bytes":75,"thread_count":3,"process_count":2,"uptime_secs":15,"ebpf":null}}"#
+            r#"{{"ts_ms":2000,"cpu_usage":50.0,"mem_rss_kb":1536,"mem_vms_kb":3072,"disk_read_bytes":100,"disk_write_bytes":200,"sys_net_rx_bytes":50,"sys_net_tx_bytes":75,"thread_count":3,"process_count":2,"uptime_secs":15,"ebpf":null}}"#
         ).unwrap();
         temp_file.flush().unwrap();
 
@@ -2112,7 +2112,7 @@ mod tests {
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(
             temp_file,
-            r#"{{"ts_ms":1000,"parent":null,"children":[],"aggregated":{{"ts_ms":1000,"cpu_usage":30.0,"mem_rss_kb":1024,"mem_vms_kb":2048,"disk_read_bytes":0,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":1,"process_count":1,"uptime_secs":5,"ebpf":null}}}}"#
+            r#"{{"ts_ms":1000,"parent":null,"children":[],"aggregated":{{"ts_ms":1000,"cpu_usage":30.0,"mem_rss_kb":1024,"mem_vms_kb":2048,"disk_read_bytes":0,"disk_write_bytes":0,"sys_net_rx_bytes":0,"sys_net_tx_bytes":0,"thread_count":1,"process_count":1,"uptime_secs":5,"ebpf":null}}}}"#
         ).unwrap();
         temp_file.flush().unwrap();
 
@@ -2129,7 +2129,7 @@ mod tests {
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(
             temp_file,
-            r#"{{"ts_ms":1000,"cpu_usage":40.0,"mem_rss_kb":512,"mem_vms_kb":1024,"disk_read_bytes":0,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":1,"uptime_secs":8,"cpu_core":null}}"#
+            r#"{{"ts_ms":1000,"cpu_usage":40.0,"mem_rss_kb":512,"mem_vms_kb":1024,"disk_read_bytes":0,"disk_write_bytes":0,"sys_net_rx_bytes":0,"sys_net_tx_bytes":0,"thread_count":1,"uptime_secs":8,"cpu_core":null}}"#
         ).unwrap();
         temp_file.flush().unwrap();
 
@@ -2158,7 +2158,7 @@ mod tests {
         writeln!(temp_file, "   ").unwrap(); // Whitespace only
         writeln!(
             temp_file,
-            r#"{{"ts_ms":1000,"cpu_usage":35.0,"mem_rss_kb":768,"mem_vms_kb":1536,"disk_read_bytes":0,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":1,"uptime_secs":12,"cpu_core":null}}"#
+            r#"{{"ts_ms":1000,"cpu_usage":35.0,"mem_rss_kb":768,"mem_vms_kb":1536,"disk_read_bytes":0,"disk_write_bytes":0,"sys_net_rx_bytes":0,"sys_net_tx_bytes":0,"thread_count":1,"uptime_secs":12,"cpu_core":null}}"#
         ).unwrap();
         writeln!(temp_file, "invalid json line").unwrap(); // Invalid JSON
         temp_file.flush().unwrap();
@@ -2184,16 +2184,16 @@ mod tests {
         let baseline = IoBaseline {
             disk_read_bytes: 100,
             disk_write_bytes: 200,
-            net_rx_bytes: 50,
-            net_tx_bytes: 75,
+            sys_net_rx_bytes: 50,
+            sys_net_tx_bytes: 75,
         };
 
         let child_baseline = ChildIoBaseline {
             pid: 123,
             disk_read_bytes: 300,
             disk_write_bytes: 400,
-            net_rx_bytes: 150,
-            net_tx_bytes: 175,
+            sys_net_rx_bytes: 150,
+            sys_net_tx_bytes: 175,
         };
 
         // Test Clone and Debug traits
@@ -2488,11 +2488,11 @@ mod tests {
         let mut file = File::create(&file_path).unwrap();
         writeln!(
             file,
-            r#"{{"ts_ms":1000000,"cpu_usage":50.0,"mem_rss_kb":102400,"mem_vms_kb":204800,"disk_read_bytes":0,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":1,"uptime_secs":10,"cpu_core":0}}"#
+            r#"{{"ts_ms":1000000,"cpu_usage":50.0,"mem_rss_kb":102400,"mem_vms_kb":204800,"disk_read_bytes":0,"disk_write_bytes":0,"sys_net_rx_bytes":0,"sys_net_tx_bytes":0,"thread_count":1,"uptime_secs":10,"cpu_core":0}}"#
         ).unwrap();
         writeln!(
             file,
-            r#"{{"ts_ms":1005000,"cpu_usage":60.0,"mem_rss_kb":112640,"mem_vms_kb":225280,"disk_read_bytes":100,"disk_write_bytes":200,"net_rx_bytes":50,"net_tx_bytes":75,"thread_count":2,"uptime_secs":15,"cpu_core":1}}"#
+            r#"{{"ts_ms":1005000,"cpu_usage":60.0,"mem_rss_kb":112640,"mem_vms_kb":225280,"disk_read_bytes":100,"disk_write_bytes":200,"sys_net_rx_bytes":50,"sys_net_tx_bytes":75,"thread_count":2,"uptime_secs":15,"cpu_core":1}}"#
         ).unwrap();
 
         let summary = summary_from_json_file(&file_path).unwrap();
@@ -2599,12 +2599,12 @@ mod tests {
                 .unwrap();
 
         // Test network I/O measurement functions
-        let _rx_bytes = monitor.get_process_net_rx_bytes();
-        let _tx_bytes = monitor.get_process_net_tx_bytes();
+        let _rx_bytes = monitor.get_process_sys_net_rx_bytes();
+        let _tx_bytes = monitor.get_process_sys_net_tx_bytes();
 
         // These functions should handle cases gracefully
-        let _rx_bytes_again = monitor.get_process_net_rx_bytes();
-        let _tx_bytes_again = monitor.get_process_net_tx_bytes();
+        let _rx_bytes_again = monitor.get_process_sys_net_rx_bytes();
+        let _tx_bytes_again = monitor.get_process_sys_net_tx_bytes();
     }
 
     #[test]

@@ -567,14 +567,14 @@ fn format_metrics(metrics: &Metrics) -> String {
     };
 
     let base_metrics = format!(
-        "CPU: {} | Memory: {} | Threads: {} | Disk: {} rd, {} wr | Net: {} rx, {} tx | Uptime: {}s",
+        "CPU: {} | Memory: {} | Threads: {} | Disk: {} rd, {} wr | Sys Net: {} rx, {} tx | Uptime: {}s",
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
         format!("{mem_mb:.1} MB").color(mem_color),
         metrics.thread_count,
         format_bytes(metrics.disk_read_bytes).cyan(),
         format_bytes(metrics.disk_write_bytes).cyan(),
-        format_bytes(metrics.net_rx_bytes).green(),
-        format_bytes(metrics.net_tx_bytes).green(),
+        format_bytes(metrics.sys_net_rx_bytes).green(),
+        format_bytes(metrics.sys_net_tx_bytes).green(),
         metrics.uptime_secs,
     );
 
@@ -634,14 +634,14 @@ fn format_metrics_compact(metrics: &Metrics) -> String {
     };
 
     let base_metrics = format!(
-        "CPU {} | Mem {} | Threads {} | Disk {} rd, {} wr | Net {} rx, {} tx",
+        "CPU {} | Mem {} | Threads {} | Disk {} rd, {} wr | Sys Net {} rx, {} tx",
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
         format!("{mem_mb:.0}M").color(mem_color),
         metrics.thread_count,
         format_bytes(metrics.disk_read_bytes).cyan(),
         format_bytes(metrics.disk_write_bytes).cyan(),
-        format_bytes(metrics.net_rx_bytes).green(),
-        format_bytes(metrics.net_tx_bytes).green(),
+        format_bytes(metrics.sys_net_rx_bytes).green(),
+        format_bytes(metrics.sys_net_tx_bytes).green(),
     );
 
     #[cfg(feature = "gpu")]
@@ -697,15 +697,15 @@ fn format_aggregated_metrics(metrics: &AggregatedMetrics) -> String {
     };
 
     let base_metrics = format!(
-        "Tree ({} procs): CPU: {} | Memory: {} | Threads: {} | Disk: {} rd, {} wr | Net: {} rx, {} tx | Uptime: {}s",
+        "Tree ({} procs): CPU: {} | Memory: {} | Threads: {} | Disk: {} rd, {} wr | Sys Net: {} rx, {} tx | Uptime: {}s",
         metrics.process_count,
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
         format!("{mem_mb:.1} MB").color(mem_color),
         metrics.thread_count,
         format_bytes(metrics.disk_read_bytes).cyan(),
         format_bytes(metrics.disk_write_bytes).cyan(),
-        format_bytes(metrics.net_rx_bytes).green(),
-        format_bytes(metrics.net_tx_bytes).green(),
+        format_bytes(metrics.sys_net_rx_bytes).green(),
+        format_bytes(metrics.sys_net_tx_bytes).green(),
         metrics.uptime_secs,
     );
 
@@ -765,15 +765,15 @@ fn format_aggregated_metrics_compact(metrics: &AggregatedMetrics) -> String {
     };
 
     let base_metrics = format!(
-        "Tree({}): CPU {} | Mem {} | Threads {} | Disk {} rd, {} wr | Net {} rx, {} tx",
+        "Tree({}): CPU {} | Mem {} | Threads {} | Disk {} rd, {} wr | Sys Net {} rx, {} tx",
         metrics.process_count,
         format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
         format!("{mem_mb:.0}M").color(mem_color),
         metrics.thread_count,
         format_bytes(metrics.disk_read_bytes).cyan(),
         format_bytes(metrics.disk_write_bytes).cyan(),
-        format_bytes(metrics.net_rx_bytes).green(),
-        format_bytes(metrics.net_tx_bytes).green(),
+        format_bytes(metrics.sys_net_rx_bytes).green(),
+        format_bytes(metrics.sys_net_tx_bytes).green(),
     );
 
     #[cfg(feature = "gpu")]
@@ -822,8 +822,8 @@ fn convert_aggregated_to_metrics(agg: &AggregatedMetrics) -> Metrics {
         mem_vms_kb: agg.mem_vms_kb,
         disk_read_bytes: agg.disk_read_bytes,
         disk_write_bytes: agg.disk_write_bytes,
-        net_rx_bytes: agg.net_rx_bytes,
-        net_tx_bytes: agg.net_tx_bytes,
+        sys_net_rx_bytes: agg.sys_net_rx_bytes,
+        sys_net_tx_bytes: agg.sys_net_tx_bytes,
         thread_count: agg.thread_count,
         uptime_secs: agg.uptime_secs,
         cpu_core: None,
@@ -862,8 +862,8 @@ fn summary_rows(summary: &Summary) -> Vec<(&'static str, String)> {
         ("Avg CPU Usage", format!("{:.1}%", summary.avg_cpu_usage)),
         ("Disk Read", format_bytes(summary.total_disk_read_bytes)),
         ("Disk Write", format_bytes(summary.total_disk_write_bytes)),
-        ("Network Received", format_bytes(summary.total_net_rx_bytes)),
-        ("Network Sent", format_bytes(summary.total_net_tx_bytes)),
+        ("Network Received", format_bytes(summary.total_sys_net_rx_bytes)),
+        ("Network Sent", format_bytes(summary.total_sys_net_tx_bytes)),
     ];
 
     #[cfg(feature = "gpu")]
@@ -965,12 +965,12 @@ fn generate_summary_from_file(
                     writeln!(
                         file,
                         "Total network received: {}",
-                        format_bytes(summary.total_net_rx_bytes)
+                        format_bytes(summary.total_sys_net_rx_bytes)
                     )?;
                     writeln!(
                         file,
                         "Total network sent: {}",
-                        format_bytes(summary.total_net_tx_bytes)
+                        format_bytes(summary.total_sys_net_tx_bytes)
                     )?;
                 } else {
                     // Otherwise print to stdout
