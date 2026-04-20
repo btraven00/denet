@@ -55,10 +55,6 @@ struct Args {
     #[clap(short, long)]
     quiet: bool,
 
-    /// Disable automatic JSON dump to out.json
-    #[clap(long)]
-    nodump: bool,
-
     /// Write statistics to file on completion
     #[clap(long, value_name = "FILE")]
     stats: Option<PathBuf>,
@@ -147,14 +143,7 @@ struct OutputHandles {
 
 /// Set up output files based on command line arguments
 fn setup_output_files(args: &Args) -> Result<OutputHandles> {
-    let out_path = args.out.clone();
-    let default_out_path = if !args.nodump && args.out.is_none() {
-        Some(PathBuf::from("out.json"))
-    } else {
-        None
-    };
-
-    let out_file = out_path.as_ref().or(default_out_path.as_ref()).map(|path| {
+    let out_file = args.out.as_ref().map(|path| {
         File::create(path).unwrap_or_else(|err| {
             eprintln!("Error creating output file: {err}");
             exit(1);
