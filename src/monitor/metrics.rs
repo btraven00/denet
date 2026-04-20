@@ -40,7 +40,9 @@ pub struct Metrics {
     pub mem_vms_kb: u64,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
+    #[serde(alias = "net_rx_bytes")]
     pub sys_net_rx_bytes: u64,
+    #[serde(alias = "net_tx_bytes")]
     pub sys_net_tx_bytes: u64,
     pub thread_count: usize,
     pub uptime_secs: u64,
@@ -113,7 +115,9 @@ pub struct AggregatedMetrics {
     pub mem_vms_kb: u64,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
+    #[serde(alias = "net_rx_bytes")]
     pub sys_net_rx_bytes: u64,
+    #[serde(alias = "net_tx_bytes")]
     pub sys_net_tx_bytes: u64,
     pub thread_count: usize,
     pub process_count: usize,

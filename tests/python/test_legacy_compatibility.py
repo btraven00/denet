@@ -189,8 +189,8 @@ class TestLegacySummaryCompatibility:
         assert summary["max_threads"] == 3  # Highest value from samples
         assert summary["total_disk_read_bytes"] == 2500  # Highest value
         assert summary["total_disk_write_bytes"] == 3000  # Highest value
-        assert summary["total_net_rx_bytes"] == 800  # Highest value
-        assert summary["total_net_tx_bytes"] == 900  # Highest value
+        assert summary["total_sys_net_rx_bytes"] == 800  # Highest value
+        assert summary["total_sys_net_tx_bytes"] == 900  # Highest value
         assert summary["peak_mem_rss_kb"] == 2048  # Highest value
         assert summary["avg_cpu_usage"] == 10.0  # (5 + 15) / 2
 
