@@ -79,12 +79,10 @@ pub struct SyscallMetrics {
     pub analysis: Option<SyscallAnalysis>,
 }
 
-/// Enhanced syscall analysis for process behavior diagnosis
+/// Raw syscall intensity metrics derived from observed syscall counts.
+/// Classification is left to the caller.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyscallAnalysis {
-    /// Process behavior classification
-    pub behavior_classification: ProcessBehavior,
-
     /// Syscalls per second rate
     pub syscall_rate_per_sec: f64,
 
@@ -99,43 +97,6 @@ pub struct SyscallAnalysis {
 
     /// Network activity intensity (0.0 to 1.0)
     pub network_intensity: f64,
-
-    /// Detected bottleneck indicators
-    pub bottleneck_indicators: Vec<String>,
-
-    /// Performance characteristics
-    pub performance_profile: PerformanceProfile,
-}
-
-/// Process behavior classification based on syscall patterns
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum ProcessBehavior {
-    /// High I/O syscall activity
-    IoBound,
-    /// Low syscall activity, high CPU usage
-    CpuBound,
-    /// High memory management syscalls
-    MemoryBound,
-    /// High network syscall activity
-    NetworkBound,
-    /// Mixed workload
-    Mixed,
-    /// Insufficient data for classification
-    Unknown,
-}
-
-/// Performance profile characteristics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PerformanceProfile {
-    /// Estimated workload type
-    pub workload_type: String,
-
-    /// Performance bottleneck likelihood (0.0 to 1.0)
-    pub bottleneck_likelihood: f64,
-
-    /// Optimization suggestions
-    pub optimization_hints: Vec<String>,
 }
 
 /// Individual syscall count
@@ -406,206 +367,28 @@ pub enum OffCpuBottleneckType {
     Unknown,
 }
 
-/// Generate enhanced syscall analysis for bottleneck diagnosis
+/// Compute raw syscall intensity ratios and rate from observed metrics.
 pub fn generate_syscall_analysis(
     metrics: &SyscallMetrics,
-    cpu_usage: f32,
     elapsed_seconds: f64,
 ) -> SyscallAnalysis {
     let total = metrics.total as f64;
 
     if total < 1.0 || elapsed_seconds < 0.1 {
         return SyscallAnalysis {
-            behavior_classification: ProcessBehavior::Unknown,
             syscall_rate_per_sec: 0.0,
             io_intensity: 0.0,
             memory_intensity: 0.0,
             cpu_intensity: 0.0,
             network_intensity: 0.0,
-            bottleneck_indicators: vec![],
-            performance_profile: PerformanceProfile {
-                workload_type: "insufficient_data".to_string(),
-                bottleneck_likelihood: 0.0,
-                optimization_hints: vec![],
-            },
         };
     }
 
-    // Calculate intensities
-    let io_intensity = *metrics.by_category.get("file_io").unwrap_or(&0) as f64 / total;
-    let memory_intensity = *metrics.by_category.get("memory").unwrap_or(&0) as f64 / total;
-    let network_intensity = *metrics.by_category.get("network").unwrap_or(&0) as f64 / total;
-    let process_intensity = *metrics.by_category.get("process").unwrap_or(&0) as f64 / total;
-
-    let syscall_rate_per_sec = total / elapsed_seconds;
-
-    // Classify process behavior
-    let behavior_classification = classify_process_behavior(
-        io_intensity,
-        memory_intensity,
-        network_intensity,
-        cpu_usage as f64,
-        syscall_rate_per_sec,
-    );
-
-    // Detect bottleneck indicators
-    let bottleneck_indicators =
-        detect_bottleneck_indicators(&metrics.by_category, syscall_rate_per_sec, cpu_usage as f64);
-
-    // Generate performance profile
-    let performance_profile = generate_performance_profile(
-        &behavior_classification,
-        io_intensity,
-        memory_intensity,
-        network_intensity,
-        syscall_rate_per_sec,
-    );
-
     SyscallAnalysis {
-        behavior_classification,
-        syscall_rate_per_sec,
-        io_intensity,
-        memory_intensity,
-        cpu_intensity: process_intensity, // Using process syscalls as CPU proxy
-        network_intensity,
-        bottleneck_indicators,
-        performance_profile,
-    }
-}
-
-/// Classify process behavior based on syscall patterns
-fn classify_process_behavior(
-    io_intensity: f64,
-    memory_intensity: f64,
-    network_intensity: f64,
-    cpu_usage: f64,
-    syscall_rate: f64,
-) -> ProcessBehavior {
-    // High I/O activity
-    if io_intensity > 0.6 && syscall_rate > 100.0 {
-        return ProcessBehavior::IoBound;
-    }
-
-    // High network activity
-    if network_intensity > 0.4 {
-        return ProcessBehavior::NetworkBound;
-    }
-
-    // High memory management activity
-    if memory_intensity > 0.3 {
-        return ProcessBehavior::MemoryBound;
-    }
-
-    // Low syscall activity but high CPU usage = CPU bound
-    if syscall_rate < 50.0 && cpu_usage > 50.0 {
-        return ProcessBehavior::CpuBound;
-    }
-
-    // Mixed or moderate activity
-    if io_intensity > 0.2 && memory_intensity > 0.1 {
-        return ProcessBehavior::Mixed;
-    }
-
-    ProcessBehavior::Unknown
-}
-
-/// Detect specific bottleneck indicators
-fn detect_bottleneck_indicators(
-    by_category: &HashMap<String, u64>,
-    syscall_rate: f64,
-    cpu_usage: f64,
-) -> Vec<String> {
-    let mut indicators = Vec::new();
-
-    let file_io = *by_category.get("file_io").unwrap_or(&0) as f64;
-    let memory = *by_category.get("memory").unwrap_or(&0) as f64;
-    let network = *by_category.get("network").unwrap_or(&0) as f64;
-
-    // I/O bottleneck indicators
-    if file_io > 500.0 {
-        indicators.push("high_file_io".to_string());
-    }
-    if syscall_rate > 1000.0 {
-        indicators.push("very_high_syscall_rate".to_string());
-    }
-
-    // Memory bottleneck indicators
-    if memory > 100.0 {
-        indicators.push("frequent_memory_management".to_string());
-    }
-
-    // Network bottleneck indicators
-    if network > 200.0 {
-        indicators.push("high_network_activity".to_string());
-    }
-
-    // CPU bottleneck indicators
-    if cpu_usage > 80.0 && syscall_rate < 100.0 {
-        indicators.push("cpu_intensive".to_string());
-    }
-
-    // Mixed bottleneck
-    if file_io > 300.0 && memory > 50.0 {
-        indicators.push("io_memory_contention".to_string());
-    }
-
-    indicators
-}
-
-/// Generate performance profile with optimization hints
-fn generate_performance_profile(
-    behavior: &ProcessBehavior,
-    _io_intensity: f64,
-    _memory_intensity: f64,
-    _network_intensity: f64,
-    _syscall_rate: f64,
-) -> PerformanceProfile {
-    let (workload_type, bottleneck_likelihood, optimization_hints) = match behavior {
-        ProcessBehavior::IoBound => {
-            let hints = vec![
-                "Consider I/O optimization strategies".to_string(),
-                "Use async I/O or batching".to_string(),
-                "Check for excessive file operations".to_string(),
-            ];
-            ("file_io_intensive".to_string(), 0.8, hints)
-        }
-        ProcessBehavior::CpuBound => {
-            let hints = vec![
-                "CPU optimization opportunities".to_string(),
-                "Consider parallel processing".to_string(),
-                "Profile for algorithmic improvements".to_string(),
-            ];
-            ("cpu_intensive".to_string(), 0.7, hints)
-        }
-        ProcessBehavior::MemoryBound => {
-            let hints = vec![
-                "Memory allocation optimization needed".to_string(),
-                "Consider memory pooling".to_string(),
-                "Check for memory leaks".to_string(),
-            ];
-            ("memory_intensive".to_string(), 0.75, hints)
-        }
-        ProcessBehavior::NetworkBound => {
-            let hints = vec![
-                "Network optimization opportunities".to_string(),
-                "Consider connection pooling".to_string(),
-                "Optimize network protocols".to_string(),
-            ];
-            ("network_intensive".to_string(), 0.8, hints)
-        }
-        ProcessBehavior::Mixed => {
-            let hints = vec![
-                "Mixed workload - profile individual components".to_string(),
-                "Consider workload separation".to_string(),
-            ];
-            ("mixed_workload".to_string(), 0.5, hints)
-        }
-        ProcessBehavior::Unknown => ("unknown".to_string(), 0.0, vec![]),
-    };
-
-    PerformanceProfile {
-        workload_type,
-        bottleneck_likelihood,
-        optimization_hints,
+        syscall_rate_per_sec: total / elapsed_seconds,
+        io_intensity: *metrics.by_category.get("file_io").unwrap_or(&0) as f64 / total,
+        memory_intensity: *metrics.by_category.get("memory").unwrap_or(&0) as f64 / total,
+        cpu_intensity: *metrics.by_category.get("process").unwrap_or(&0) as f64 / total,
+        network_intensity: *metrics.by_category.get("network").unwrap_or(&0) as f64 / total,
     }
 }
