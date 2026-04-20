@@ -22,7 +22,7 @@ Denet is a streaming process monitoring tool that provides detailed metrics on r
 - **eBPF-based profiling on Linux: off-CPU time and syscall tracking (optional)**
 - Recursive child process tracking
 - Command-line interface with colorized output
-- Multiple output formats (JSON, JSONL, CSV)
+- Multiple output formats (JSON, JSONL)
 - In-memory sample collection for Python API
 - Analysis utilities for metrics aggregation, peak detection, and resource utilization
 - Process metadata preserved in output files (pid, command, executable path)
@@ -148,7 +148,6 @@ print(f"Max processes: {summary['max_processes']}")
 # Save samples to different formats
 monitor.save_samples("metrics.jsonl")          # Default JSONL
 monitor.save_samples("metrics.json", "json")   # JSON array format
-monitor.save_samples("metrics.csv", "csv")     # CSV format
 
 # JSONL files include a metadata line at the beginning with process info
 # {"pid": 1234, "cmd": ["python"], "executable": "/usr/bin/python", "t0_ms": 1625184000000}
@@ -434,11 +433,6 @@ print(f"Found {len(cpu_peaks)} CPU usage peaks above 50%")
 stats = denet.resource_utilization(metrics)
 print(f"Average CPU: {stats['avg_cpu']}%")
 print(f"Total I/O: {stats['total_io_bytes']} bytes")
-
-# Convert between formats
-csv_data = denet.convert_format(metrics, to_format="csv")
-with open("metrics.csv", "w") as f:
-    f.write(csv_data)
 
 # Save metrics with custom options
 denet.save_metrics(metrics, "data.jsonl", format="jsonl", include_metadata=True)
