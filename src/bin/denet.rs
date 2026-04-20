@@ -862,7 +862,10 @@ fn summary_rows(summary: &Summary) -> Vec<(&'static str, String)> {
         ("Avg CPU Usage", format!("{:.1}%", summary.avg_cpu_usage)),
         ("Disk Read", format_bytes(summary.total_disk_read_bytes)),
         ("Disk Write", format_bytes(summary.total_disk_write_bytes)),
-        ("Network Received", format_bytes(summary.total_sys_net_rx_bytes)),
+        (
+            "Network Received",
+            format_bytes(summary.total_sys_net_rx_bytes),
+        ),
         ("Network Sent", format_bytes(summary.total_sys_net_tx_bytes)),
     ];
 
