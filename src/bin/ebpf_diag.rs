@@ -24,7 +24,10 @@ struct AlignedBytes<const N: usize>([u8; N]);
 #[cfg(feature = "ebpf")]
 static SYSCALL_TRACER_BYTECODE_ALIGNED: AlignedBytes<
     { include_bytes!(concat!(env!("OUT_DIR"), "/ebpf/syscall_tracer.o")).len() },
-> = AlignedBytes(*include_bytes!(concat!(env!("OUT_DIR"), "/ebpf/syscall_tracer.o")));
+> = AlignedBytes(*include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/ebpf/syscall_tracer.o"
+)));
 
 #[cfg(feature = "ebpf")]
 const SYSCALL_TRACER_BYTECODE: &[u8] = &SYSCALL_TRACER_BYTECODE_ALIGNED.0;
