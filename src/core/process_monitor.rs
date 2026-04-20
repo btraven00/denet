@@ -873,7 +873,6 @@ impl ProcessMonitor {
                         let elapsed_time = (tree_ts_ms - self.t0_ms) as f64 / 1000.0;
                         syscalls.analysis = Some(crate::ebpf::metrics::generate_syscall_analysis(
                             syscalls,
-                            agg.cpu_usage,
                             elapsed_time,
                         ));
                     }
