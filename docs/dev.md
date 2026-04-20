@@ -2,6 +2,13 @@
 
 This document contains information for developers working on the denet project, including development setup, workflows, and release processes.
 
+## Requirements
+
+- Python 3.6+
+- Rust (for development)
+- [pixi](https://prefix.dev/docs/pixi/overview) (for development only)
+- **eBPF features**: Linux kernel 5.5+, `clang` at build time, `CAP_BPF` + `CAP_PERFMON` or root at runtime
+
 ## Development Environment
 
 Denet follows a Rust-first development approach, with Python bindings as a secondary interface.
