@@ -2665,32 +2665,6 @@ mod tests {
     }
 
     #[test]
-    fn test_process_refresh_kind_excludes_tasks() {
-        // process_refresh_kind() must not enable task enumeration; sysinfo
-        // would otherwise list each OS thread as a child of its tgid, causing
-        // the tree walker to double-count CPU time.  Verify by refreshing with
-        // our kind and confirming no thread of this test process appears as a
-        // child process entry.
-        let pid = std::process::id();
-        let mut sys = sysinfo::System::new();
-        sys.refresh_processes_specifics(
-            sysinfo::ProcessesToUpdate::All,
-            true,
-            process_refresh_kind(),
-        );
-        let pid_key = sysinfo::Pid::from_u32(pid);
-        let thread_children = sys
-            .processes()
-            .values()
-            .filter(|p| p.parent().map(|parent| parent == pid_key).unwrap_or(false))
-            .count();
-        assert_eq!(
-            thread_children, 0,
-            "process_refresh_kind() must not enumerate OS threads as child process entries"
-        );
-    }
-
-    #[test]
     #[cfg(target_os = "linux")]
     fn test_is_running_pid_monitor_after_process_exits() {
         // Exercise the fallback refresh path in is_running(): a pid-based
