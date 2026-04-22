@@ -332,3 +332,115 @@ fn test_simple_disk_write_accuracy() {
 
     println!("✅ Simple disk write test passed!");
 }
+
+/// Verify the signals that make cached reads and mmap access visible.
+///
+/// Context: `disk_read_bytes` (from /proc/pid/io read_bytes) only counts bytes
+/// fetched at the block layer — cache hits and mmap access show as zero, which
+/// disorients users. `syscall_read_bytes` (rchar) captures cached read() calls
+/// and `page_faults_cached` (minflt) captures mmap access. This test forces a
+/// warm-cache + mmap workload and asserts the three-signal model holds.
+#[test]
+#[cfg(target_os = "linux")]
+fn test_cached_and_mmap_reads_are_visible() {
+    // Create a file and pre-read it so it's definitely in the page cache.
+    let temp_dir = TempDir::new().expect("tempdir");
+    let file_path = temp_dir.path().join("warm.bin");
+    let file_size = 512 * 1024; // 512 KiB — large enough to dominate noise
+    create_random_file(&file_path, file_size).expect("create file");
+    // Warm the cache from this process before spawning the child.
+    let _ = fs::read(&file_path).expect("warm read");
+
+    let file_str = file_path.to_str().unwrap();
+
+    // Child: repeatedly read() the warm file (cache hits → syscall_read_bytes),
+    // then mmap it and touch every page (minor faults → page_faults_cached).
+    // Python is a safe assumption here since other tests in this crate also use it.
+    let cmd = vec![
+        "python3".to_string(),
+        "-c".to_string(),
+        format!(
+            r#"
+import mmap, time
+p = "{path}"
+for _ in range(20):
+    with open(p, "rb") as f:
+        f.read()
+with open(p, "r+b") as f:
+    m = mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ)
+    # touch every 4KiB page to force a minor fault
+    for off in range(0, len(m), 4096):
+        _ = m[off]
+    m.close()
+time.sleep(0.6)
+"#,
+            path = file_str
+        ),
+    ];
+
+    let monitor = ProcessMonitor::new_with_options(
+        cmd,
+        Duration::from_millis(50),
+        Duration::from_millis(200),
+        true, // since_process_start: cumulative, easier to assert on
+    )
+    .expect("monitor");
+
+    let config = MonitoringConfig::new()
+        .with_sample_interval(sampling::FAST)
+        .with_timeout(timeouts::LONG)
+        .with_final_samples(2, delays::FINAL_SAMPLE);
+
+    let result = MonitoringLoop::with_config(config).run(monitor);
+
+    assert!(!result.samples.is_empty(), "no samples collected");
+
+    // Peak, not last: on some kernels /proc/pid/io becomes unreadable once the
+    // process is zombified, and the very last sample may show None/0.
+    let peak_syscall_read = result
+        .samples
+        .iter()
+        .filter_map(|s| s.syscall_read_bytes)
+        .max()
+        .unwrap_or(0);
+    let peak_faults_cached = result
+        .samples
+        .iter()
+        .filter_map(|s| s.page_faults_cached)
+        .max()
+        .unwrap_or(0);
+    let peak_faults_disk = result
+        .samples
+        .iter()
+        .filter_map(|s| s.page_faults_disk)
+        .max()
+        .unwrap_or(0);
+
+    println!(
+        "peak syscall_read_bytes = {peak_syscall_read}, page_faults_cached = {peak_faults_cached}, page_faults_disk = {peak_faults_disk}"
+    );
+
+    // Cached reads via read(): we read 512 KiB × 20 = 10 MiB. Allow slack for
+    // Python interpreter startup reads (imports) which only add to the count.
+    // Lower bound is what the loop itself must produce.
+    let min_expected_syscall_read = (file_size * 20) as u64;
+    assert!(
+        peak_syscall_read >= min_expected_syscall_read,
+        "syscall_read_bytes ({peak_syscall_read}) should be >= {min_expected_syscall_read} — cached reads aren't showing up"
+    );
+
+    // mmap access: 512 KiB / 4 KiB = 128 pages. Plus interpreter faults on
+    // startup, so a few hundred is the realistic lower bound.
+    assert!(
+        peak_faults_cached >= 100,
+        "page_faults_cached ({peak_faults_cached}) should be >= 100 — mmap activity isn't showing up"
+    );
+
+    // File was pre-warmed; we don't expect major faults from the workload.
+    // Just assert the field is populated (Some) rather than enforcing 0, since
+    // unrelated memory pressure could cause a few.
+    assert!(
+        result.samples.iter().any(|s| s.page_faults_disk.is_some()),
+        "page_faults_disk should be populated (even if 0)"
+    );
+}

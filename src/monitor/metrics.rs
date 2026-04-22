@@ -40,6 +40,25 @@ pub struct Metrics {
     pub mem_vms_kb: u64,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
+    /// Bytes read via read()-family syscalls (rchar from /proc/pid/io on Linux).
+    /// Includes page-cache hits; `disk_read_bytes` does not. `None` on non-Linux.
+    /// Does NOT include mmap access — see `page_faults_cached`/`page_faults_disk` for that.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syscall_read_bytes: Option<u64>,
+    /// Bytes written via write()-family syscalls (wchar from /proc/pid/io on Linux).
+    /// Counts data moved into the kernel, not bytes actually flushed to storage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syscall_write_bytes: Option<u64>,
+    /// Count of page faults satisfied without a block-layer read (minor faults).
+    /// Includes warm-mmap accesses and first-touch of lazily allocated anonymous
+    /// memory. Event count, not a byte size. Linux only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_faults_cached: Option<u64>,
+    /// Count of page faults that required a block-layer read (major faults).
+    /// Includes cold-mmap reads and swap-ins. Event count, not a byte size.
+    /// Linux only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_faults_disk: Option<u64>,
     #[serde(alias = "net_rx_bytes")]
     pub sys_net_rx_bytes: u64,
     #[serde(alias = "net_tx_bytes")]
@@ -73,6 +92,10 @@ impl Metrics {
             mem_vms_kb: 0,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            syscall_read_bytes: None,
+            syscall_write_bytes: None,
+            page_faults_cached: None,
+            page_faults_disk: None,
             sys_net_rx_bytes: 0,
             sys_net_tx_bytes: 0,
             thread_count: 0,
@@ -115,6 +138,14 @@ pub struct AggregatedMetrics {
     pub mem_vms_kb: u64,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syscall_read_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syscall_write_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_faults_cached: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_faults_disk: Option<u64>,
     #[serde(alias = "net_rx_bytes")]
     pub sys_net_rx_bytes: u64,
     #[serde(alias = "net_tx_bytes")]
@@ -155,6 +186,10 @@ impl AggregatedMetrics {
         let mut mem_vms_kb = 0;
         let mut disk_read_bytes = 0;
         let mut disk_write_bytes = 0;
+        let mut syscall_read_bytes: Option<u64> = None;
+        let mut syscall_write_bytes: Option<u64> = None;
+        let mut page_faults_cached: Option<u64> = None;
+        let mut page_faults_disk: Option<u64> = None;
         let mut sys_net_rx_bytes = 0;
         let mut sys_net_tx_bytes = 0;
         let mut thread_count = 0;
@@ -166,6 +201,18 @@ impl AggregatedMetrics {
             mem_vms_kb += metric.mem_vms_kb;
             disk_read_bytes += metric.disk_read_bytes;
             disk_write_bytes += metric.disk_write_bytes;
+            if let Some(v) = metric.syscall_read_bytes {
+                syscall_read_bytes = Some(syscall_read_bytes.unwrap_or(0) + v);
+            }
+            if let Some(v) = metric.syscall_write_bytes {
+                syscall_write_bytes = Some(syscall_write_bytes.unwrap_or(0) + v);
+            }
+            if let Some(v) = metric.page_faults_cached {
+                page_faults_cached = Some(page_faults_cached.unwrap_or(0) + v);
+            }
+            if let Some(v) = metric.page_faults_disk {
+                page_faults_disk = Some(page_faults_disk.unwrap_or(0) + v);
+            }
             sys_net_rx_bytes += metric.sys_net_rx_bytes;
             sys_net_tx_bytes += metric.sys_net_tx_bytes;
             thread_count += metric.thread_count;
@@ -179,6 +226,10 @@ impl AggregatedMetrics {
             mem_vms_kb,
             disk_read_bytes,
             disk_write_bytes,
+            syscall_read_bytes,
+            syscall_write_bytes,
+            page_faults_cached,
+            page_faults_disk,
             sys_net_rx_bytes,
             sys_net_tx_bytes,
             thread_count,
@@ -204,6 +255,10 @@ impl Default for AggregatedMetrics {
             mem_vms_kb: 0,
             disk_read_bytes: 0,
             disk_write_bytes: 0,
+            syscall_read_bytes: None,
+            syscall_write_bytes: None,
+            page_faults_cached: None,
+            page_faults_disk: None,
             sys_net_rx_bytes: 0,
             sys_net_tx_bytes: 0,
             thread_count: 0,
@@ -243,6 +298,18 @@ pub struct Summary {
     pub total_disk_read_bytes: u64,
     /// Cumulative disk write bytes
     pub total_disk_write_bytes: u64,
+    /// Cumulative bytes read via read()-family syscalls (Linux only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_syscall_read_bytes: Option<u64>,
+    /// Cumulative bytes written via write()-family syscalls (Linux only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_syscall_write_bytes: Option<u64>,
+    /// Peak minor page fault count observed (Linux only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_page_faults_cached: Option<u64>,
+    /// Peak major page fault count observed (Linux only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_page_faults_disk: Option<u64>,
     /// Cumulative network received bytes
     pub total_sys_net_rx_bytes: u64,
     /// Cumulative network transmitted bytes
@@ -314,6 +381,10 @@ impl Summary {
             max_threads,
             total_disk_read_bytes: last_metrics.disk_read_bytes,
             total_disk_write_bytes: last_metrics.disk_write_bytes,
+            total_syscall_read_bytes: last_metrics.syscall_read_bytes,
+            total_syscall_write_bytes: last_metrics.syscall_write_bytes,
+            peak_page_faults_cached: metrics.iter().filter_map(|m| m.page_faults_cached).max(),
+            peak_page_faults_disk: metrics.iter().filter_map(|m| m.page_faults_disk).max(),
             total_sys_net_rx_bytes: last_metrics.sys_net_rx_bytes,
             total_sys_net_tx_bytes: last_metrics.sys_net_tx_bytes,
             peak_mem_rss_kb,
@@ -410,6 +481,10 @@ impl Summary {
             max_threads,
             total_disk_read_bytes: last_metrics.disk_read_bytes,
             total_disk_write_bytes: last_metrics.disk_write_bytes,
+            total_syscall_read_bytes: last_metrics.syscall_read_bytes,
+            total_syscall_write_bytes: last_metrics.syscall_write_bytes,
+            peak_page_faults_cached: metrics.iter().filter_map(|m| m.page_faults_cached).max(),
+            peak_page_faults_disk: metrics.iter().filter_map(|m| m.page_faults_disk).max(),
             total_sys_net_rx_bytes: last_metrics.sys_net_rx_bytes,
             total_sys_net_tx_bytes: last_metrics.sys_net_tx_bytes,
             peak_mem_rss_kb,
@@ -433,6 +508,10 @@ impl Default for Summary {
             max_threads: 0,
             total_disk_read_bytes: 0,
             total_disk_write_bytes: 0,
+            total_syscall_read_bytes: None,
+            total_syscall_write_bytes: None,
+            peak_page_faults_cached: None,
+            peak_page_faults_disk: None,
             total_sys_net_rx_bytes: 0,
             total_sys_net_tx_bytes: 0,
             peak_mem_rss_kb: 0,

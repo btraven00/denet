@@ -54,6 +54,61 @@ fn get_linux_thread_count(_pid: usize) -> Option<usize> {
     None
 }
 
+/// Read rchar/wchar (bytes moved through read()/write() syscalls) from /proc/pid/io.
+/// Returns (read_chars, write_chars). Captures page-cache hits that `read_bytes` misses.
+/// Does NOT capture mmap access — see `read_page_faults` for that.
+#[cfg(target_os = "linux")]
+fn read_syscall_io_bytes(pid: usize) -> Option<(u64, u64)> {
+    let content = std::fs::read_to_string(format!("{LINUX_PROC_DIR}/{pid}/io")).ok()?;
+    let mut rchar = None;
+    let mut wchar = None;
+    for line in content.lines() {
+        if let Some(v) = line.strip_prefix("rchar: ") {
+            rchar = v.trim().parse::<u64>().ok();
+        } else if let Some(v) = line.strip_prefix("wchar: ") {
+            wchar = v.trim().parse::<u64>().ok();
+        }
+    }
+    Some((rchar?, wchar?))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_syscall_io_bytes(_pid: usize) -> Option<(u64, u64)> {
+    None
+}
+
+/// Read minor and major page fault counters from /proc/pid/stat.
+/// Fields 10 (minflt) and 12 (majflt) — the process's own faults, excluding children.
+/// Major faults indicate disk reads (incl. mmap cold pages); minor faults indicate
+/// page activity that was satisfied from cache (incl. mmap warm pages).
+#[cfg(target_os = "linux")]
+fn read_page_faults(pid: usize) -> Option<(u64, u64)> {
+    let content = std::fs::read_to_string(format!("{LINUX_PROC_DIR}/{pid}/stat")).ok()?;
+    // comm (field 2) is parenthesized and may contain spaces/parens; split after the last ')'
+    let rparen = content.rfind(')')?;
+    let rest = &content[rparen + 1..];
+    let fields: Vec<&str> = rest.split_whitespace().collect();
+    // After comm: index 0 = state (field 3). minflt is field 10 → index 7. majflt is field 12 → index 9.
+    let minflt = fields.get(7)?.parse::<u64>().ok()?;
+    let majflt = fields.get(9)?.parse::<u64>().ok()?;
+    Some((minflt, majflt))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_page_faults(_pid: usize) -> Option<(u64, u64)> {
+    None
+}
+
+/// Subtract two Option<u64> counters for delta-from-baseline; preserves None when
+/// either side is unavailable so the metric stays honestly missing.
+#[inline]
+fn option_sub(cur: Option<u64>, base: Option<u64>) -> Option<u64> {
+    match (cur, base) {
+        (Some(c), Some(b)) => Some(c.saturating_sub(b)),
+        _ => None,
+    }
+}
+
 /// Read metrics from a JSON file and generate a summary
 pub fn summary_from_json_file<P: AsRef<Path>>(path: P) -> io::Result<Summary> {
     let file = File::open(path)?;
@@ -121,6 +176,10 @@ pub fn summary_from_json_file<P: AsRef<Path>>(path: P) -> io::Result<Summary> {
 pub struct IoBaseline {
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
+    pub syscall_read_bytes: Option<u64>,
+    pub syscall_write_bytes: Option<u64>,
+    pub page_faults_cached: Option<u64>,
+    pub page_faults_disk: Option<u64>,
     pub sys_net_rx_bytes: u64,
     pub sys_net_tx_bytes: u64,
 }
@@ -130,6 +189,10 @@ pub struct ChildIoBaseline {
     pub pid: usize,
     pub disk_read_bytes: u64,
     pub disk_write_bytes: u64,
+    pub syscall_read_bytes: Option<u64>,
+    pub syscall_write_bytes: Option<u64>,
+    pub page_faults_cached: Option<u64>,
+    pub page_faults_disk: Option<u64>,
     pub sys_net_rx_bytes: u64,
     pub sys_net_tx_bytes: u64,
 }
@@ -504,6 +567,8 @@ impl ProcessMonitor {
         let mem_vms_kb = process.virtual_memory() / 1024;
         let current_disk_read = process.disk_usage().total_read_bytes;
         let current_disk_write = process.disk_usage().total_written_bytes;
+        let current_syscall_io = read_syscall_io_bytes(self.pid);
+        let current_faults = read_page_faults(self.pid);
         let thread_count = get_thread_count(self.pid);
         let uptime_secs = process.run_time();
 
@@ -551,37 +616,66 @@ impl ProcessMonitor {
         let current_net_rx = self.get_process_sys_net_rx_bytes();
         let current_net_tx = self.get_process_sys_net_tx_bytes();
 
+        let cur_rchar = current_syscall_io.map(|(r, _)| r);
+        let cur_wchar = current_syscall_io.map(|(_, w)| w);
+        let cur_minflt = current_faults.map(|(m, _)| m);
+        let cur_majflt = current_faults.map(|(_, m)| m);
+
         // Handle I/O baseline for delta calculation
-        let (disk_read_bytes, disk_write_bytes, sys_net_rx_bytes, sys_net_tx_bytes) =
-            if self.since_process_start {
-                // Show cumulative I/O since process start
-                (
-                    current_disk_read,
-                    current_disk_write,
-                    current_net_rx,
-                    current_net_tx,
-                )
-            } else {
-                // Show delta I/O since monitoring start
-                if let Some(baseline) = self.io_baseline.as_ref() {
-                    // Calculate delta from baseline
-                    (
-                        current_disk_read.saturating_sub(baseline.disk_read_bytes),
-                        current_disk_write.saturating_sub(baseline.disk_write_bytes),
-                        current_net_rx.saturating_sub(baseline.sys_net_rx_bytes),
-                        current_net_tx.saturating_sub(baseline.sys_net_tx_bytes),
-                    )
-                } else {
-                    // First sample - establish baseline
-                    self.io_baseline = Some(IoBaseline {
-                        disk_read_bytes: current_disk_read,
-                        disk_write_bytes: current_disk_write,
-                        sys_net_rx_bytes: current_net_rx,
-                        sys_net_tx_bytes: current_net_tx,
-                    });
-                    (0, 0, 0, 0) // First sample shows 0 delta
-                }
-            };
+        let (
+            disk_read_bytes,
+            disk_write_bytes,
+            syscall_read_bytes,
+            syscall_write_bytes,
+            page_faults_cached,
+            page_faults_disk,
+            sys_net_rx_bytes,
+            sys_net_tx_bytes,
+        ) = if self.since_process_start {
+            (
+                current_disk_read,
+                current_disk_write,
+                cur_rchar,
+                cur_wchar,
+                cur_minflt,
+                cur_majflt,
+                current_net_rx,
+                current_net_tx,
+            )
+        } else if let Some(baseline) = self.io_baseline.as_ref() {
+            (
+                current_disk_read.saturating_sub(baseline.disk_read_bytes),
+                current_disk_write.saturating_sub(baseline.disk_write_bytes),
+                option_sub(cur_rchar, baseline.syscall_read_bytes),
+                option_sub(cur_wchar, baseline.syscall_write_bytes),
+                option_sub(cur_minflt, baseline.page_faults_cached),
+                option_sub(cur_majflt, baseline.page_faults_disk),
+                current_net_rx.saturating_sub(baseline.sys_net_rx_bytes),
+                current_net_tx.saturating_sub(baseline.sys_net_tx_bytes),
+            )
+        } else {
+            self.io_baseline = Some(IoBaseline {
+                disk_read_bytes: current_disk_read,
+                disk_write_bytes: current_disk_write,
+                syscall_read_bytes: cur_rchar,
+                syscall_write_bytes: cur_wchar,
+                page_faults_cached: cur_minflt,
+                page_faults_disk: cur_majflt,
+                sys_net_rx_bytes: current_net_rx,
+                sys_net_tx_bytes: current_net_tx,
+            });
+            // First sample shows 0 delta; Option fields are Some(0) when source is available.
+            (
+                0,
+                0,
+                cur_rchar.map(|_| 0),
+                cur_wchar.map(|_| 0),
+                cur_minflt.map(|_| 0),
+                cur_majflt.map(|_| 0),
+                0,
+                0,
+            )
+        };
 
         let ts_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -606,6 +700,10 @@ impl ProcessMonitor {
             mem_vms_kb,
             disk_read_bytes,
             disk_write_bytes,
+            syscall_read_bytes,
+            syscall_write_bytes,
+            page_faults_cached,
+            page_faults_disk,
             sys_net_rx_bytes,
             sys_net_tx_bytes,
             thread_count,
@@ -756,45 +854,76 @@ impl ProcessMonitor {
                 // Get I/O stats for child
                 let current_disk_read = proc.disk_usage().total_read_bytes;
                 let current_disk_write = proc.disk_usage().total_written_bytes;
+                let current_syscall_io = read_syscall_io_bytes(*child_pid);
+                let current_faults = read_page_faults(*child_pid);
+                let cur_rchar = current_syscall_io.map(|(r, _)| r);
+                let cur_wchar = current_syscall_io.map(|(_, w)| w);
+                let cur_minflt = current_faults.map(|(m, _)| m);
+                let cur_majflt = current_faults.map(|(_, m)| m);
                 let current_net_rx = 0; // TODO: Implement for children
                 let current_net_tx = 0;
 
                 // Handle I/O baseline for child processes
-                let (disk_read_bytes, disk_write_bytes, sys_net_rx_bytes, sys_net_tx_bytes) =
-                    if self.since_process_start {
-                        // Show cumulative I/O since process start
-                        (
-                            current_disk_read,
-                            current_disk_write,
-                            current_net_rx,
-                            current_net_tx,
-                        )
-                    } else {
-                        // Show delta I/O since monitoring start
-                        match self.child_io_baselines.entry(*child_pid) {
-                            std::collections::hash_map::Entry::Vacant(e) => {
-                                // First time seeing this child - establish baseline
-                                e.insert(ChildIoBaseline {
-                                    pid: *child_pid,
-                                    disk_read_bytes: current_disk_read,
-                                    disk_write_bytes: current_disk_write,
-                                    sys_net_rx_bytes: current_net_rx,
-                                    sys_net_tx_bytes: current_net_tx,
-                                });
-                                (0, 0, 0, 0) // First sample shows 0 delta
-                            }
-                            std::collections::hash_map::Entry::Occupied(e) => {
-                                // Calculate delta from baseline
-                                let baseline = e.get();
-                                (
-                                    current_disk_read.saturating_sub(baseline.disk_read_bytes),
-                                    current_disk_write.saturating_sub(baseline.disk_write_bytes),
-                                    current_net_rx.saturating_sub(baseline.sys_net_rx_bytes),
-                                    current_net_tx.saturating_sub(baseline.sys_net_tx_bytes),
-                                )
-                            }
+                let (
+                    disk_read_bytes,
+                    disk_write_bytes,
+                    syscall_read_bytes,
+                    syscall_write_bytes,
+                    page_faults_cached,
+                    page_faults_disk,
+                    sys_net_rx_bytes,
+                    sys_net_tx_bytes,
+                ) = if self.since_process_start {
+                    (
+                        current_disk_read,
+                        current_disk_write,
+                        cur_rchar,
+                        cur_wchar,
+                        cur_minflt,
+                        cur_majflt,
+                        current_net_rx,
+                        current_net_tx,
+                    )
+                } else {
+                    match self.child_io_baselines.entry(*child_pid) {
+                        std::collections::hash_map::Entry::Vacant(e) => {
+                            e.insert(ChildIoBaseline {
+                                pid: *child_pid,
+                                disk_read_bytes: current_disk_read,
+                                disk_write_bytes: current_disk_write,
+                                syscall_read_bytes: cur_rchar,
+                                syscall_write_bytes: cur_wchar,
+                                page_faults_cached: cur_minflt,
+                                page_faults_disk: cur_majflt,
+                                sys_net_rx_bytes: current_net_rx,
+                                sys_net_tx_bytes: current_net_tx,
+                            });
+                            (
+                                0,
+                                0,
+                                cur_rchar.map(|_| 0),
+                                cur_wchar.map(|_| 0),
+                                cur_minflt.map(|_| 0),
+                                cur_majflt.map(|_| 0),
+                                0,
+                                0,
+                            )
                         }
-                    };
+                        std::collections::hash_map::Entry::Occupied(e) => {
+                            let baseline = e.get();
+                            (
+                                current_disk_read.saturating_sub(baseline.disk_read_bytes),
+                                current_disk_write.saturating_sub(baseline.disk_write_bytes),
+                                option_sub(cur_rchar, baseline.syscall_read_bytes),
+                                option_sub(cur_wchar, baseline.syscall_write_bytes),
+                                option_sub(cur_minflt, baseline.page_faults_cached),
+                                option_sub(cur_majflt, baseline.page_faults_disk),
+                                current_net_rx.saturating_sub(baseline.sys_net_rx_bytes),
+                                current_net_tx.saturating_sub(baseline.sys_net_tx_bytes),
+                            )
+                        }
+                    }
+                };
 
                 let child_ts_ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -815,6 +944,10 @@ impl ProcessMonitor {
                     mem_vms_kb: proc.virtual_memory() / 1024,
                     disk_read_bytes,
                     disk_write_bytes,
+                    syscall_read_bytes,
+                    syscall_write_bytes,
+                    page_faults_cached,
+                    page_faults_disk,
                     sys_net_rx_bytes,
                     sys_net_tx_bytes,
                     thread_count: get_thread_count(*child_pid),
@@ -849,6 +982,10 @@ impl ProcessMonitor {
                 mem_vms_kb: parent.mem_vms_kb,
                 disk_read_bytes: parent.disk_read_bytes,
                 disk_write_bytes: parent.disk_write_bytes,
+                syscall_read_bytes: parent.syscall_read_bytes,
+                syscall_write_bytes: parent.syscall_write_bytes,
+                page_faults_cached: parent.page_faults_cached,
+                page_faults_disk: parent.page_faults_disk,
                 sys_net_rx_bytes: parent.sys_net_rx_bytes,
                 sys_net_tx_bytes: parent.sys_net_tx_bytes,
                 thread_count: parent.thread_count,
@@ -865,6 +1002,18 @@ impl ProcessMonitor {
                 agg.mem_vms_kb += child.metrics.mem_vms_kb;
                 agg.disk_read_bytes += child.metrics.disk_read_bytes;
                 agg.disk_write_bytes += child.metrics.disk_write_bytes;
+                if let Some(v) = child.metrics.syscall_read_bytes {
+                    agg.syscall_read_bytes = Some(agg.syscall_read_bytes.unwrap_or(0) + v);
+                }
+                if let Some(v) = child.metrics.syscall_write_bytes {
+                    agg.syscall_write_bytes = Some(agg.syscall_write_bytes.unwrap_or(0) + v);
+                }
+                if let Some(v) = child.metrics.page_faults_cached {
+                    agg.page_faults_cached = Some(agg.page_faults_cached.unwrap_or(0) + v);
+                }
+                if let Some(v) = child.metrics.page_faults_disk {
+                    agg.page_faults_disk = Some(agg.page_faults_disk.unwrap_or(0) + v);
+                }
                 agg.sys_net_rx_bytes += child.metrics.sys_net_rx_bytes;
                 agg.sys_net_tx_bytes += child.metrics.sys_net_tx_bytes;
                 agg.thread_count += child.metrics.thread_count;
@@ -2204,6 +2353,10 @@ mod tests {
         let baseline = IoBaseline {
             disk_read_bytes: 100,
             disk_write_bytes: 200,
+            syscall_read_bytes: None,
+            syscall_write_bytes: None,
+            page_faults_cached: None,
+            page_faults_disk: None,
             sys_net_rx_bytes: 50,
             sys_net_tx_bytes: 75,
         };
@@ -2212,6 +2365,10 @@ mod tests {
             pid: 123,
             disk_read_bytes: 300,
             disk_write_bytes: 400,
+            syscall_read_bytes: None,
+            syscall_write_bytes: None,
+            page_faults_cached: None,
+            page_faults_disk: None,
             sys_net_rx_bytes: 150,
             sys_net_tx_bytes: 175,
         };

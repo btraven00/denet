@@ -64,6 +64,10 @@ Network I/O is reported as **namespace-wide** totals, not per-process. The value
 
 If you need per-process socket-level attribution, eBPF (enabled with `--features ebpf --enable-ebpf`) tracks individual syscalls and can give more precise network activity signals via the syscall intensity metrics.
 
+### Understanding Disk I/O Metrics
+
+denet reports three signals for disk activity on Linux: block-layer bytes (`disk_read_bytes`/`disk_write_bytes`), syscall bytes (`syscall_read_bytes`/`syscall_write_bytes`), and page-fault counts (`page_faults_cached`/`page_faults_disk`). They answer different questions — most importantly, `disk_read_bytes` shows `0` for cached reads and `mmap` access, which surprises users. See [docs/disk-io.md](docs/disk-io.md) for how to interpret and combine them.
+
 ### Command-Line Interface
 
 ```bash
