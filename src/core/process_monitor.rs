@@ -2666,4 +2666,69 @@ mod tests {
         // Test adaptive interval
         let _interval = monitor.adaptive_interval();
     }
+
+    #[test]
+    fn test_process_refresh_kind_excludes_tasks() {
+        // process_refresh_kind() must not enable task enumeration; sysinfo
+        // would otherwise list each OS thread as a child of its tgid, causing
+        // the tree walker to double-count CPU time.  Verify by refreshing with
+        // our kind and confirming no thread of this test process appears as a
+        // child process entry.
+        let pid = std::process::id();
+        let mut sys = sysinfo::System::new();
+        sys.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::All,
+            true,
+            process_refresh_kind(),
+        );
+        let pid_key = sysinfo::Pid::from_u32(pid);
+        let thread_children = sys
+            .processes()
+            .values()
+            .filter(|p| p.parent().map(|parent| parent == pid_key).unwrap_or(false))
+            .count();
+        assert_eq!(
+            thread_children, 0,
+            "process_refresh_kind() must not enumerate OS threads as child process entries"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_is_running_pid_monitor_after_process_exits() {
+        // Exercise the fallback refresh path in is_running(): a pid-based
+        // monitor (self.child == None) calls is_running() after the process
+        // has exited.
+        //
+        // sysinfo's targeted refresh (remove_dead_processes = false) keeps
+        // stale cache entries, so we must first flush them by calling
+        // get_child_pids(), which uses ProcessesToUpdate::All with
+        // remove_dead_processes = true.  After that flush, the targeted
+        // refresh in is_running() finds nothing and enters the full-tree
+        // ProcessesToUpdate::All fallback branch.
+        let mut child = std::process::Command::new("sleep")
+            .arg("10")
+            .spawn()
+            .expect("failed to spawn sleep");
+        let pid = child.id() as usize;
+
+        let mut monitor =
+            ProcessMonitor::from_pid(pid, Duration::from_millis(100), Duration::from_millis(500))
+                .expect("failed to create pid-based monitor");
+
+        let _ = child.kill();
+        let _ = child.wait();
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Flush the stale sysinfo entry: get_child_pids() does an All refresh
+        // with remove_dead_processes = true, which removes the dead pid.
+        let _ = monitor.get_child_pids();
+
+        // Now the targeted refresh in is_running() finds no entry and hits
+        // the ProcessesToUpdate::All fallback.
+        assert!(
+            !monitor.is_running(),
+            "pid-based monitor must report process as not running after exit"
+        );
+    }
 }

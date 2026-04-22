@@ -193,7 +193,6 @@ pub struct OffCpuProfiler {
 #[cfg(feature = "ebpf")]
 static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
 
-
 // Helper to create off-CPU stats entries for a thread
 fn create_offcpu_stats() -> OffCpuStats {
     OffCpuStats {
@@ -354,9 +353,7 @@ impl OffCpuProfiler {
     fn attach_tracepoint(&mut self) -> crate::error::Result<()> {
         let bpf = match &mut self.bpf {
             Some(bpf) => bpf,
-            None => {
-                return Err(std::io::Error::other("eBPF program not loaded").into())
-            }
+            None => return Err(std::io::Error::other("eBPF program not loaded").into()),
         };
 
         // List available programs
@@ -424,9 +421,7 @@ impl OffCpuProfiler {
     fn start_perf_buffer(&mut self) -> crate::error::Result<()> {
         let bpf = match &mut self.bpf {
             Some(bpf) => bpf,
-            None => {
-                return Err(std::io::Error::other("eBPF program not loaded").into())
-            }
+            None => return Err(std::io::Error::other("eBPF program not loaded").into()),
         };
 
         // Get the events perf buffer
@@ -526,7 +521,6 @@ impl OffCpuProfiler {
                             if events.read > 0 {
                                 // Process each buffer that contains events
                                 for buf in buffers.iter().take(events.read) {
-
                                     // Only process if buffer contains at least one complete event
                                     if buf.len() >= std::mem::size_of::<OffCpuEvent>() {
                                         // Safety: We're assuming the events from eBPF match our OffCpuEvent struct
