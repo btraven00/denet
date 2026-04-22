@@ -113,13 +113,22 @@ See [docs/python-api.md](docs/python-api.md) for the full Python API reference, 
 
 ## Adaptive Sampling
 
-Denet uses an intelligent adaptive sampling strategy to balance detail and efficiency:
+Denet adjusts its sampling interval based on how long the process has been running:
 
-1. **First second**: Samples at the base interval rate (fast sampling for short processes)
-2. **1-10 seconds**: Gradually increases from base to max interval
-3. **After 10 seconds**: Uses the maximum interval rate
+| Elapsed time | Interval |
+|---|---|
+| < 1 s | base interval (default **100 ms**) |
+| 1 – 10 s | linearly interpolated between base and max |
+| > 10 s | max interval (default **1000 ms**) |
 
-This approach ensures high-resolution data for short-lived processes while reducing overhead for long-running ones.
+This keeps resolution high for short processes and cuts overhead for long-running ones without any manual tuning.
+
+Override the defaults with `-i` / `--interval` (base, in ms) and `-m` / `--max-interval` (max, in ms):
+
+```bash
+# Sample every 50 ms for the first second, ramp to 500 ms after 10 s
+denet -i 50 -m 500 run python train.py
+```
 
 ## GPU Monitoring
 
