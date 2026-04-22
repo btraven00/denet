@@ -12,6 +12,20 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{self, Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
+/// Default process refresh flags.
+///
+/// `ProcessRefreshKind::everything()` enables `tasks: true`, which makes
+/// sysinfo enumerate every kernel thread under `/proc/[tgid]/task/` as its
+/// own entry in `System::processes()`. Those task entries report the tgid as
+/// their parent, so any code that walks `processes()` looking for children
+/// would treat each thread of the monitored process as a child and
+/// double-count its CPU time (the parent's `/proc/[pid]/stat` already
+/// includes all threads). We never read `process.tasks()`, so disable it
+/// everywhere.
+fn process_refresh_kind() -> ProcessRefreshKind {
+    ProcessRefreshKind::everything().without_tasks()
+}
+
 // Constants for better maintainability
 const DEFAULT_THREAD_COUNT: usize = 1;
 // Linux-specific constants with separate test access
@@ -250,7 +264,7 @@ impl ProcessMonitor {
             sys.refresh_processes_specifics(
                 ProcessesToUpdate::Some(&[pid_sys]),
                 true,
-                ProcessRefreshKind::everything(),
+                process_refresh_kind(),
             );
             if sys.process(pid_sys).is_some() {
                 process_found = true;
@@ -336,7 +350,7 @@ impl ProcessMonitor {
             let mut pids = vec![self.pid as u32];
 
             // Add child PIDs
-            self.sys.refresh_processes(ProcessesToUpdate::All, true);
+            self.sys.refresh_processes_specifics(ProcessesToUpdate::All, true, process_refresh_kind());
             if let Some(_parent_proc) = self.sys.process(Pid::from_u32(self.pid as u32)) {
                 for (child_pid, _) in self.sys.processes() {
                     if let Some(child_proc) = self.sys.process(*child_pid) {
@@ -479,7 +493,7 @@ impl ProcessMonitor {
         self.sys.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[pid]),
             false,
-            ProcessRefreshKind::everything(),
+            process_refresh_kind(),
         );
 
         let process = self.sys.process(pid)?;
@@ -518,7 +532,7 @@ impl ProcessMonitor {
                 self.sys.refresh_processes_specifics(
                     ProcessesToUpdate::Some(&[pid]),
                     false,
-                    ProcessRefreshKind::everything(),
+                    process_refresh_kind(),
                 );
 
                 // Get updated CPU usage if process still exists
@@ -616,12 +630,12 @@ impl ProcessMonitor {
             self.sys.refresh_processes_specifics(
                 ProcessesToUpdate::Some(&[pid]),
                 false,
-                ProcessRefreshKind::everything(),
+                process_refresh_kind(),
             );
 
             // If specific refresh doesn't work, try refreshing all processes
             if self.sys.process(pid).is_none() {
-                self.sys.refresh_processes(ProcessesToUpdate::All, true);
+                self.sys.refresh_processes_specifics(ProcessesToUpdate::All, true, process_refresh_kind());
 
                 // Give a small amount of time for the process to be detected
                 // This helps with the test reliability
@@ -655,7 +669,7 @@ impl ProcessMonitor {
         self.sys.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[pid]),
             false,
-            ProcessRefreshKind::everything(),
+            process_refresh_kind(),
         );
 
         if let Some(proc) = self.sys.process(pid) {
@@ -685,7 +699,7 @@ impl ProcessMonitor {
 
     // Get all child processes recursively
     pub fn get_child_pids(&mut self) -> Vec<usize> {
-        self.sys.refresh_processes(ProcessesToUpdate::All, true);
+        self.sys.refresh_processes_specifics(ProcessesToUpdate::All, true, process_refresh_kind());
         let mut children = Vec::new();
         self.find_children_recursive(self.pid, &mut children);
         children
@@ -727,7 +741,7 @@ impl ProcessMonitor {
             self.sys.refresh_processes_specifics(
                 ProcessesToUpdate::Some(&[pid]),
                 false,
-                ProcessRefreshKind::everything(),
+                process_refresh_kind(),
             );
 
             if let Some(proc) = self.sys.process(pid) {
