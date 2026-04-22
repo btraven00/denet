@@ -11,6 +11,13 @@ use std::collections::HashMap;
 #[cfg(feature = "ebpf")]
 use aya::{maps::HashMap as BpfHashMap, Ebpf, EbpfLoader};
 
+#[cfg(feature = "ebpf")]
+type EbpfMaps = (
+    Ebpf,
+    BpfHashMap<aya::maps::MapData, u32, u32>,
+    BpfHashMap<aya::maps::MapData, u32, u64>,
+);
+
 // Include compiled eBPF bytecode with 8-byte alignment required by the `object`
 // crate's ELF parser (it casts the slice directly to FileHeader64).
 #[cfg(feature = "ebpf")]

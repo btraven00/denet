@@ -1288,15 +1288,12 @@ impl OffCpuProfiler {
                             }
                         }
 
-                        // Track how many frames we process
                         let total_frames = stack_frames.len();
-                        let mut processed_frames = 0;
-                        let mut symbolicated_frames = 0;
 
                         if self.debug_mode {
                             debug::debug_println(&format!(
-                                "Processing {} stack frames for PID {} (processed: {}, symbolicated: {})",
-                                total_frames, target_pid, processed_frames, symbolicated_frames
+                                "Processing {} stack frames for PID {}",
+                                total_frames, target_pid
                             ));
 
                             if total_frames == 0 && is_user_stack {
@@ -1324,8 +1321,6 @@ impl OffCpuProfiler {
                                 continue;
                             }
 
-                            processed_frames += 1;
-
                             let mut stack_frame = StackFrame {
                                 address: addr,
                                 symbol: None,
@@ -1333,7 +1328,6 @@ impl OffCpuProfiler {
                             };
 
                             if let Some(region) = find_region_for_address(addr, &regions) {
-                                symbolicated_frames += 1;
                                 if let Some(path) = &region.pathname {
                                     let offset = addr - region.start_addr + region.offset;
                                     if self.debug_mode {
@@ -1357,7 +1351,6 @@ impl OffCpuProfiler {
                                                 stack_frame.source_location
                                             ));
                                         }
-                                        symbolicated_frames += 1;
                                     } else if self.debug_mode {
                                         debug::debug_println(&format!(
                                             "No symbol found for addr 0x{:x} (offset 0x{:x}) in {}",

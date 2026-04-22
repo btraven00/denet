@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 
 use crate::symbolication::{get_memory_maps, MemoryRegion};
 
+type CacheMap = HashMap<u32, (Vec<MemoryRegion>, Instant)>;
+
 /// Cache for process memory maps to support stack trace symbolication
 #[derive(Debug, Clone)]
 pub struct MemoryMapCache {
