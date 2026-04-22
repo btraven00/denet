@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.0](https://github.com/btraven00/denet/compare/v0.5.0...v0.6.0) (2026-04-22)
+
+
+### Features
+
+* expose syscall I/O and page-fault counters for cache/mmap visibility ([#23](https://github.com/btraven00/denet/issues/23)) ([070e0b9](https://github.com/btraven00/denet/commit/070e0b908dc90b40d702055db241105f657a6ca1))
+* **summary:** add SyscallIntensitySummary to Summary ([36b2316](https://github.com/btraven00/denet/commit/36b2316d4107fc5081618fcd727d92d18a5627f3))
+
+
+### Bug Fixes
+
+* add serde aliases for renamed net_rx/tx_bytes fields and update test assertions ([2c62fe1](https://github.com/btraven00/denet/commit/2c62fe11b9fff0c7d231b2a26fc65463d3bc5726))
+* **cli:** remove default out.json dump, require explicit --out PATH ([d820cb3](https://github.com/btraven00/denet/commit/d820cb37c4b83831ffec49528e3f69894d7b3eae))
+* eBPF tracepoint and document capabilities ([#21](https://github.com/btraven00/denet/issues/21)) ([4ac2872](https://github.com/btraven00/denet/commit/4ac2872a931c4fdc6399d0933864cf7244aaed21))
+* **ebpf:** remove duplicate refresh_maps_for_pid calls in OffCpuProfiler constructor ([2722ea7](https://github.com/btraven00/denet/commit/2722ea764e8e135a0690cde302e32bb5c859d444))
+* thread aggregation double count ([#24](https://github.com/btraven00/denet/issues/24)) ([c6cfe42](https://github.com/btraven00/denet/commit/c6cfe420da66ab02080c6ef9c0d1570fc72a8d5e))
+
 ## [0.5.0](https://github.com/btraven00/denet/compare/v0.4.2...v0.5.0) (2026-04-14)
 
 
