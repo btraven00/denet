@@ -335,7 +335,7 @@ impl ProcessMonitor {
             // Add child PIDs
             self.sys.refresh_processes(ProcessesToUpdate::All, true);
             if let Some(_parent_proc) = self.sys.process(Pid::from_u32(self.pid as u32)) {
-                for (child_pid, _) in self.sys.processes() {
+                for child_pid in self.sys.processes().keys() {
                     if let Some(child_proc) = self.sys.process(*child_pid) {
                         if let Some(parent_pid) = child_proc.parent() {
                             if parent_pid == Pid::from_u32(self.pid as u32) {

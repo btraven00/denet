@@ -147,7 +147,7 @@ impl SyscallTracker {
                             .output()
                         {
                             let bpf_fs = String::from_utf8_lossy(&output.stdout);
-                            crate::ebpf::debug::debug_println(&format!("{}", bpf_fs.trim()));
+                            crate::ebpf::debug::debug_println(bpf_fs.trim());
                             log::warn!("{}", bpf_fs.trim());
                         }
                     } else {
@@ -199,6 +199,7 @@ impl SyscallTracker {
     /// Initialize eBPF program and maps
     /// For this implementation, we'll use a hybrid approach with real Linux interfaces
     #[cfg(feature = "ebpf")]
+    #[allow(clippy::type_complexity)]
     fn init_ebpf() -> Result<(
         Ebpf,
         BpfHashMap<aya::maps::MapData, u32, u32>,
@@ -314,7 +315,7 @@ impl SyscallTracker {
                                     let _ = file.write_all(objdump_info.as_bytes());
                                 }
                             } else {
-                                crate::ebpf::debug::debug_println(&format!("{}", objdump_info.trim()));
+                                crate::ebpf::debug::debug_println(objdump_info.trim());
                             }
                         }
                     }
@@ -772,10 +773,16 @@ impl SyscallTracker {
                             Ok(_) => {
                                 attached_count += 1;
                                 log::info!("✓ Attached tracepoint for {}", syscall_name);
-                                crate::ebpf::debug::debug_println(&format!("Attached tracepoint for {}", syscall_name));
+                                crate::ebpf::debug::debug_println(&format!(
+                                    "Attached tracepoint for {}",
+                                    syscall_name
+                                ));
                             }
                             Err(e) => {
-                                let msg = format!("Failed to attach {} tracepoint: {:?}", syscall_name, e);
+                                let msg = format!(
+                                    "Failed to attach {} tracepoint: {:?}",
+                                    syscall_name, e
+                                );
                                 log::warn!("{}", msg);
                                 crate::ebpf::debug::debug_println(&msg);
                             }

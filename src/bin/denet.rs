@@ -553,18 +553,37 @@ fn execute_monitoring_with_output(
 }
 
 fn color_for_cpu(cpu: f32) -> &'static str {
-    if cpu < 10.0 { "green" } else if cpu < 50.0 { "yellow" } else { "red" }
+    if cpu < 10.0 {
+        "green"
+    } else if cpu < 50.0 {
+        "yellow"
+    } else {
+        "red"
+    }
 }
 
 fn color_for_mem(mem_mb: f64) -> &'static str {
-    if mem_mb < 100.0 { "green" } else if mem_mb < 500.0 { "yellow" } else { "red" }
+    if mem_mb < 100.0 {
+        "green"
+    } else if mem_mb < 500.0 {
+        "yellow"
+    } else {
+        "red"
+    }
 }
 
 #[cfg(feature = "gpu")]
 fn color_for_util(util: u32) -> &'static str {
-    if util < 30 { "green" } else if util < 70 { "yellow" } else { "red" }
+    if util < 30 {
+        "green"
+    } else if util < 70 {
+        "yellow"
+    } else {
+        "red"
+    }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn format_base(
     cpu_usage: f32,
     mem_rss_kb: u64,
@@ -624,7 +643,10 @@ fn append_gpu_suffix(base: String, gpu: Option<&denet::gpu::GpuMetrics>, compact
                 return format!("{base} | GPU {}%", format!("{util}").color(color));
             } else {
                 let gb = mem as f64 / (1024.0 * 1024.0 * 1024.0);
-                return format!("{base} | GPU: {}%, {gb:.1}GB", format!("{util}").color(color));
+                return format!(
+                    "{base} | GPU: {}%, {gb:.1}GB",
+                    format!("{util}").color(color)
+                );
             }
         } else if gpu_metrics.total_process_memory_usage() > 0 {
             let mem = gpu_metrics.total_process_memory_usage();
@@ -639,17 +661,26 @@ fn append_gpu_suffix(base: String, gpu: Option<&denet::gpu::GpuMetrics>, compact
     } else if let Some(util) = gpu_metrics.max_system_utilization() {
         let color = color_for_util(util);
         let sep = if compact { "" } else { ":" };
-        return format!("{base} | GPU{sep} {}% (sys)", format!("{util}").color(color));
+        return format!(
+            "{base} | GPU{sep} {}% (sys)",
+            format!("{util}").color(color)
+        );
     }
     base
 }
 
 fn format_metrics(metrics: &Metrics) -> String {
     let base = format_base(
-        metrics.cpu_usage, metrics.mem_rss_kb, metrics.thread_count,
-        metrics.disk_read_bytes, metrics.disk_write_bytes,
-        metrics.sys_net_rx_bytes, metrics.sys_net_tx_bytes,
-        metrics.uptime_secs, None, false,
+        metrics.cpu_usage,
+        metrics.mem_rss_kb,
+        metrics.thread_count,
+        metrics.disk_read_bytes,
+        metrics.disk_write_bytes,
+        metrics.sys_net_rx_bytes,
+        metrics.sys_net_tx_bytes,
+        metrics.uptime_secs,
+        None,
+        false,
     );
     #[cfg(feature = "gpu")]
     return append_gpu_suffix(base, metrics.gpu.as_ref(), false);
@@ -659,10 +690,16 @@ fn format_metrics(metrics: &Metrics) -> String {
 
 fn format_metrics_compact(metrics: &Metrics) -> String {
     let base = format_base(
-        metrics.cpu_usage, metrics.mem_rss_kb, metrics.thread_count,
-        metrics.disk_read_bytes, metrics.disk_write_bytes,
-        metrics.sys_net_rx_bytes, metrics.sys_net_tx_bytes,
-        metrics.uptime_secs, None, true,
+        metrics.cpu_usage,
+        metrics.mem_rss_kb,
+        metrics.thread_count,
+        metrics.disk_read_bytes,
+        metrics.disk_write_bytes,
+        metrics.sys_net_rx_bytes,
+        metrics.sys_net_tx_bytes,
+        metrics.uptime_secs,
+        None,
+        true,
     );
     #[cfg(feature = "gpu")]
     return append_gpu_suffix(base, metrics.gpu.as_ref(), true);
@@ -672,10 +709,16 @@ fn format_metrics_compact(metrics: &Metrics) -> String {
 
 fn format_aggregated_metrics(metrics: &AggregatedMetrics) -> String {
     let base = format_base(
-        metrics.cpu_usage, metrics.mem_rss_kb, metrics.thread_count,
-        metrics.disk_read_bytes, metrics.disk_write_bytes,
-        metrics.sys_net_rx_bytes, metrics.sys_net_tx_bytes,
-        metrics.uptime_secs, Some(metrics.process_count), false,
+        metrics.cpu_usage,
+        metrics.mem_rss_kb,
+        metrics.thread_count,
+        metrics.disk_read_bytes,
+        metrics.disk_write_bytes,
+        metrics.sys_net_rx_bytes,
+        metrics.sys_net_tx_bytes,
+        metrics.uptime_secs,
+        Some(metrics.process_count),
+        false,
     );
     #[cfg(feature = "gpu")]
     return append_gpu_suffix(base, metrics.gpu.as_ref(), false);
@@ -685,10 +728,16 @@ fn format_aggregated_metrics(metrics: &AggregatedMetrics) -> String {
 
 fn format_aggregated_metrics_compact(metrics: &AggregatedMetrics) -> String {
     let base = format_base(
-        metrics.cpu_usage, metrics.mem_rss_kb, metrics.thread_count,
-        metrics.disk_read_bytes, metrics.disk_write_bytes,
-        metrics.sys_net_rx_bytes, metrics.sys_net_tx_bytes,
-        metrics.uptime_secs, Some(metrics.process_count), true,
+        metrics.cpu_usage,
+        metrics.mem_rss_kb,
+        metrics.thread_count,
+        metrics.disk_read_bytes,
+        metrics.disk_write_bytes,
+        metrics.sys_net_rx_bytes,
+        metrics.sys_net_tx_bytes,
+        metrics.uptime_secs,
+        Some(metrics.process_count),
+        true,
     );
     #[cfg(feature = "gpu")]
     return append_gpu_suffix(base, metrics.gpu.as_ref(), true);
