@@ -60,7 +60,7 @@ sudo target/release/denet --enable-ebpf run -- your_command_here
 ### Option 2: Set Up Non-Root Access (recommended for production)
 
 eBPF tracepoints require:
-1. The `CAP_BPF` and `CAP_PERFMON` capabilities
+1. The `CAP_BPF`, `CAP_PERFMON`, and `CAP_DAC_READ_SEARCH` capabilities
 2. Access to the tracefs filesystem in `/sys/kernel/debug/tracing`
 3. Proper kernel settings (see Prerequisites above)
 
@@ -68,14 +68,21 @@ eBPF tracepoints require:
 
 ```bash
 # Required capabilities for eBPF tracepoint access
-sudo setcap cap_bpf,cap_perfmon=ep /path/to/denet/target/release/denet
+sudo setcap cap_bpf,cap_perfmon,cap_dac_read_search=ep /path/to/denet/target/release/denet
 
 # Verify capabilities are set
 getcap /path/to/denet/target/release/denet
-# Should show: cap_perfmon,cap_bpf=ep
+# Should show: cap_dac_read_search,cap_perfmon,cap_bpf=ep
 ```
 
-**Note**: Both `CAP_BPF` and `CAP_PERFMON` are required for tracepoint access on modern kernels (5.8+).
+**Note**: On modern kernels (5.8+) tracepoint access needs:
+- `CAP_BPF` — create/load BPF maps and programs.
+- `CAP_PERFMON` — `perf_event_open(PERF_TYPE_TRACEPOINT, …)` to attach the program.
+- `CAP_DAC_READ_SEARCH` — read `/sys/kernel/tracing/events/<subsystem>/<event>/id`,
+  which is mode `0400` root-owned on most distros. Without this cap the attach
+  step fails with `No such file or directory` (misleading; it's really EACCES
+  when userspace follows the symlink). Dropping this cap means you must add
+  your user to a group with read access to tracefs (see section 2).
 
 #### 2. Configure tracefs Access (Non-Persistent)
 
@@ -141,7 +148,7 @@ If you encounter issues with eBPF:
    ```bash
    getcap /path/to/denet/target/release/denet
    ```
-   Should show `cap_perfmon,cap_bpf=ep`.
+   Should show `cap_dac_read_search,cap_perfmon,cap_bpf=ep`.
 
 5. **Check if you're in the tracing group**:
    ```bash
@@ -154,7 +161,7 @@ If you encounter issues with eBPF:
    cargo build --release --bin ebpf_diag --features ebpf
    
    # Set capabilities
-   sudo setcap cap_bpf,cap_perfmon=ep target/release/ebpf_diag
+   sudo setcap cap_bpf,cap_perfmon,cap_dac_read_search=ep target/release/ebpf_diag
    
    # Run diagnostics
    ./target/release/ebpf_diag --debug

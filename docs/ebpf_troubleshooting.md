@@ -48,14 +48,20 @@ This will perform a comprehensive check of your system's eBPF capabilities and p
 sudo denet --enable-ebpf run -- your_command
 ```
 
-#### Verify CAP_BPF capability
+#### Verify required capabilities
 ```bash
-# Check if the binary has the capability
+# Check if the binary has the capabilities
 getcap $(which denet)
+# Expected: cap_dac_read_search,cap_perfmon,cap_bpf=ep
 
-# Add the capability if missing
-sudo setcap cap_bpf+ep $(which denet)
+# Add all three capabilities if missing
+sudo setcap cap_bpf,cap_perfmon,cap_dac_read_search=ep $(which denet)
 ```
+
+Tracepoint attach needs all three:
+- `cap_bpf` — load the program, create maps
+- `cap_perfmon` — `perf_event_open` for tracepoints
+- `cap_dac_read_search` — read `/sys/kernel/tracing/events/*/id` (root-owned 0400)
 
 #### Check tracefs permissions
 ```bash

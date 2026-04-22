@@ -15,10 +15,22 @@ use std::env;
 
 use std::process::{exit, Command};
 
-// Include compiled eBPF bytecode
+// Include compiled eBPF bytecode with 8-byte alignment required by the `object`
+// crate's ELF parser (it casts the slice directly to FileHeader64).
 #[cfg(feature = "ebpf")]
-const SYSCALL_TRACER_BYTECODE: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/ebpf/syscall_tracer.o"));
+#[repr(align(8))]
+struct AlignedBytes<const N: usize>([u8; N]);
+
+#[cfg(feature = "ebpf")]
+static SYSCALL_TRACER_BYTECODE_ALIGNED: AlignedBytes<
+    { include_bytes!(concat!(env!("OUT_DIR"), "/ebpf/syscall_tracer.o")).len() },
+> = AlignedBytes(*include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/ebpf/syscall_tracer.o"
+)));
+
+#[cfg(feature = "ebpf")]
+const SYSCALL_TRACER_BYTECODE: &[u8] = &SYSCALL_TRACER_BYTECODE_ALIGNED.0;
 
 fn separator() {
     println!("\n{}", "=".repeat(80));
@@ -264,8 +276,11 @@ fn try_load_ebpf() -> bool {
                                         println!("✓ Program loaded successfully");
 
                                         // Try to attach it
-                                        let tracepoint_name =
-                                            name.replace("trace_", "sys_").replace("_enter", "");
+                                        let tracepoint_name = format!(
+                                            "sys_enter_{}",
+                                            name.trim_start_matches("trace_")
+                                                .trim_end_matches("_enter")
+                                        );
                                         println!(
                                             "Attempting to attach to syscalls/{}...",
                                             tracepoint_name
