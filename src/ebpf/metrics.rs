@@ -191,8 +191,7 @@ pub fn categorize_syscall(syscall_nr: u64) -> String {
         | 229 | 230 | 249 | 252 | 277 | 278 | 279 | 280 => "time".to_string(),
 
         // Inter-process communication
-        63 | 64 | 65 | 66 | 67 | 68 | 69 | 70 | 71 | 72 | 73 | 74 | 75 | 76 | 77 | 78 | 79 | 80
-        | 81 => "ipc".to_string(),
+        63..=81 => "ipc".to_string(),
 
         // Security, permissions, capabilities
         91 | 92 | 95 | 123 | 124 | 125 | 126 | 137 | 138 | 139 | 140 | 141 | 142 | 157 | 163

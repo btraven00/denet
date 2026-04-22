@@ -338,8 +338,7 @@ mod tests {
             assert!(py_err.is_instance_of::<PyRuntimeError>(py));
 
             // Test Serialization error conversion (fallback)
-            let json_err =
-                serde_json::Error::io(io::Error::new(io::ErrorKind::Other, "JSON error"));
+            let json_err = serde_json::Error::io(io::Error::other("JSON error"));
             let denet_err = DenetError::Serialization(json_err);
             let py_err: pyo3::PyErr = denet_err.into();
             assert!(py_err.is_instance_of::<PyRuntimeError>(py));

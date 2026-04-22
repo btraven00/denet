@@ -133,8 +133,7 @@ pub struct ProcessMonitor {
     io_baseline: Option<IoBaseline>,
     child_io_baselines: std::collections::HashMap<usize, ChildIoBaseline>,
     since_process_start: bool,
-    _include_children: bool,
-    _max_duration: Option<Duration>,
+    include_children: bool,
     enable_ebpf: bool,
     debug_mode: bool,
     #[cfg(feature = "ebpf")]
@@ -198,8 +197,7 @@ impl ProcessMonitor {
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards")
                 .as_millis() as u64,
-            _include_children: true,
-            _max_duration: None,
+            include_children: true,
             debug_mode: false,
             io_baseline: None,
             child_io_baselines: std::collections::HashMap::new(),
@@ -280,8 +278,7 @@ impl ProcessMonitor {
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards")
                 .as_millis() as u64,
-            _include_children: true,
-            _max_duration: None,
+            include_children: true,
             debug_mode: false,
             io_baseline: None,
             child_io_baselines: std::collections::HashMap::new(),
@@ -338,7 +335,7 @@ impl ProcessMonitor {
             // Add child PIDs
             self.sys.refresh_processes(ProcessesToUpdate::All, true);
             if let Some(_parent_proc) = self.sys.process(Pid::from_u32(self.pid as u32)) {
-                for (child_pid, _) in self.sys.processes() {
+                for child_pid in self.sys.processes().keys() {
                     if let Some(child_proc) = self.sys.process(*child_pid) {
                         if let Some(parent_pid) = child_proc.parent() {
                             if parent_pid == Pid::from_u32(self.pid as u32) {
@@ -639,13 +636,13 @@ impl ProcessMonitor {
 
     /// Set whether to include children processes in monitoring
     pub fn set_include_children(&mut self, include_children: bool) -> &mut Self {
-        self._include_children = include_children;
+        self.include_children = include_children;
         self
     }
 
     /// Get whether children processes are included in monitoring
     pub fn get_include_children(&self) -> bool {
-        self._include_children
+        self.include_children
     }
 
     /// Returns metadata about the monitored process

@@ -206,7 +206,7 @@ impl GpuMonitor {
     /// Get device count using nvidia-smi
     #[cfg(feature = "gpu")]
     fn get_device_count_nvidia_smi() -> u32 {
-        let output = Command::new("nvidia-smi").args(&["-L"]).output();
+        let output = Command::new("nvidia-smi").args(["-L"]).output();
 
         if let Ok(output) = output {
             if output.status.success() {
@@ -342,7 +342,7 @@ impl GpuMonitor {
 
         // Use nvidia-smi pmon to get per-process utilization
         let output = Command::new("nvidia-smi")
-            .args(&["pmon", "-c", "1", "-s", "u"])
+            .args(["pmon", "-c", "1", "-s", "u"])
             .output();
 
         if let Ok(output) = output {

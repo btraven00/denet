@@ -147,7 +147,7 @@ impl SyscallTracker {
                             .output()
                         {
                             let bpf_fs = String::from_utf8_lossy(&output.stdout);
-                            crate::ebpf::debug::debug_println(&format!("{}", bpf_fs.trim()));
+                            crate::ebpf::debug::debug_println(bpf_fs.trim());
                             log::warn!("{}", bpf_fs.trim());
                         }
                     } else {
@@ -199,6 +199,7 @@ impl SyscallTracker {
     /// Initialize eBPF program and maps
     /// For this implementation, we'll use a hybrid approach with real Linux interfaces
     #[cfg(feature = "ebpf")]
+    #[allow(clippy::type_complexity)]
     fn init_ebpf() -> Result<(
         Ebpf,
         BpfHashMap<aya::maps::MapData, u32, u32>,
@@ -314,7 +315,7 @@ impl SyscallTracker {
                                     let _ = file.write_all(objdump_info.as_bytes());
                                 }
                             } else {
-                                crate::ebpf::debug::debug_println(&format!("{}", objdump_info.trim()));
+                                crate::ebpf::debug::debug_println(objdump_info.trim());
                             }
                         }
                     }
@@ -761,7 +762,9 @@ impl SyscallTracker {
                     aya::programs::Program::TracePoint(tracepoint) => {
                         // Load the program
                         if let Err(e) = tracepoint.load() {
-                            log::warn!("Failed to load {} program: {}", syscall_name, e);
+                            let msg = format!("Failed to load {} program: {:?}", syscall_name, e);
+                            log::warn!("{}", msg);
+                            crate::ebpf::debug::debug_println(&msg);
                             continue;
                         }
 
@@ -770,18 +773,31 @@ impl SyscallTracker {
                             Ok(_) => {
                                 attached_count += 1;
                                 log::info!("✓ Attached tracepoint for {}", syscall_name);
+                                crate::ebpf::debug::debug_println(&format!(
+                                    "Attached tracepoint for {}",
+                                    syscall_name
+                                ));
                             }
                             Err(e) => {
-                                log::warn!("Failed to attach {} tracepoint: {}", syscall_name, e);
+                                let msg = format!(
+                                    "Failed to attach {} tracepoint: {:?}",
+                                    syscall_name, e
+                                );
+                                log::warn!("{}", msg);
+                                crate::ebpf::debug::debug_println(&msg);
                             }
                         }
                     }
                     _ => {
-                        log::warn!("Program {} is not a tracepoint", program_name);
+                        let msg = format!("Program {} is not a tracepoint", program_name);
+                        log::warn!("{}", msg);
+                        crate::ebpf::debug::debug_println(&msg);
                     }
                 }
             } else {
-                log::warn!("Program {} not found", program_name);
+                let msg = format!("Program {} not found", program_name);
+                log::warn!("{}", msg);
+                crate::ebpf::debug::debug_println(&msg);
             }
         }
 
@@ -826,9 +842,24 @@ impl SyscallTracker {
                 }
             }
 
-            return Err(crate::error::DenetError::EbpfInitError(
-                "Failed to attach any tracepoints".to_string(),
-            ));
+            let paranoid = std::fs::read_to_string("/proc/sys/kernel/perf_event_paranoid")
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok());
+
+            let hint = match paranoid {
+                Some(v) if v >= 3 => format!(
+                    " perf_event_paranoid={} (Ubuntu/hardened kernel level) blocks perf_event_open \
+                     even with CAP_PERFMON. Fix: sudo sysctl -w kernel.perf_event_paranoid=1",
+                    v
+                ),
+                Some(v) => format!(" perf_event_paranoid={}", v),
+                None => String::new(),
+            };
+
+            return Err(crate::error::DenetError::EbpfInitError(format!(
+                "Failed to attach any tracepoints.{}",
+                hint
+            )));
         }
 
         log::info!(
