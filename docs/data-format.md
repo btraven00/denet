@@ -78,6 +78,16 @@ Includes all fields from Individual Process Metrics plus:
 
 ## Example Complete Record
 
+The output is [JSON Lines](https://jsonlines.org/) — one JSON object per line, newline-delimited. Each line is a self-contained record and can be parsed independently (e.g. with `jq`).
+
+The **first line is a header** containing process metadata (pid, command, `t0_ms`). All subsequent lines are metric samples.
+
+Timestamps use Unix milliseconds (ms since 1970-01-01 00:00:00 UTC):
+- `t0_ms`: process start time, in the header line only
+- `ts_ms`: sample timestamp in every metrics line
+
+To get the elapsed time of a sample relative to process start: `elapsed_ms = ts_ms - t0_ms`.
+
 ```json
 {"pid":1234,"cmd":["python","script.py"],"exe":"/usr/bin/python3","t0_ms":1748542000000}
 {"ts_ms":1748542001000,"parent":{"ts_ms":1748542001050,"cpu_usage":15.2,"mem_rss_kb":8192,"mem_vms_kb":32768,"disk_read_bytes":1024,"disk_write_bytes":2048,"net_rx_bytes":512,"net_tx_bytes":256,"thread_count":3,"uptime_secs":1},"children":[{"pid":1235,"command":"worker","metrics":{"ts_ms":1748542001060,"cpu_usage":5.1,"mem_rss_kb":4096,"mem_vms_kb":16384,"disk_read_bytes":512,"disk_write_bytes":0,"net_rx_bytes":0,"net_tx_bytes":0,"thread_count":1,"uptime_secs":1}}],"aggregated":{"ts_ms":1748542001000,"cpu_usage":20.3,"mem_rss_kb":12288,"mem_vms_kb":49152,"disk_read_bytes":1536,"disk_write_bytes":2048,"net_rx_bytes":512,"net_tx_bytes":256,"thread_count":4,"process_count":2,"uptime_secs":1}}

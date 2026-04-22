@@ -173,6 +173,18 @@ denet/
 
 7. The GitHub Actions workflow will automatically build and publish to PyPI
 
+## Stack Traces and Symbolication
+
+When eBPF off-CPU profiling is enabled, denet captures user-space stack IDs via `bpf_get_stackid()` and resolves them to symbol names in userspace. Symbolication reads `/proc/{pid}/maps` to find loaded shared libraries and executables, then invokes `addr2line` to map instruction addresses to function names and source locations.
+
+For best results:
+
+- Build monitored programs with debug symbols (`-g`). Without DWARF info, symbolication falls back to raw hex addresses.
+- JIT-compiled languages (Python, Java, Node.js) show JIT trampolines rather than source-level frames. Use frame pointer compilation flags or language-specific debug packages for better results.
+- Kernel stacks require `CONFIG_BPF_STACK_TRACE` and are not collected by default.
+
+See `docs/offcpu.md` for the full off-CPU architecture and known limitations.
+
 ## Code Style
 
 ### Rust

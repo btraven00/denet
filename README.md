@@ -195,14 +195,6 @@ denet --enable-ebpf run sleep 5
 }
 ```
 
-### Notes on stack traces
-
-Stack symbolication uses `/proc/{pid}/maps` and `addr2line`. For best results:
-
-- Build monitored programs with debug symbols (`-g`)
-- JIT-compiled languages (Python, Java, Node.js) produce limited stack information
-- See `docs/offcpu.md` for troubleshooting and architecture details
-
 ## Development
 
 For detailed developer documentation — including development requirements, project structure, workflow, testing, and release process — see [docs/dev.md](docs/dev.md).
