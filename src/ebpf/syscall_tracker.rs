@@ -11,6 +11,13 @@ use std::collections::HashMap;
 #[cfg(feature = "ebpf")]
 use aya::{maps::HashMap as BpfHashMap, Ebpf, EbpfLoader};
 
+#[cfg(feature = "ebpf")]
+type EbpfMaps = (
+    Ebpf,
+    BpfHashMap<aya::maps::MapData, u32, u32>,
+    BpfHashMap<aya::maps::MapData, u32, u64>,
+);
+
 // Include compiled eBPF bytecode with 8-byte alignment required by the `object`
 // crate's ELF parser (it casts the slice directly to FileHeader64).
 #[cfg(feature = "ebpf")]
@@ -147,7 +154,7 @@ impl SyscallTracker {
                             .output()
                         {
                             let bpf_fs = String::from_utf8_lossy(&output.stdout);
-                            crate::ebpf::debug::debug_println(&format!("{}", bpf_fs.trim()));
+                            crate::ebpf::debug::debug_println(bpf_fs.trim());
                             log::warn!("{}", bpf_fs.trim());
                         }
                     } else {
@@ -199,11 +206,7 @@ impl SyscallTracker {
     /// Initialize eBPF program and maps
     /// For this implementation, we'll use a hybrid approach with real Linux interfaces
     #[cfg(feature = "ebpf")]
-    fn init_ebpf() -> Result<(
-        Ebpf,
-        BpfHashMap<aya::maps::MapData, u32, u32>,
-        BpfHashMap<aya::maps::MapData, u32, u64>,
-    )> {
+    fn init_ebpf() -> Result<EbpfMaps> {
         // Load real eBPF bytecode!
         log::info!("Loading real eBPF program for syscall tracking...");
         crate::ebpf::debug::debug_println("Starting eBPF initialization");
@@ -314,7 +317,7 @@ impl SyscallTracker {
                                     let _ = file.write_all(objdump_info.as_bytes());
                                 }
                             } else {
-                                crate::ebpf::debug::debug_println(&format!("{}", objdump_info.trim()));
+                                crate::ebpf::debug::debug_println(objdump_info.trim());
                             }
                         }
                     }

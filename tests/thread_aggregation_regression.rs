@@ -41,12 +41,9 @@ for t in ts: t.join()
         .expect("failed to spawn python3");
 
     let pid = child.id() as usize;
-    let mut monitor = ProcessMonitor::from_pid(
-        pid,
-        Duration::from_millis(100),
-        Duration::from_millis(500),
-    )
-    .expect("failed to create ProcessMonitor");
+    let mut monitor =
+        ProcessMonitor::from_pid(pid, Duration::from_millis(100), Duration::from_millis(500))
+            .expect("failed to create ProcessMonitor");
 
     // Let threads come up.
     std::thread::sleep(Duration::from_millis(1500));
@@ -108,4 +105,96 @@ for t in ts: t.join()
              this indicates threads are being double-counted as children",
         );
     }
+}
+
+/// Mirror of the above: when a process DOES spawn real subprocesses (separate
+/// tgids, not threads), they must still be detected and aggregated. Guards
+/// against over-correcting the thread fix and accidentally filtering real
+/// children.
+#[test]
+#[cfg(target_os = "linux")]
+fn real_subprocesses_are_still_detected() {
+    const N_CHILDREN: usize = 3;
+
+    // Parent python spawns N child python processes via subprocess.Popen; each
+    // child busy-loops on CPU. Parent itself sleeps (near 0% CPU) so the
+    // aggregate comes almost entirely from the children — makes the
+    // assertions cleaner.
+    let script = format!(
+        r#"
+import subprocess, sys, time
+child_code = "t=__import__('time').time()+8\nwhile __import__('time').time()<t: pass"
+kids = [subprocess.Popen([sys.executable, "-c", child_code]) for _ in range({N_CHILDREN})]
+time.sleep(7)
+for k in kids:
+    k.terminate()
+    k.wait()
+"#
+    );
+
+    let mut parent = Command::new("python3")
+        .arg("-c")
+        .arg(&script)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn python3 parent");
+
+    let parent_pid = parent.id() as usize;
+    let mut monitor = ProcessMonitor::from_pid(
+        parent_pid,
+        Duration::from_millis(100),
+        Duration::from_millis(500),
+    )
+    .expect("failed to create ProcessMonitor");
+
+    // Let the children come up and start burning CPU.
+    std::thread::sleep(Duration::from_millis(2000));
+
+    // Prime the CPU sampler.
+    let _ = monitor.sample_tree_metrics();
+    std::thread::sleep(Duration::from_millis(500));
+
+    let mut max_children_seen = 0usize;
+    let mut max_agg_cpu: f32 = 0.0;
+    let mut max_process_count = 0usize;
+
+    for _ in 0..5 {
+        let tree = monitor.sample_tree_metrics();
+        let agg = tree.aggregated.expect("aggregated metrics should exist");
+
+        max_children_seen = max_children_seen.max(tree.children.len());
+        max_process_count = max_process_count.max(agg.process_count);
+        max_agg_cpu = max_agg_cpu.max(agg.cpu_usage);
+
+        println!(
+            "children={} process_count={} agg_cpu={:.1}% children_pids={:?}",
+            tree.children.len(),
+            agg.process_count,
+            agg.cpu_usage,
+            tree.children.iter().map(|c| c.pid).collect::<Vec<_>>(),
+        );
+
+        std::thread::sleep(Duration::from_millis(400));
+    }
+
+    let _ = parent.kill();
+    let _ = parent.wait();
+
+    assert_eq!(
+        max_children_seen, N_CHILDREN,
+        "parent should have exactly {N_CHILDREN} real subprocesses detected",
+    );
+    assert_eq!(
+        max_process_count,
+        N_CHILDREN + 1,
+        "aggregate process_count should be parent + {N_CHILDREN} children",
+    );
+    // Each child busy-loops on one core → ~100% each. Allow generous slack
+    // for test jitter and slow CI; assert at least ~1.5 cores of aggregate
+    // work, which can only come from real children (parent is ~idle).
+    assert!(
+        max_agg_cpu > 150.0,
+        "aggregate CPU should reflect {N_CHILDREN} busy children (got {max_agg_cpu:.1}%)",
+    );
 }

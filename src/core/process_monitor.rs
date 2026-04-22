@@ -350,9 +350,13 @@ impl ProcessMonitor {
             let mut pids = vec![self.pid as u32];
 
             // Add child PIDs
-            self.sys.refresh_processes_specifics(ProcessesToUpdate::All, true, process_refresh_kind());
+            self.sys.refresh_processes_specifics(
+                ProcessesToUpdate::All,
+                true,
+                process_refresh_kind(),
+            );
             if let Some(_parent_proc) = self.sys.process(Pid::from_u32(self.pid as u32)) {
-                for (child_pid, _) in self.sys.processes() {
+                for child_pid in self.sys.processes().keys() {
                     if let Some(child_proc) = self.sys.process(*child_pid) {
                         if let Some(parent_pid) = child_proc.parent() {
                             if parent_pid == Pid::from_u32(self.pid as u32) {
@@ -635,7 +639,11 @@ impl ProcessMonitor {
 
             // If specific refresh doesn't work, try refreshing all processes
             if self.sys.process(pid).is_none() {
-                self.sys.refresh_processes_specifics(ProcessesToUpdate::All, true, process_refresh_kind());
+                self.sys.refresh_processes_specifics(
+                    ProcessesToUpdate::All,
+                    true,
+                    process_refresh_kind(),
+                );
 
                 // Give a small amount of time for the process to be detected
                 // This helps with the test reliability
@@ -699,7 +707,8 @@ impl ProcessMonitor {
 
     // Get all child processes recursively
     pub fn get_child_pids(&mut self) -> Vec<usize> {
-        self.sys.refresh_processes_specifics(ProcessesToUpdate::All, true, process_refresh_kind());
+        self.sys
+            .refresh_processes_specifics(ProcessesToUpdate::All, true, process_refresh_kind());
         let mut children = Vec::new();
         self.find_children_recursive(self.pid, &mut children);
         children

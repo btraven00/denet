@@ -10,11 +10,13 @@ use std::time::{Duration, Instant};
 
 use crate::symbolication::{get_memory_maps, MemoryRegion};
 
+type CacheMap = HashMap<u32, (Vec<MemoryRegion>, Instant)>;
+
 /// Cache for process memory maps to support stack trace symbolication
 #[derive(Debug, Clone)]
 pub struct MemoryMapCache {
     /// Maps process IDs to their memory maps and cache timestamp
-    maps: Arc<Mutex<HashMap<u32, (Vec<MemoryRegion>, Instant)>>>,
+    maps: Arc<Mutex<CacheMap>>,
     /// Maximum age of cached maps before refresh (in seconds)
     max_age: u64,
     /// Debug mode flag

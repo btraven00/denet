@@ -49,7 +49,7 @@ pub struct StackFrame {
 }
 
 /// The OffCpuEvent structure that matches the eBPF program's output
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[repr(C)]
 pub struct OffCpuEvent {
     /// Process ID
@@ -193,21 +193,6 @@ pub struct OffCpuProfiler {
 #[cfg(feature = "ebpf")]
 static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
 
-// Helper function to create a default OffCpuEvent
-impl Default for OffCpuEvent {
-    fn default() -> Self {
-        Self {
-            pid: 0,
-            tid: 0,
-            prev_state: 0,
-            offcpu_time_ns: 0,
-            start_time_ns: 0,
-            end_time_ns: 0,
-            user_stack_id: 0,
-            kernel_stack_id: 0,
-        }
-    }
-}
 
 // Helper to create off-CPU stats entries for a thread
 fn create_offcpu_stats() -> OffCpuStats {
@@ -283,7 +268,7 @@ impl OffCpuProfiler {
                 }
                 Err(e) => {
                     error!("Failed to initialize eBPF for off-CPU profiling: {}", e);
-                    return Err(e.into());
+                    return Err(e);
                 }
             }
         }
@@ -357,7 +342,7 @@ impl OffCpuProfiler {
                 let err_msg = format!("Failed to load off-CPU profiler eBPF program: {}", e);
                 debug::debug_println(&err_msg);
                 error!("{}", err_msg);
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, err_msg).into());
+                return Err(std::io::Error::other(err_msg).into());
             }
         };
 
@@ -370,11 +355,7 @@ impl OffCpuProfiler {
         let bpf = match &mut self.bpf {
             Some(bpf) => bpf,
             None => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "eBPF program not loaded",
-                )
-                .into())
+                return Err(std::io::Error::other("eBPF program not loaded").into())
             }
         };
 
@@ -401,7 +382,7 @@ impl OffCpuProfiler {
                 );
                 debug::debug_println(&err_msg);
                 error!("{}", err_msg);
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, err_msg).into());
+                return Err(std::io::Error::other(err_msg).into());
             }
         };
 
@@ -411,7 +392,7 @@ impl OffCpuProfiler {
                 let err_msg = format!("Failed to convert program to TracePoint: {}", e);
                 debug::debug_println(&err_msg);
                 error!("{}", err_msg);
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, err_msg).into());
+                return Err(std::io::Error::other(err_msg).into());
             }
         };
 
@@ -421,7 +402,7 @@ impl OffCpuProfiler {
             let err_msg = format!("Failed to load sched_switch program: {}", e);
             debug::debug_println(&err_msg);
             error!("{}", err_msg);
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, err_msg).into());
+            return Err(std::io::Error::other(err_msg).into());
         }
 
         debug::debug_println("Attaching sched_switch program to tracepoint");
@@ -429,7 +410,7 @@ impl OffCpuProfiler {
             let err_msg = format!("Failed to attach sched_switch program: {}", e);
             debug::debug_println(&err_msg);
             error!("{}", err_msg);
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, err_msg).into());
+            return Err(std::io::Error::other(err_msg).into());
         }
 
         info!("Attached to sched:sched_switch tracepoint");
@@ -444,11 +425,7 @@ impl OffCpuProfiler {
         let bpf = match &mut self.bpf {
             Some(bpf) => bpf,
             None => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "eBPF program not loaded",
-                )
-                .into())
+                return Err(std::io::Error::other("eBPF program not loaded").into())
             }
         };
 
@@ -473,7 +450,7 @@ impl OffCpuProfiler {
                     map_names
                 );
                 debug::debug_println(&err_msg);
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, err_msg).into());
+                return Err(std::io::Error::other(err_msg).into());
             }
         };
 
@@ -486,7 +463,7 @@ impl OffCpuProfiler {
             Err(e) => {
                 let err_msg = format!("Failed to create PerfEventArray: {}", e);
                 debug::debug_println(&err_msg);
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, err_msg).into());
+                return Err(std::io::Error::other(err_msg).into());
             }
         };
 
@@ -496,7 +473,7 @@ impl OffCpuProfiler {
             Err(e) => {
                 let err_msg = format!("Failed to get online CPUs: {:?}", e);
                 debug::debug_println(&err_msg);
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, err_msg).into());
+                return Err(std::io::Error::other(err_msg).into());
             }
         };
 
@@ -548,8 +525,7 @@ impl OffCpuProfiler {
 
                             if events.read > 0 {
                                 // Process each buffer that contains events
-                                for i in 0..events.read {
-                                    let buf = &buffers[i];
+                                for buf in buffers.iter().take(events.read) {
 
                                     // Only process if buffer contains at least one complete event
                                     if buf.len() >= std::mem::size_of::<OffCpuEvent>() {
@@ -838,7 +814,7 @@ impl OffCpuProfiler {
                 // Check if it's actually an error code (large u32 value close to u32::MAX)
                 if event.event.user_stack_id > 0xfffffff0 {
                     // Convert to error code (as negative i32)
-                    let error_code = -((event.event.user_stack_id as i32) * -1);
+                    let error_code = -(event.event.user_stack_id as i32);
                     let error_msg = match error_code {
                         -1 => "EPERM: Operation not permitted",
                         -2 => "ENOENT: No such file or directory",
@@ -934,7 +910,7 @@ impl OffCpuProfiler {
             if event.event.kernel_stack_id > 0 {
                 if event.event.kernel_stack_id > 0xfffffff0 {
                     // Convert to error code (as negative i32)
-                    let error_code = -((event.event.kernel_stack_id as i32) * -1);
+                    let error_code = -(event.event.kernel_stack_id as i32);
                     let error_msg = match error_code {
                         -1 => "EPERM: Operation not permitted",
                         -2 => "ENOENT: No such file or directory",
@@ -1093,7 +1069,7 @@ impl OffCpuProfiler {
 
             // Handle potential error codes (large u32 values that are negative when interpreted as i32)
             if stack_id >= 0xFFFFFFF0 {
-                let err_code = -((stack_id as i32) * -1);
+                let err_code = -(stack_id as i32);
 
                 if self.debug_mode {
                     debug::debug_println(&format!(
@@ -1144,7 +1120,7 @@ impl OffCpuProfiler {
                         // Check if process has debug symbols
                         let proc_exe = format!("/proc/{}/exe", target_pid);
                         if let Ok(output) = std::process::Command::new("readelf")
-                            .args(&["-S", &proc_exe])
+                            .args(["-S", &proc_exe])
                             .output()
                         {
                             let output_str = String::from_utf8_lossy(&output.stdout);
@@ -1318,15 +1294,12 @@ impl OffCpuProfiler {
                             }
                         }
 
-                        // Track how many frames we process
                         let total_frames = stack_frames.len();
-                        let mut processed_frames = 0;
-                        let mut symbolicated_frames = 0;
 
                         if self.debug_mode {
                             debug::debug_println(&format!(
-                                "Processing {} stack frames for PID {} (processed: {}, symbolicated: {})",
-                                total_frames, target_pid, processed_frames, symbolicated_frames
+                                "Processing {} stack frames for PID {}",
+                                total_frames, target_pid
                             ));
 
                             if total_frames == 0 && is_user_stack {
@@ -1354,8 +1327,6 @@ impl OffCpuProfiler {
                                 continue;
                             }
 
-                            processed_frames += 1;
-
                             let mut stack_frame = StackFrame {
                                 address: addr,
                                 symbol: None,
@@ -1363,7 +1334,6 @@ impl OffCpuProfiler {
                             };
 
                             if let Some(region) = find_region_for_address(addr, &regions) {
-                                symbolicated_frames += 1;
                                 if let Some(path) = &region.pathname {
                                     let offset = addr - region.start_addr + region.offset;
                                     if self.debug_mode {
@@ -1387,7 +1357,6 @@ impl OffCpuProfiler {
                                                 stack_frame.source_location
                                             ));
                                         }
-                                        symbolicated_frames += 1;
                                     } else if self.debug_mode {
                                         debug::debug_println(&format!(
                                             "No symbol found for addr 0x{:x} (offset 0x{:x}) in {}",
@@ -1578,7 +1547,7 @@ impl OffCpuProfiler {
                         && region.permissions.contains('x')
                     {
                         // Extract the executable name from the path
-                        if let Some(exe_name) = path.split('/').last() {
+                        if let Some(exe_name) = path.split('/').next_back() {
                             if !exe_name.is_empty() {
                                 return Some(exe_name.to_string());
                             }
