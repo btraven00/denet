@@ -70,7 +70,7 @@ clippy-fix = { cmd = "RUSTUP_TOOLCHAIN=nightly cargo clippy --fix -Z unstable-op
 fix-all = { cmd = "cargo fmt --all && ruff format --force-exclude python/ tests/ && ruff format tests/python/ python/denet/ && ruff check --fix --force-exclude python/ tests/ && ruff check --fix tests/python/ python/denet/ && RUSTUP_TOOLCHAIN=nightly cargo clippy --fix -Z unstable-options --allow-dirty -- -D warnings" }
 
 # Publish to PyPI, crates.io
-publish-pypi = { cmd = "maturin publish --skip-existing --features python" }
+publish-pypi = { cmd = "maturin publish --skip-existing --features python -r denet" }
 publish-crates = { cmd = "cargo publish --features python" }
 
 extract-crates = { cmd = "cargo metadata --format-version 1 --locked | jq -r '.packages[] | \"(\\(.name|@sh), \\(.version|@sh)),\"'" }
