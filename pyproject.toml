@@ -18,7 +18,7 @@ classifiers = [
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
 ]
 
-[tool.pixi.project]
+[tool.pixi.workspace]
 name = "denet"
 version = "0.6.0"
 channels = ["conda-forge", "pypi"]
