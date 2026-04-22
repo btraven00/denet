@@ -151,7 +151,7 @@ what processes are doing when they're not running on a CPU.
 
 - Linux kernel 5.5+
 - `clang` available at build time
-- `CAP_BPF` + `CAP_PERFMON` capabilities, or root at runtime
+- `CAP_BPF` + `CAP_PERFMON` + `CAP_DAC_READ_SEARCH` capabilities, or root at runtime
 
 ### Build
 
@@ -168,10 +168,11 @@ sudo denet --enable-ebpf run python io_bound_script.py
 # With JSON output
 sudo denet --enable-ebpf --json run sleep 5
 
-# Set capabilities on the binary to avoid running as root every time.
-# cap_dac_read_search is needed to read /sys/kernel/tracing/events/*/id
-# (mode 0400, root-owned) when attaching syscall tracepoints.
-sudo setcap cap_bpf,cap_perfmon,cap_dac_read_search=ep ./target/debug/denet
+# Set capabilities on the binary to avoid running as root every time:
+#   cap_bpf             – load BPF programs and create maps
+#   cap_perfmon         – perf_event_open for tracepoints
+#   cap_dac_read_search – read /sys/kernel/tracing/events/*/id (root-owned 0400)
+sudo ./scripts/setup_ebpf_caps.sh ./target/release/denet
 denet --enable-ebpf run sleep 5
 ```
 
