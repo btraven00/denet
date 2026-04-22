@@ -552,266 +552,148 @@ fn execute_monitoring_with_output(
     Ok(())
 }
 
-fn format_metrics(metrics: &Metrics) -> String {
-    let cpu_color = match metrics.cpu_usage {
-        c if c < 10.0 => "green",
-        c if c < 50.0 => "yellow",
-        _ => "red",
+fn color_for_cpu(cpu: f32) -> &'static str {
+    if cpu < 10.0 { "green" } else if cpu < 50.0 { "yellow" } else { "red" }
+}
+
+fn color_for_mem(mem_mb: f64) -> &'static str {
+    if mem_mb < 100.0 { "green" } else if mem_mb < 500.0 { "yellow" } else { "red" }
+}
+
+#[cfg(feature = "gpu")]
+fn color_for_util(util: u32) -> &'static str {
+    if util < 30 { "green" } else if util < 70 { "yellow" } else { "red" }
+}
+
+fn format_base(
+    cpu_usage: f32,
+    mem_rss_kb: u64,
+    thread_count: usize,
+    disk_read_bytes: u64,
+    disk_write_bytes: u64,
+    sys_net_rx_bytes: u64,
+    sys_net_tx_bytes: u64,
+    uptime_secs: u64,
+    process_count: Option<usize>,
+    compact: bool,
+) -> String {
+    let cpu_color = color_for_cpu(cpu_usage);
+    let mem_mb = mem_rss_kb as f64 / 1024.0;
+    let mem_color = color_for_mem(mem_mb);
+
+    let prefix = match (process_count, compact) {
+        (Some(n), false) => format!("Tree ({n} procs): "),
+        (Some(n), true) => format!("Tree({n}): "),
+        (None, _) => String::new(),
     };
 
-    let mem_mb = metrics.mem_rss_kb as f64 / 1024.0;
-    let mem_color = match mem_mb {
-        m if m < 100.0 => "green",
-        m if m < 500.0 => "yellow",
-        _ => "red",
-    };
+    if compact {
+        format!(
+            "{prefix}CPU {} | Mem {} | Threads {} | Disk {} rd, {} wr | Sys Net {} rx, {} tx",
+            format!("{:.1}%", cpu_usage).color(cpu_color),
+            format!("{mem_mb:.0}M").color(mem_color),
+            thread_count,
+            format_bytes(disk_read_bytes).cyan(),
+            format_bytes(disk_write_bytes).cyan(),
+            format_bytes(sys_net_rx_bytes).green(),
+            format_bytes(sys_net_tx_bytes).green(),
+        )
+    } else {
+        format!(
+            "{prefix}CPU: {} | Memory: {} | Threads: {} | Disk: {} rd, {} wr | Sys Net: {} rx, {} tx | Uptime: {}s",
+            format!("{:.1}%", cpu_usage).color(cpu_color),
+            format!("{mem_mb:.1} MB").color(mem_color),
+            thread_count,
+            format_bytes(disk_read_bytes).cyan(),
+            format_bytes(disk_write_bytes).cyan(),
+            format_bytes(sys_net_rx_bytes).green(),
+            format_bytes(sys_net_tx_bytes).green(),
+            uptime_secs,
+        )
+    }
+}
 
-    let base_metrics = format!(
-        "CPU: {} | Memory: {} | Threads: {} | Disk: {} rd, {} wr | Sys Net: {} rx, {} tx | Uptime: {}s",
-        format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
-        format!("{mem_mb:.1} MB").color(mem_color),
-        metrics.thread_count,
-        format_bytes(metrics.disk_read_bytes).cyan(),
-        format_bytes(metrics.disk_write_bytes).cyan(),
-        format_bytes(metrics.sys_net_rx_bytes).green(),
-        format_bytes(metrics.sys_net_tx_bytes).green(),
-        metrics.uptime_secs,
-    );
-
-    #[cfg(feature = "gpu")]
-    {
-        if let Some(ref gpu_metrics) = metrics.gpu {
-            if gpu_metrics.has_process_data {
-                if let Some(process_util) = gpu_metrics.max_process_utilization() {
-                    let process_mem_gb = gpu_metrics.total_process_memory_usage() as f64
-                        / (1024.0 * 1024.0 * 1024.0);
-                    let gpu_color = match process_util {
-                        u if u < 30 => "green",
-                        u if u < 70 => "yellow",
-                        _ => "red",
-                    };
-                    return format!(
-                        "{} | GPU: {}%, {:.1}GB",
-                        base_metrics,
-                        format!("{}", process_util).color(gpu_color),
-                        process_mem_gb
-                    );
-                } else if gpu_metrics.total_process_memory_usage() > 0 {
-                    let process_mem_gb = gpu_metrics.total_process_memory_usage() as f64
-                        / (1024.0 * 1024.0 * 1024.0);
-                    return format!("{} | GPU: {:.1}GB", base_metrics, process_mem_gb);
-                }
-            } else if let Some(sys_util) = gpu_metrics.max_system_utilization() {
-                let gpu_color = match sys_util {
-                    u if u < 30 => "green",
-                    u if u < 70 => "yellow",
-                    _ => "red",
-                };
-                return format!(
-                    "{} | GPU: {}% (sys)",
-                    base_metrics,
-                    format!("{}", sys_util).color(gpu_color)
-                );
+#[cfg(feature = "gpu")]
+fn append_gpu_suffix(base: String, gpu: Option<&denet::gpu::GpuMetrics>, compact: bool) -> String {
+    let Some(gpu_metrics) = gpu else { return base };
+    if gpu_metrics.has_process_data {
+        if let Some(util) = gpu_metrics.max_process_utilization() {
+            let mem = gpu_metrics.total_process_memory_usage();
+            let color = color_for_util(util);
+            if compact {
+                return format!("{base} | GPU {}%", format!("{util}").color(color));
+            } else {
+                let gb = mem as f64 / (1024.0 * 1024.0 * 1024.0);
+                return format!("{base} | GPU: {}%, {gb:.1}GB", format!("{util}").color(color));
+            }
+        } else if gpu_metrics.total_process_memory_usage() > 0 {
+            let mem = gpu_metrics.total_process_memory_usage();
+            if compact {
+                let mb = mem as f64 / (1024.0 * 1024.0);
+                return format!("{base} | GPU {mb:.0}M");
+            } else {
+                let gb = mem as f64 / (1024.0 * 1024.0 * 1024.0);
+                return format!("{base} | GPU: {gb:.1}GB");
             }
         }
+    } else if let Some(util) = gpu_metrics.max_system_utilization() {
+        let color = color_for_util(util);
+        let sep = if compact { "" } else { ":" };
+        return format!("{base} | GPU{sep} {}% (sys)", format!("{util}").color(color));
     }
+    base
+}
 
-    base_metrics
+fn format_metrics(metrics: &Metrics) -> String {
+    let base = format_base(
+        metrics.cpu_usage, metrics.mem_rss_kb, metrics.thread_count,
+        metrics.disk_read_bytes, metrics.disk_write_bytes,
+        metrics.sys_net_rx_bytes, metrics.sys_net_tx_bytes,
+        metrics.uptime_secs, None, false,
+    );
+    #[cfg(feature = "gpu")]
+    return append_gpu_suffix(base, metrics.gpu.as_ref(), false);
+    #[cfg(not(feature = "gpu"))]
+    base
 }
 
 fn format_metrics_compact(metrics: &Metrics) -> String {
-    let cpu_color = match metrics.cpu_usage {
-        c if c < 10.0 => "green",
-        c if c < 50.0 => "yellow",
-        _ => "red",
-    };
-
-    let mem_mb = metrics.mem_rss_kb as f64 / 1024.0;
-    let mem_color = match mem_mb {
-        m if m < 100.0 => "green",
-        m if m < 500.0 => "yellow",
-        _ => "red",
-    };
-
-    let base_metrics = format!(
-        "CPU {} | Mem {} | Threads {} | Disk {} rd, {} wr | Sys Net {} rx, {} tx",
-        format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
-        format!("{mem_mb:.0}M").color(mem_color),
-        metrics.thread_count,
-        format_bytes(metrics.disk_read_bytes).cyan(),
-        format_bytes(metrics.disk_write_bytes).cyan(),
-        format_bytes(metrics.sys_net_rx_bytes).green(),
-        format_bytes(metrics.sys_net_tx_bytes).green(),
+    let base = format_base(
+        metrics.cpu_usage, metrics.mem_rss_kb, metrics.thread_count,
+        metrics.disk_read_bytes, metrics.disk_write_bytes,
+        metrics.sys_net_rx_bytes, metrics.sys_net_tx_bytes,
+        metrics.uptime_secs, None, true,
     );
-
     #[cfg(feature = "gpu")]
-    {
-        if let Some(ref gpu_metrics) = metrics.gpu {
-            if gpu_metrics.has_process_data {
-                if let Some(process_util) = gpu_metrics.max_process_utilization() {
-                    let gpu_color = match process_util {
-                        u if u < 30 => "green",
-                        u if u < 70 => "yellow",
-                        _ => "red",
-                    };
-                    return format!(
-                        "{} | GPU {}%",
-                        base_metrics,
-                        format!("{}", process_util).color(gpu_color)
-                    );
-                } else if gpu_metrics.total_process_memory_usage() > 0 {
-                    let mem_mb =
-                        gpu_metrics.total_process_memory_usage() as f64 / (1024.0 * 1024.0);
-                    return format!("{} | GPU {:.0}M", base_metrics, mem_mb);
-                }
-            } else if let Some(sys_util) = gpu_metrics.max_system_utilization() {
-                let gpu_color = match sys_util {
-                    u if u < 30 => "green",
-                    u if u < 70 => "yellow",
-                    _ => "red",
-                };
-                return format!(
-                    "{} | GPU {}% (sys)",
-                    base_metrics,
-                    format!("{}", sys_util).color(gpu_color)
-                );
-            }
-        }
-    }
-
-    base_metrics
+    return append_gpu_suffix(base, metrics.gpu.as_ref(), true);
+    #[cfg(not(feature = "gpu"))]
+    base
 }
 
 fn format_aggregated_metrics(metrics: &AggregatedMetrics) -> String {
-    let cpu_color = match metrics.cpu_usage {
-        c if c < 10.0 => "green",
-        c if c < 50.0 => "yellow",
-        _ => "red",
-    };
-
-    let mem_mb = metrics.mem_rss_kb as f64 / 1024.0;
-    let mem_color = match mem_mb {
-        m if m < 100.0 => "green",
-        m if m < 500.0 => "yellow",
-        _ => "red",
-    };
-
-    let base_metrics = format!(
-        "Tree ({} procs): CPU: {} | Memory: {} | Threads: {} | Disk: {} rd, {} wr | Sys Net: {} rx, {} tx | Uptime: {}s",
-        metrics.process_count,
-        format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
-        format!("{mem_mb:.1} MB").color(mem_color),
-        metrics.thread_count,
-        format_bytes(metrics.disk_read_bytes).cyan(),
-        format_bytes(metrics.disk_write_bytes).cyan(),
-        format_bytes(metrics.sys_net_rx_bytes).green(),
-        format_bytes(metrics.sys_net_tx_bytes).green(),
-        metrics.uptime_secs,
+    let base = format_base(
+        metrics.cpu_usage, metrics.mem_rss_kb, metrics.thread_count,
+        metrics.disk_read_bytes, metrics.disk_write_bytes,
+        metrics.sys_net_rx_bytes, metrics.sys_net_tx_bytes,
+        metrics.uptime_secs, Some(metrics.process_count), false,
     );
-
     #[cfg(feature = "gpu")]
-    {
-        if let Some(ref gpu_metrics) = metrics.gpu {
-            if gpu_metrics.has_process_data {
-                if let Some(process_util) = gpu_metrics.max_process_utilization() {
-                    let process_mem_gb = gpu_metrics.total_process_memory_usage() as f64
-                        / (1024.0 * 1024.0 * 1024.0);
-                    let gpu_color = match process_util {
-                        u if u < 30 => "green",
-                        u if u < 70 => "yellow",
-                        _ => "red",
-                    };
-                    return format!(
-                        "{} | GPU: {}%, {:.1}GB",
-                        base_metrics,
-                        format!("{}", process_util).color(gpu_color),
-                        process_mem_gb
-                    );
-                } else if gpu_metrics.total_process_memory_usage() > 0 {
-                    let process_mem_gb = gpu_metrics.total_process_memory_usage() as f64
-                        / (1024.0 * 1024.0 * 1024.0);
-                    return format!("{} | GPU: {:.1}GB", base_metrics, process_mem_gb);
-                }
-            } else if let Some(sys_util) = gpu_metrics.max_system_utilization() {
-                let gpu_color = match sys_util {
-                    u if u < 30 => "green",
-                    u if u < 70 => "yellow",
-                    _ => "red",
-                };
-                return format!(
-                    "{} | GPU: {}% (sys)",
-                    base_metrics,
-                    format!("{}", sys_util).color(gpu_color)
-                );
-            }
-        }
-    }
-
-    base_metrics
+    return append_gpu_suffix(base, metrics.gpu.as_ref(), false);
+    #[cfg(not(feature = "gpu"))]
+    base
 }
 
 fn format_aggregated_metrics_compact(metrics: &AggregatedMetrics) -> String {
-    let cpu_color = match metrics.cpu_usage {
-        c if c < 10.0 => "green",
-        c if c < 50.0 => "yellow",
-        _ => "red",
-    };
-
-    let mem_mb = metrics.mem_rss_kb as f64 / 1024.0;
-    let mem_color = match mem_mb {
-        m if m < 100.0 => "green",
-        m if m < 500.0 => "yellow",
-        _ => "red",
-    };
-
-    let base_metrics = format!(
-        "Tree({}): CPU {} | Mem {} | Threads {} | Disk {} rd, {} wr | Sys Net {} rx, {} tx",
-        metrics.process_count,
-        format!("{:.1}%", metrics.cpu_usage).color(cpu_color),
-        format!("{mem_mb:.0}M").color(mem_color),
-        metrics.thread_count,
-        format_bytes(metrics.disk_read_bytes).cyan(),
-        format_bytes(metrics.disk_write_bytes).cyan(),
-        format_bytes(metrics.sys_net_rx_bytes).green(),
-        format_bytes(metrics.sys_net_tx_bytes).green(),
+    let base = format_base(
+        metrics.cpu_usage, metrics.mem_rss_kb, metrics.thread_count,
+        metrics.disk_read_bytes, metrics.disk_write_bytes,
+        metrics.sys_net_rx_bytes, metrics.sys_net_tx_bytes,
+        metrics.uptime_secs, Some(metrics.process_count), true,
     );
-
     #[cfg(feature = "gpu")]
-    {
-        if let Some(ref gpu_metrics) = metrics.gpu {
-            if gpu_metrics.has_process_data {
-                if let Some(process_util) = gpu_metrics.max_process_utilization() {
-                    let gpu_color = match process_util {
-                        u if u < 30 => "green",
-                        u if u < 70 => "yellow",
-                        _ => "red",
-                    };
-                    return format!(
-                        "{} | GPU {}%",
-                        base_metrics,
-                        format!("{}", process_util).color(gpu_color)
-                    );
-                } else if gpu_metrics.total_process_memory_usage() > 0 {
-                    let mem_mb =
-                        gpu_metrics.total_process_memory_usage() as f64 / (1024.0 * 1024.0);
-                    return format!("{} | GPU {:.0}M", base_metrics, mem_mb);
-                }
-            } else if let Some(sys_util) = gpu_metrics.max_system_utilization() {
-                let gpu_color = match sys_util {
-                    u if u < 30 => "green",
-                    u if u < 70 => "yellow",
-                    _ => "red",
-                };
-                return format!(
-                    "{} | GPU {}% (sys)",
-                    base_metrics,
-                    format!("{}", sys_util).color(gpu_color)
-                );
-            }
-        }
-    }
-
-    base_metrics
+    return append_gpu_suffix(base, metrics.gpu.as_ref(), true);
+    #[cfg(not(feature = "gpu"))]
+    base
 }
 
 fn convert_aggregated_to_metrics(agg: &AggregatedMetrics) -> Metrics {
