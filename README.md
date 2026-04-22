@@ -29,12 +29,11 @@ Denet is a streaming process monitoring tool that provides detailed metrics on r
 ## Installation
 
 ```bash
-pip install denet    # Python package
+pip install denet    # Python package (GPU support included)
 cargo install denet  # Rust binary
 
-# For GPU monitoring support (requires NVIDIA drivers and CUDA)
-pip install denet[gpu]  # Python package with GPU support
-cargo install denet --features gpu  # Rust binary with GPU support
+# For GPU monitoring support in the Rust binary (requires NVIDIA drivers)
+cargo install denet --features gpu
 
 # For eBPF profiling support (Linux only, requires clang)
 cargo install denet --features ebpf
@@ -98,7 +97,7 @@ denet --quiet --json --out metrics.jsonl run python script.py
 # Monitor a CPU-intensive workload (shows aggregated metrics for all children)
 denet run python cpu_intensive_script.py
 
-# Monitor a GPU workload (requires --features gpu or denet[gpu])
+# Monitor a GPU workload (Python wheel includes GPU support; Rust binary requires --features gpu)
 denet run python gpu_training_script.py
 
 # Enable eBPF profiling — off-CPU time and syscall tracking (Linux only, requires root or CAP_BPF)

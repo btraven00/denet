@@ -16,13 +16,13 @@ Denet provides comprehensive GPU monitoring for NVIDIA GPUs using the NVIDIA Man
 
 - NVIDIA GPU with driver support
 - NVIDIA CUDA toolkit or driver with NVML support
-- Rust compilation with `--features gpu` or Python installation with `pip install denet[gpu]`
+- Rust compilation with `--features gpu` (Python wheels on PyPI include GPU support by default)
 
 ## Installation
 
 ```bash
-# Python package with GPU support
-pip install denet[gpu]
+# Python package (GPU support included in published wheels)
+pip install denet
 
 # Rust binary with GPU support
 cargo install denet --features gpu
