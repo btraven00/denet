@@ -243,7 +243,6 @@ When eBPF profiling is enabled, JSON output will include additional fields:
       {"name": "socket", "count": 13540}
     ],
     "analysis": {
-      "behavior_classification": "io_bound",
       "syscall_rate_per_sec": 32295.16,
       "io_intensity": 0.6,
       "memory_intensity": 0.15,
@@ -254,18 +253,7 @@ When eBPF profiling is enabled, JSON output will include additional fields:
 }
 ```
 
-The `top_syscalls` field shows the most frequently called syscalls with their actual counts, and the `by_category` field shows how these syscalls are distributed across functional categories.
-
-### Process Behavior Classification
-
-Based on syscall patterns, denet classifies process behavior as:
-
-- `io_bound`: Process primarily limited by I/O operations
-- `cpu_bound`: Process primarily limited by CPU processing
-- `memory_bound`: Process primarily limited by memory operations
-- `network_bound`: Process primarily limited by network activity
-- `mixed`: Process shows mixed resource utilization patterns
-- `unknown`: Unable to determine clear behavior pattern
+The `top_syscalls` field shows the most frequently called syscalls with their actual counts, and the `by_category` field shows how these syscalls are distributed across functional categories. The intensity fields are fractions of total tracked syscalls (uncategorized syscalls are excluded, so they do not sum to 1.0).
 
 ## Implementation Details
 
