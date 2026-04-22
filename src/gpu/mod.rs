@@ -36,7 +36,7 @@ pub struct ProcessGpuData {
     /// Process-specific GPU memory usage in bytes
     pub memory_usage: Option<u64>,
     /// GPU memory utilization percentage (0-100) for this process
-    pub memory_utilization: Option<u32>,
+    pub memory_utilization_pct: Option<u32>,
 }
 
 /// System-wide GPU device metrics
@@ -285,7 +285,10 @@ impl GpuMonitor {
                 let process_memory = self.get_process_memory_usage(process_pids);
 
                 for &pid in process_pids {
-                    let gpu_utilization = process_utils.get(&pid).copied();
+                    let (gpu_utilization, memory_utilization_pct) = process_utils
+                        .get(&pid)
+                        .map(|&(sm, mem)| (Some(sm), mem))
+                        .unwrap_or((None, None));
                     let memory_usage = process_memory.get(&pid).copied();
 
                     if gpu_utilization.is_some() || memory_usage.is_some() {
@@ -296,7 +299,7 @@ impl GpuMonitor {
                             pid,
                             gpu_utilization,
                             memory_usage,
-                            memory_utilization: None, // Could be calculated if needed
+                            memory_utilization_pct,
                         });
                     }
                 }
@@ -314,7 +317,7 @@ impl GpuMonitor {
                             pid,
                             gpu_utilization: None,
                             memory_usage: Some(memory_usage),
-                            memory_utilization: None,
+                            memory_utilization_pct: None,
                         });
                     }
                 }
@@ -336,11 +339,16 @@ impl GpuMonitor {
     }
 
     /// Get per-process GPU utilization using nvidia-smi
+    /// Returns a map of pid -> (sm_utilization, mem_utilization)
     #[cfg(feature = "gpu")]
-    fn get_process_utilizations_nvidia_smi(&self, process_pids: &[u32]) -> HashMap<u32, u32> {
+    fn get_process_utilizations_nvidia_smi(
+        &self,
+        process_pids: &[u32],
+    ) -> HashMap<u32, (u32, Option<u32>)> {
         let mut result = HashMap::new();
 
         // Use nvidia-smi pmon to get per-process utilization
+        // Format: gpu pid type sm mem enc dec command
         let output = Command::new("nvidia-smi")
             .args(["pmon", "-c", "1", "-s", "u"])
             .output();
@@ -357,13 +365,14 @@ impl GpuMonitor {
                         }
 
                         let fields: Vec<&str> = line.split_whitespace().collect();
-                        if fields.len() >= 4 {
+                        if fields.len() >= 5 {
                             // Format: gpu pid type sm_util mem_util enc_util dec_util command
                             if let Ok(pid) = fields[1].parse::<u32>() {
                                 if process_pids.contains(&pid) {
-                                    // Parse SM utilization (compute utilization)
-                                    if let Ok(utilization) = fields[3].parse::<u32>() {
-                                        result.insert(pid, utilization);
+                                    let sm_util = fields[3].parse::<u32>().ok();
+                                    let mem_util = fields[4].parse::<u32>().ok();
+                                    if let Some(sm) = sm_util {
+                                        result.insert(pid, (sm, mem_util));
                                     }
                                 }
                             }
