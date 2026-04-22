@@ -761,7 +761,9 @@ impl SyscallTracker {
                     aya::programs::Program::TracePoint(tracepoint) => {
                         // Load the program
                         if let Err(e) = tracepoint.load() {
-                            log::warn!("Failed to load {} program: {}", syscall_name, e);
+                            let msg = format!("Failed to load {} program: {:?}", syscall_name, e);
+                            log::warn!("{}", msg);
+                            crate::ebpf::debug::debug_println(&msg);
                             continue;
                         }
 
@@ -770,18 +772,25 @@ impl SyscallTracker {
                             Ok(_) => {
                                 attached_count += 1;
                                 log::info!("✓ Attached tracepoint for {}", syscall_name);
+                                crate::ebpf::debug::debug_println(&format!("Attached tracepoint for {}", syscall_name));
                             }
                             Err(e) => {
-                                log::warn!("Failed to attach {} tracepoint: {}", syscall_name, e);
+                                let msg = format!("Failed to attach {} tracepoint: {:?}", syscall_name, e);
+                                log::warn!("{}", msg);
+                                crate::ebpf::debug::debug_println(&msg);
                             }
                         }
                     }
                     _ => {
-                        log::warn!("Program {} is not a tracepoint", program_name);
+                        let msg = format!("Program {} is not a tracepoint", program_name);
+                        log::warn!("{}", msg);
+                        crate::ebpf::debug::debug_println(&msg);
                     }
                 }
             } else {
-                log::warn!("Program {} not found", program_name);
+                let msg = format!("Program {} not found", program_name);
+                log::warn!("{}", msg);
+                crate::ebpf::debug::debug_println(&msg);
             }
         }
 
@@ -826,9 +835,24 @@ impl SyscallTracker {
                 }
             }
 
-            return Err(crate::error::DenetError::EbpfInitError(
-                "Failed to attach any tracepoints".to_string(),
-            ));
+            let paranoid = std::fs::read_to_string("/proc/sys/kernel/perf_event_paranoid")
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok());
+
+            let hint = match paranoid {
+                Some(v) if v >= 3 => format!(
+                    " perf_event_paranoid={} (Ubuntu/hardened kernel level) blocks perf_event_open \
+                     even with CAP_PERFMON. Fix: sudo sysctl -w kernel.perf_event_paranoid=1",
+                    v
+                ),
+                Some(v) => format!(" perf_event_paranoid={}", v),
+                None => String::new(),
+            };
+
+            return Err(crate::error::DenetError::EbpfInitError(format!(
+                "Failed to attach any tracepoints.{}",
+                hint
+            )));
         }
 
         log::info!(

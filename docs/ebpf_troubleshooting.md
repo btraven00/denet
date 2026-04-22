@@ -123,7 +123,25 @@ Should be `1`
 ```bash
 cat /proc/sys/kernel/unprivileged_bpf_disabled
 ```
-Should be `0` for non-root usage with capabilities.
+Values `1` and `2` both mean BPF requires `CAP_BPF` or root — they do **not** block a process that already has `CAP_BPF`. Value `2` is the same restriction as `1` but locked at runtime (requires reboot to change). If `setcap` is correctly applied, this setting is not the problem.
+
+#### Check perf_event_paranoid (Ubuntu / hardened kernels)
+```bash
+cat /proc/sys/kernel/perf_event_paranoid
+```
+Standard Linux values are `0`–`2`. Ubuntu and some hardened kernels add levels `3` and `4` which **block `perf_event_open` for all non-root users, including those with `CAP_PERFMON`**. Tracepoint attachment fails silently with `EPERM` when this is set to `3` or `4`.
+
+Fix:
+```bash
+# Temporary (until reboot)
+sudo sysctl -w kernel.perf_event_paranoid=1
+
+# Permanent
+echo 'kernel.perf_event_paranoid=1' | sudo tee /etc/sysctl.d/99-perf.conf
+sudo sysctl -p /etc/sysctl.d/99-perf.conf
+```
+
+Level `1` allows processes with `CAP_PERFMON` to use `perf_event_open` while blocking fully unprivileged users.
 
 ### 4. Tracepoint Attachment Issues
 
