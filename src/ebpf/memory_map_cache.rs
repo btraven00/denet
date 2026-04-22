@@ -16,7 +16,8 @@ type CacheMap = HashMap<u32, (Vec<MemoryRegion>, Instant)>;
 #[derive(Debug, Clone)]
 pub struct MemoryMapCache {
     /// Maps process IDs to their memory maps and cache timestamp
-    maps: Arc<Mutex<CacheMap>>,
+    #[allow(clippy::type_complexity)]
+    maps: Arc<Mutex<HashMap<u32, (Vec<MemoryRegion>, Instant)>>>,
     /// Maximum age of cached maps before refresh (in seconds)
     max_age: u64,
     /// Debug mode flag

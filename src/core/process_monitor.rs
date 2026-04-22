@@ -147,8 +147,7 @@ pub struct ProcessMonitor {
     io_baseline: Option<IoBaseline>,
     child_io_baselines: std::collections::HashMap<usize, ChildIoBaseline>,
     since_process_start: bool,
-    _include_children: bool,
-    _max_duration: Option<Duration>,
+    include_children: bool,
     enable_ebpf: bool,
     debug_mode: bool,
     #[cfg(feature = "ebpf")]
@@ -212,8 +211,7 @@ impl ProcessMonitor {
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards")
                 .as_millis() as u64,
-            _include_children: true,
-            _max_duration: None,
+            include_children: true,
             debug_mode: false,
             io_baseline: None,
             child_io_baselines: std::collections::HashMap::new(),
@@ -294,8 +292,7 @@ impl ProcessMonitor {
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards")
                 .as_millis() as u64,
-            _include_children: true,
-            _max_duration: None,
+            include_children: true,
             debug_mode: false,
             io_baseline: None,
             child_io_baselines: std::collections::HashMap::new(),
@@ -661,13 +658,13 @@ impl ProcessMonitor {
 
     /// Set whether to include children processes in monitoring
     pub fn set_include_children(&mut self, include_children: bool) -> &mut Self {
-        self._include_children = include_children;
+        self.include_children = include_children;
         self
     }
 
     /// Get whether children processes are included in monitoring
     pub fn get_include_children(&self) -> bool {
-        self._include_children
+        self.include_children
     }
 
     /// Returns metadata about the monitored process

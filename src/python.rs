@@ -287,32 +287,31 @@ impl PyProcessMonitor {
         };
 
         while self.inner.is_running() {
-            if let Some(metrics) = self.inner.sample_metrics() {
-                let json = serde_json::to_string(&metrics)
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-
-                // Store in memory if enabled
-                if self.output_config.store_in_memory {
-                    // Convert metrics to JSON string and store
-                    if let Ok(json) = serde_json::to_string(&metrics) {
-                        self.samples.push(json);
+            let json = if self.inner.get_include_children() {
+                let tree_metrics = self.inner.sample_tree_metrics();
+                serde_json::to_string(&tree_metrics)
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
+            } else {
+                match self.inner.sample_metrics() {
+                    Some(metrics) => serde_json::to_string(&metrics)
+                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?,
+                    None => {
+                        sleep(self.inner.adaptive_interval());
+                        continue;
                     }
                 }
+            };
 
-                // Write to file if output_file is specified
-                if let Some(file) = &mut file_handle {
-                    match self.output_config.format {
-                        OutputFormat::JsonLines => {
-                            writeln!(file, "{json}").map_err(map_io_error)?;
-                        }
-                        _ => {
-                            writeln!(file, "{json}").map_err(map_io_error)?;
-                        }
-                    }
-                } else if !self.output_config.quiet {
-                    println!("{json}");
-                }
+            if self.output_config.store_in_memory {
+                self.samples.push(json.clone());
             }
+
+            if let Some(file) = &mut file_handle {
+                writeln!(file, "{json}").map_err(map_io_error)?;
+            } else if !self.output_config.quiet {
+                println!("{json}");
+            }
+
             sleep(self.inner.adaptive_interval());
         }
         Ok(())
