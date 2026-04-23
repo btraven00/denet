@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/btraven00/denet/compare/v0.6.0...v0.6.1) (2026-04-23)
+
+
+### Bug Fixes
+
+* gpu memory utilization pct ([#25](https://github.com/btraven00/denet/issues/25)) ([eaf41cb](https://github.com/btraven00/denet/commit/eaf41cb4cb4c80d5c798077998dec22893062071))
+
 ## [0.6.0](https://github.com/btraven00/denet/compare/v0.5.0...v0.6.0) (2026-04-22)
 
 
