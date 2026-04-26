@@ -97,20 +97,12 @@ enum Commands {
         #[clap(required = true)]
         file: PathBuf,
     },
-
-    /// Alias for stats command
-    Summary {
-        /// Path to the metrics file
-        #[clap(required = true)]
-        file: PathBuf,
-    },
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Handle stats/summary subcommand separately
-    if let Commands::Stats { file } | Commands::Summary { file } = &args.command {
+    if let Commands::Stats { file } = &args.command {
         return handle_stats_command(file, &args);
     }
 
@@ -118,13 +110,7 @@ fn main() -> Result<()> {
     handle_monitoring_commands(&args)
 }
 
-/// Handle stats and summary commands
 fn handle_stats_command(file: &PathBuf, args: &Args) -> Result<()> {
-    if let Some(old_cmd) = std::env::args().nth(1) {
-        if old_cmd == "summary" && !args.quiet {
-            eprintln!("Note: Using 'stats' is recommended over 'summary'");
-        }
-    }
     generate_summary_from_file(file, args.json, args.out.as_ref())
 }
 
@@ -168,7 +154,7 @@ fn create_monitor_from_args(args: &Args) -> Result<ProcessMonitor> {
     match &args.command {
         Commands::Run { command } => create_monitor_for_command(command, args),
         Commands::Attach { pid } => create_monitor_for_pid(*pid, args),
-        Commands::Stats { .. } | Commands::Summary { .. } => unreachable!(),
+        Commands::Stats { .. } => unreachable!(),
     }
 }
 
@@ -763,6 +749,8 @@ fn convert_aggregated_to_metrics(agg: &AggregatedMetrics) -> Metrics {
         uptime_secs: agg.uptime_secs,
         cpu_core: None,
         gpu: agg.gpu.clone(),
+        psi_mem: agg.psi_mem,
+        perf: agg.perf,
     }
 }
 
@@ -803,6 +791,22 @@ fn summary_rows(summary: &Summary) -> Vec<(&'static str, String)> {
         ),
         ("Network Sent", format_bytes(summary.total_sys_net_tx_bytes)),
     ];
+
+    if let Some(ref mc) = summary.memory_characterization {
+        rows.push(("Mem Verdict", mc.verdict.clone()));
+        if let Some(ipc) = mc.mean_ipc {
+            rows.push(("Mean IPC", format!("{ipc:.2}")));
+        }
+        if let Some(rate) = mc.llc_miss_rate {
+            rows.push(("LLC Miss Rate", format!("{:.1}%", rate * 100.0)));
+        }
+        if let Some(stall) = mc.backend_stall_ratio {
+            rows.push(("Backend Stalls", format!("{:.1}%", stall * 100.0)));
+        }
+        if let Some(psi) = mc.psi_some_fraction {
+            rows.push(("PSI mem-stall samples", format!("{:.1}%", psi * 100.0)));
+        }
+    }
 
     #[cfg(feature = "gpu")]
     if let Some(ref gpu) = summary.gpu {

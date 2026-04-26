@@ -62,6 +62,7 @@ fn test_process_metadata_creation() {
         cmd: cmd.clone(),
         executable: executable.clone(),
         t0_ms,
+        capabilities: None,
     };
 
     assert_eq!(metadata.pid, pid);
@@ -77,6 +78,7 @@ fn test_process_metadata_serialization() {
         cmd: vec!["python".to_string(), "script.py".to_string()],
         executable: "/usr/bin/python".to_string(),
         t0_ms: 1625184000000,
+        capabilities: None,
     };
 
     let json = serde_json::to_string(&metadata).unwrap();
@@ -162,6 +164,7 @@ fn test_process_metadata_edge_cases() {
         cmd: vec![],
         executable: String::new(),
         t0_ms: 0,
+        capabilities: None,
     };
 
     let json = serde_json::to_string(&metadata).unwrap();
@@ -176,6 +179,7 @@ fn test_process_metadata_edge_cases() {
         cmd: long_cmd.clone(),
         executable: "/very/long/path/to/executable/that/might/cause/issues".to_string(),
         t0_ms: u64::MAX,
+        capabilities: None,
     };
 
     let json = serde_json::to_string(&metadata).unwrap();
