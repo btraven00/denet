@@ -64,3 +64,4 @@ GPL-3
 
 - [sysinfo](https://github.com/GuillaumeGomez/sysinfo) - Rust library for system information
 - [PyO3](https://github.com/PyO3/pyo3) - Rust bindings for Python
+- [aya](https://github.com/aya-rs/aya) - Rust library for eBPF programs
