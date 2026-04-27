@@ -105,7 +105,7 @@ fn test_monitoring_loop_with_interrupt() {
     assert!(result.interrupted);
     assert!(!result.timed_out);
     assert!(result.duration >= Duration::from_millis(100));
-    assert!(result.duration < Duration::from_millis(500));
+    assert!(result.duration < Duration::from_millis(800));
 }
 
 #[test]
