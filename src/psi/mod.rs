@@ -84,8 +84,7 @@ pub fn detect(pid: usize) -> PsiCapability {
     #[cfg(target_os = "linux")]
     {
         let system = std::path::Path::new(SYSTEM_PSI_PATH).exists();
-        let per_process =
-            std::path::Path::new(&format!("/proc/{pid}/pressure/memory")).exists();
+        let per_process = std::path::Path::new(&format!("/proc/{pid}/pressure/memory")).exists();
         let reason = if !system {
             Some("kernel does not expose /proc/pressure/memory (PSI disabled?)".to_string())
         } else if !per_process {

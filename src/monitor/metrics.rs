@@ -564,11 +564,7 @@ where
         None
     };
     Some(MemoryCharacterization {
-        verdict: MemoryCharacterization::classify(
-            mean_ipc,
-            backend_stall_ratio,
-            psi_some_fraction,
-        ),
+        verdict: MemoryCharacterization::classify(mean_ipc, backend_stall_ratio, psi_some_fraction),
         mean_ipc,
         llc_miss_rate,
         backend_stall_ratio,
@@ -895,7 +891,10 @@ mod tests {
     #[test]
     fn from_metrics_psi_only_high_pressure() {
         let mut m = Metrics::new();
-        m.psi_mem = Some(PsiMem { some_avg10: 0.9, full_avg10: 0.4 });
+        m.psi_mem = Some(PsiMem {
+            some_avg10: 0.9,
+            full_avg10: 0.4,
+        });
         let mc = MemoryCharacterization::from_metrics(&[m]).unwrap();
         assert_eq!(mc.verdict, "memory-bound");
         assert!((mc.psi_some_fraction.unwrap() - 1.0).abs() < f64::EPSILON);
@@ -908,22 +907,24 @@ mod tests {
     fn from_metrics_psi_fraction_counts_pressured_samples() {
         let pressured = {
             let mut m = Metrics::new();
-            m.psi_mem = Some(PsiMem { some_avg10: 1.0, full_avg10: 0.0 });
+            m.psi_mem = Some(PsiMem {
+                some_avg10: 1.0,
+                full_avg10: 0.0,
+            });
             m
         };
         let calm = {
             let mut m = Metrics::new();
-            m.psi_mem = Some(PsiMem { some_avg10: 0.0, full_avg10: 0.0 });
+            m.psi_mem = Some(PsiMem {
+                some_avg10: 0.0,
+                full_avg10: 0.0,
+            });
             m
         };
         // 1 pressured out of 4 → fraction = 0.25, below PSI_PRESSURE_THRESHOLD.
-        let mc = MemoryCharacterization::from_metrics(&[
-            pressured,
-            calm.clone(),
-            calm.clone(),
-            calm,
-        ])
-        .unwrap();
+        let mc =
+            MemoryCharacterization::from_metrics(&[pressured, calm.clone(), calm.clone(), calm])
+                .unwrap();
         assert!((mc.psi_some_fraction.unwrap() - 0.25).abs() < 1e-9);
         assert_eq!(mc.verdict, "insufficient-data");
     }

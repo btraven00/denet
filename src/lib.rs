@@ -33,9 +33,9 @@ pub mod cpu_sampler;
 
 // Memory-characterization sources (Linux-only internals; PSI module exposes
 // portable no-op stubs on other platforms so callers don't need cfg guards).
-pub mod psi;
 #[cfg(target_os = "linux")]
 pub mod perf;
+pub mod psi;
 
 // eBPF profiling (optional feature)
 #[cfg(feature = "ebpf")]

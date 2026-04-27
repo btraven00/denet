@@ -1047,7 +1047,7 @@ impl ProcessMonitor {
                     thread_count: get_thread_count(*child_pid),
                     uptime_secs: proc.run_time(),
                     cpu_core: Self::get_process_cpu_core(*child_pid),
-                    gpu: None, // Child processes don't get individual GPU metrics
+                    gpu: None,     // Child processes don't get individual GPU metrics
                     psi_mem: None, // PSI is per-tree, captured on the parent
                     perf: None,    // Per-child perf groups not opened (parent uses inherit=1)
                 };
@@ -1090,7 +1090,7 @@ impl ProcessMonitor {
                 ebpf: None, // Will be populated below if eBPF is enabled
                 gpu: None,  // Will be populated below if GPU is enabled
                 psi_mem: parent.psi_mem,
-                perf: parent.perf,
+                perf: parent.perf.clone(),
             };
 
             // Add child metrics

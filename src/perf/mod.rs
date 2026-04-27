@@ -107,9 +107,8 @@ impl PerfGroup {
     /// CPU doesn't expose them.
     pub fn open(pid: libc::pid_t) -> Result<Self, String> {
         let cycles = open_one(pid, PERF_COUNT_HW_CPU_CYCLES)?;
-        let instructions = open_one(pid, PERF_COUNT_HW_INSTRUCTIONS).map_err(|e| {
+        let instructions = open_one(pid, PERF_COUNT_HW_INSTRUCTIONS).inspect_err(|_| {
             unsafe { libc::close(cycles) };
-            e
         })?;
         let cache_refs = open_one(pid, PERF_COUNT_HW_CACHE_REFERENCES).ok();
         let cache_misses = open_one(pid, PERF_COUNT_HW_CACHE_MISSES).ok();
@@ -207,13 +206,7 @@ fn open_one(pid: libc::pid_t, config: u64) -> Result<RawFd, String> {
 
 fn read_counter(fd: RawFd) -> Option<u64> {
     let mut buf = [0u8; 8];
-    let n = unsafe {
-        libc::read(
-            fd,
-            buf.as_mut_ptr() as *mut libc::c_void,
-            buf.len(),
-        )
-    };
+    let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
     if n != 8 {
         return None;
     }
@@ -289,7 +282,7 @@ mod tests {
         }
         let mut group = PerfGroup::open(0).expect("open self perf group");
         let _ = group.sample_delta(); // prime
-        // Burn cycles in the calling thread, between two reads.
+                                      // Burn cycles in the calling thread, between two reads.
         let mut acc: u64 = 0;
         for i in 0..1_000_000u64 {
             acc = acc.wrapping_add(i.wrapping_mul(7));
@@ -304,6 +297,10 @@ mod tests {
             eprintln!("HW counters reported zero — likely no PMU passthrough; skipping assertion");
             return;
         }
-        assert!(d.instructions > 0, "no instruction delta but cycles={}", d.cycles);
+        assert!(
+            d.instructions > 0,
+            "no instruction delta but cycles={}",
+            d.cycles
+        );
     }
 }
