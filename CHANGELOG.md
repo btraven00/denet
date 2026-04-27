@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/btraven00/denet/compare/v0.6.1...v0.6.2) (2026-04-27)
+
+
+### Bug Fixes
+
+* add conda installation instructions from prefix.dev channel ([d388185](https://github.com/btraven00/denet/commit/d388185a550e928593cc2ba1db1b457fb2195a9b))
+
 ## [0.6.1](https://github.com/btraven00/denet/compare/v0.6.0...v0.6.1) (2026-04-23)
 
 
