@@ -1,0 +1,55 @@
+name: Conda Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Trusted Publishing: prefix.dev verifies the OIDC token issued by GitHub to
+# confirm this workflow is allowed to publish to the channel — no API key needed.
+# Configure the trusted publisher once in the prefix.dev channel dashboard:
+#   Owner / Repo / Workflow filename: conda-release.yml
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    name: denet (${{ matrix.target.platform }})
+    runs-on: ${{ matrix.target.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { os: ubuntu-latest, platform: linux-64  }
+          - { os: macos-latest,  platform: osx-arm64 }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set package version
+        run: echo "PKG_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Build conda package
+        uses: prefix-dev/rattler-build-action@v0.2.36
+        with:
+          recipe-path: conda-recipes/denet/recipe.yaml
+          artifact-name: denet-${{ matrix.target.platform }}
+          build-args: >-
+            --target-platform ${{ matrix.target.platform }}
+            --no-test
+        env:
+          PKG_VERSION: ${{ env.PKG_VERSION }}
+
+      - name: Upload to prefix.dev
+        run: |
+          for file in output/**/*.conda; do
+            rattler-build upload prefix \
+              --channel "almost-conductor" \
+              "$file"
+          done

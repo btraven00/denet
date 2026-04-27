@@ -1,0 +1,24 @@
+package:
+  name: denet
+  version: ${{ env.get("PKG_VERSION") | default("0.6.1") }}
+
+source:
+  path: ../..
+
+build:
+  number: 0
+  script:
+    - if: unix
+      then: bash ${RECIPE_DIR}/build.sh
+
+requirements:
+  build:
+    - ${{ compiler('rust') }}
+    - if: linux
+      then: pkg-config
+
+tests:
+  - script:
+      interpreter: bash
+      content: |
+        denet --version
