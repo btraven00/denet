@@ -17,6 +17,15 @@ pip install denet    # Python package
 cargo install denet  # Rust binary
 ```
 
+Or install the conda package from the [almost-conductor](https://prefix.dev/almost-conductor) channel:
+
+```bash
+# pixi
+pixi add --channel https://prefix.dev/almost-conductor denet
+# conda
+conda install -c https://prefix.dev/almost-conductor denet
+```
+
 Optional features for the Rust binary:
 
 ```bash
