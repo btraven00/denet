@@ -10,6 +10,8 @@ build:
   script:
     - if: unix
       then: bash ${RECIPE_DIR}/build.sh
+    - if: win
+      then: cmd /C %RECIPE_DIR%\build.cmd
 
 requirements:
   build:
@@ -18,7 +20,14 @@ requirements:
       then: pkg-config
 
 tests:
-  - script:
-      interpreter: bash
-      content: |
-        denet --version
+  - if: not win
+    then:
+      script:
+        interpreter: bash
+        content: |
+          denet --version
+  - if: win
+    then:
+      script:
+        interpreter: cmd
+        content: denet --version

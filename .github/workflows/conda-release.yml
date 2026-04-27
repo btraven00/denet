@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 # Trusted Publishing: prefix.dev verifies the OIDC token issued by GitHub to
 # confirm this workflow is allowed to publish to the channel — no API key needed.
@@ -17,18 +18,28 @@ jobs:
   build:
     name: denet (${{ matrix.target.platform }})
     runs-on: ${{ matrix.target.os }}
+    env:
+      CONDA_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && 'edge' || 'almost-conductor' }}
     strategy:
       fail-fast: false
       matrix:
         target:
-          - { os: ubuntu-latest, platform: linux-64  }
-          - { os: macos-latest,  platform: osx-arm64 }
+          - { os: ubuntu-latest,  platform: linux-64  }
+          - { os: macos-latest,   platform: osx-arm64 }
+          - { os: windows-latest, platform: win-64    }
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set package version
+      - name: Set package version (unix)
+        if: runner.os != 'Windows'
         run: echo "PKG_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Set package version (windows)
+        if: runner.os == 'Windows'
+        run: |
+          $version = "$env:GITHUB_REF_NAME" -replace '^v', ''
+          echo "PKG_VERSION=$version" >> $env:GITHUB_ENV
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -46,10 +57,18 @@ jobs:
         env:
           PKG_VERSION: ${{ env.PKG_VERSION }}
 
-      - name: Upload to prefix.dev
+      - name: Upload to prefix.dev (unix)
+        if: runner.os != 'Windows'
         run: |
           for file in output/**/*.conda; do
             rattler-build upload prefix \
-              --channel "almost-conductor" \
+              --channel "$CONDA_CHANNEL" \
               "$file"
           done
+
+      - name: Upload to prefix.dev (windows)
+        if: runner.os == 'Windows'
+        run: |
+          Get-ChildItem -Recurse output\*.conda | ForEach-Object {
+            rattler-build upload prefix --channel "$env:CONDA_CHANNEL" $_.FullName
+          }
