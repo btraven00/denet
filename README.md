@@ -21,7 +21,8 @@ Or install the conda package from the [almost-conductor](https://prefix.dev/almo
 
 ```bash
 # pixi
-pixi add --channel https://prefix.dev/almost-conductor denet
+pixi workspace channel add https://prefix.dev/almost-conductor
+pixi add denet
 # conda
 conda install -c https://prefix.dev/almost-conductor denet
 ```
