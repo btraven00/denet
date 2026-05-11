@@ -106,6 +106,9 @@ pub struct OutputConfig {
     pub update_in_place: bool,
     /// Whether to write metadata as first line when writing to file
     pub write_metadata: bool,
+    /// Whether to write an `env` (host/NUMA/affinity) record before metadata
+    /// when writing to file. Captured once at the start of monitoring.
+    pub write_env: bool,
 }
 
 impl Default for OutputConfig {
@@ -117,6 +120,7 @@ impl Default for OutputConfig {
             quiet: false,
             update_in_place: true,
             write_metadata: false,
+            write_env: false,
         }
     }
 }
@@ -210,6 +214,7 @@ pub struct OutputConfigBuilder {
     quiet: Option<bool>,
     update_in_place: Option<bool>,
     write_metadata: Option<bool>,
+    write_env: Option<bool>,
 }
 
 impl OutputConfigBuilder {
@@ -248,6 +253,11 @@ impl OutputConfigBuilder {
         self
     }
 
+    pub fn write_env(mut self, write: bool) -> Self {
+        self.write_env = Some(write);
+        self
+    }
+
     pub fn build(self) -> OutputConfig {
         OutputConfig {
             output_file: self.output_file,
@@ -256,6 +266,7 @@ impl OutputConfigBuilder {
             quiet: self.quiet.unwrap_or(false),
             update_in_place: self.update_in_place.unwrap_or(true),
             write_metadata: self.write_metadata.unwrap_or(false),
+            write_env: self.write_env.unwrap_or(false),
         }
     }
 }
@@ -481,6 +492,7 @@ mod tests {
             .quiet(true)
             .update_in_place(false)
             .write_metadata(true)
+            .write_env(true)
             .build();
 
         assert_eq!(config.output_file, Some(PathBuf::from("output.json")));
@@ -489,6 +501,13 @@ mod tests {
         assert!(config.quiet);
         assert!(!config.update_in_place);
         assert!(config.write_metadata);
+        assert!(config.write_env);
+    }
+
+    #[test]
+    fn test_output_config_write_env_default_false() {
+        let config = OutputConfigBuilder::default().build();
+        assert!(!config.write_env);
     }
 
     #[test]

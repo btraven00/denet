@@ -6,7 +6,7 @@
 use crate::config::{OutputConfig, OutputFormat};
 use crate::core::process_monitor::ProcessMonitor;
 use crate::error::DenetError;
-use crate::monitor::{Summary, SummaryGenerator};
+use crate::monitor::{tagged_json, Summary, SummaryGenerator};
 
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
@@ -24,21 +24,25 @@ struct PyProcessMonitor {
     samples: Vec<String>,
     output_config: OutputConfig,
     metadata_written: bool,
+    env_written: bool,
 }
 
 /// Build OutputConfig with consistent settings
+#[allow(clippy::too_many_arguments)]
 fn build_output_config(
     output_file: Option<String>,
     output_format: &str,
     store_in_memory: bool,
     quiet: bool,
     write_metadata: bool,
+    write_env: bool,
 ) -> PyResult<OutputConfig> {
     let mut builder = OutputConfig::builder()
         .format_str(output_format)?
         .store_in_memory(store_in_memory)
         .quiet(quiet)
-        .write_metadata(write_metadata);
+        .write_metadata(write_metadata)
+        .write_env(write_env);
 
     if let Some(path) = output_file {
         builder = builder.output_file(path);
@@ -50,7 +54,7 @@ fn build_output_config(
 #[pymethods]
 impl PyProcessMonitor {
     #[new]
-    #[pyo3(signature = (cmd, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false))]
+    #[pyo3(signature = (cmd, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false, write_env=false))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         cmd: Vec<String>,
@@ -63,6 +67,7 @@ impl PyProcessMonitor {
         quiet: bool,
         include_children: bool,
         write_metadata: bool,
+        write_env: bool,
     ) -> PyResult<Self> {
         let output_config = build_output_config(
             output_file,
@@ -70,6 +75,7 @@ impl PyProcessMonitor {
             store_in_memory,
             quiet,
             write_metadata,
+            write_env,
         )?;
 
         let mut inner = ProcessMonitor::new_with_options(
@@ -88,12 +94,13 @@ impl PyProcessMonitor {
             samples: Vec::new(),
             output_config,
             metadata_written: false,
+            env_written: false,
         })
     }
 
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (pid, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false))]
+    #[pyo3(signature = (pid, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false, write_env=false))]
     fn from_pid(
         pid: usize,
         base_interval_ms: u64,
@@ -105,6 +112,7 @@ impl PyProcessMonitor {
         quiet: bool,
         include_children: bool,
         write_metadata: Option<bool>,
+        write_env: Option<bool>,
     ) -> PyResult<Self> {
         let output_config = build_output_config(
             output_file,
@@ -112,6 +120,7 @@ impl PyProcessMonitor {
             store_in_memory,
             quiet,
             write_metadata.unwrap_or(false),
+            write_env.unwrap_or(false),
         )?;
         let mut inner = ProcessMonitor::from_pid_with_options(
             pid,
@@ -129,6 +138,7 @@ impl PyProcessMonitor {
             samples: Vec::new(),
             output_config,
             metadata_written: false,
+            env_written: false,
         })
     }
 
@@ -238,6 +248,7 @@ impl PyProcessMonitor {
             samples: Vec::new(),
             output_config,
             metadata_written: false,
+            env_written: false,
         };
 
         // Resume the process if it was paused
@@ -289,11 +300,11 @@ impl PyProcessMonitor {
         while self.inner.is_running() {
             let json = if self.inner.get_include_children() {
                 let tree_metrics = self.inner.sample_tree_metrics();
-                serde_json::to_string(&tree_metrics)
+                tagged_json("tree", &tree_metrics)
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
             } else {
                 match self.inner.sample_metrics() {
-                    Some(metrics) => serde_json::to_string(&metrics)
+                    Some(metrics) => tagged_json("sample", &metrics)
                         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?,
                     None => {
                         sleep(self.inner.adaptive_interval());
@@ -330,12 +341,12 @@ impl PyProcessMonitor {
         let metrics_json = if self.inner.get_include_children() {
             // Sample the metrics including child processes
             let tree_metrics = self.inner.sample_tree_metrics();
-            serde_json::to_string(&tree_metrics)
+            tagged_json("tree", &tree_metrics)
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
         } else {
             // Sample only the parent process
             match self.inner.sample_metrics() {
-                Some(metrics) => serde_json::to_string(&metrics)
+                Some(metrics) => tagged_json("sample", &metrics)
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?,
                 None => return Ok(None),
             }
@@ -348,16 +359,38 @@ impl PyProcessMonitor {
 
         // Write to file if output_file is specified
         if let Some(path) = &self.output_config.output_file {
-            // Write metadata as first line if enabled and not yet written
+            // Write env record as first line if enabled. Env is captured once
+            // and must precede metadata. We open with truncate on the first
+            // write (env OR metadata, whichever fires first).
+            let mut needs_truncate = (self.output_config.write_env && !self.env_written)
+                || (self.output_config.write_metadata && !self.metadata_written);
+
+            if self.output_config.write_env && !self.env_written {
+                let env_json = tagged_json("env", &self.inner.get_env())
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                let mut file = OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(needs_truncate)
+                    .append(!needs_truncate)
+                    .open(path)
+                    .map_err(map_io_error)?;
+                writeln!(file, "{env_json}").map_err(map_io_error)?;
+                self.env_written = true;
+                needs_truncate = false;
+            }
+
+            // Write metadata as next line if enabled and not yet written
             if self.output_config.write_metadata && !self.metadata_written {
                 if let Some(metadata) = self.inner.get_metadata() {
-                    let metadata_json = serde_json::to_string(&metadata)
+                    let metadata_json = tagged_json("metadata", &metadata)
                         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
                     let mut file = OpenOptions::new()
                         .create(true)
                         .write(true)
-                        .truncate(true)
+                        .truncate(needs_truncate)
+                        .append(!needs_truncate)
                         .open(path)
                         .map_err(map_io_error)?;
 
@@ -392,6 +425,13 @@ impl PyProcessMonitor {
             .inner
             .get_metadata()
             .and_then(|metadata| serde_json::to_string(&metadata).ok()))
+    }
+
+    /// Return the env record (host/NUMA/affinity/governor/THP/SMT/cgroup)
+    /// as a tagged JSON string, suitable for prepending to a JSONL stream.
+    fn get_env(&self) -> PyResult<String> {
+        tagged_json("env", &self.inner.get_env())
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
     fn get_samples(&self) -> Vec<String> {
