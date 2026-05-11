@@ -967,11 +967,13 @@ mod tests {
 
     #[test]
     fn from_aggregated_psi_pressure_classifies_memory_bound() {
-        let mut a = AggregatedMetrics::default();
-        a.psi_mem = Some(PsiMem {
-            some_avg10: 0.8,
-            full_avg10: 0.3,
-        });
+        let a = AggregatedMetrics {
+            psi_mem: Some(PsiMem {
+                some_avg10: 0.8,
+                full_avg10: 0.3,
+            }),
+            ..Default::default()
+        };
         let mc = MemoryCharacterization::from_aggregated(&[a]).unwrap();
         assert_eq!(mc.verdict, "memory-bound");
         assert!((mc.psi_some_fraction.unwrap() - 1.0).abs() < f64::EPSILON);
@@ -980,16 +982,15 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn from_aggregated_perf_sums_across_samples() {
-        let make = |cycles, instr| {
-            let mut a = AggregatedMetrics::default();
-            a.perf = Some(crate::perf::PerfCounters {
+        let make = |cycles, instr| AggregatedMetrics {
+            perf: Some(crate::perf::PerfCounters {
                 cycles,
                 instructions: instr,
                 cache_refs: 0,
                 cache_misses: 0,
                 stalled_backend: 0,
-            });
-            a
+            }),
+            ..Default::default()
         };
         let mc =
             MemoryCharacterization::from_aggregated(&[make(100, 200), make(100, 200)]).unwrap();

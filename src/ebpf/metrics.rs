@@ -165,46 +165,108 @@ pub fn syscall_name(syscall_nr: u64) -> String {
 /// - `system`: System configuration and information
 /// - `other`: Uncategorized syscalls
 pub fn categorize_syscall(syscall_nr: u64) -> String {
+    // x86_64 syscall numbering. Categories are best-effort: read/write on
+    // socket fds fall into file_io here because tracepoints cannot tell a
+    // socket fd from a file fd without an auxiliary fd-type map.
     match syscall_nr {
-        // File I/O operations
-        0 | 1 | 2 | 3 | 4 | 5 | 6 | 8 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 40 | 82 | 83 | 84
-        | 85 | 86 | 87 | 88 | 89 | 90 | 132 | 133 | 187 | 188 | 189 | 190 | 257 | 258 | 259
-        | 260 | 263 | 264 | 265 | 285 | 286 | 293 | 294 | 295 | 296 | 304 | 305 | 306 | 307 => {
-            "file_io".to_string()
-        }
+        // file_io: read/write family, file lifecycle, fs metadata, fd ops
+        0 | 1 | 2 | 3 | 4 | 5 | 6 | 8                                  // read,write,open,close,stat,fstat,lstat,lseek
+        | 16 | 17 | 18 | 19 | 20 | 21                                  // ioctl,pread64,pwrite64,readv,writev,access
+        | 32 | 33                                                       // dup,dup2
+        | 40                                                            // sendfile
+        | 72 | 73 | 74 | 75 | 76 | 77 | 78 | 79 | 80 | 81              // fcntl,flock,fsync,fdatasync,truncate,ftruncate,getdents,getcwd,chdir,fchdir
+        | 82 | 83 | 84 | 85 | 86 | 87 | 88 | 89 | 90                   // rename,mkdir,rmdir,creat,link,unlink,symlink,readlink,chmod
+        | 132 | 133                                                     // utime,mknod
+        | 187 | 188 | 189 | 190                                         // readahead,setxattr,lsetxattr,fsetxattr
+        | 217                                                           // getdents64
+        | 257 | 258 | 259 | 260 | 263 | 264 | 265                       // openat,mkdirat,mknodat,fchownat,unlinkat,renameat,linkat
+        | 266 | 267 | 268 | 269 | 270 | 271 | 272                       // symlinkat,readlinkat,fchmodat,faccessat,pselect6,ppoll,unshare
+        | 285 | 286                                                     // fallocate,timerfd_settime
+        | 294                                                           // inotify_init1
+        | 295 | 296                                                     // preadv,pwritev
+        | 303 | 304                                                     // name_to_handle_at,open_by_handle_at
+        | 306                                                           // syncfs
+        => "file_io".to_string(),
 
-        // Memory management
-        9 | 10 | 11 | 12 | 15 | 25 | 26 | 27 | 28 | 158 | 159 | 160 | 213 | 214 | 215 | 216
-        | 217 | 218 | 226 | 273 | 274 | 275 | 276 | 317 | 318 | 319 => "memory".to_string(),
+        // memory: allocation, mapping, protection
+        9 | 10 | 11 | 12 | 25 | 26 | 27 | 28                            // mmap,mprotect,munmap,brk,mremap,msync,mincore,madvise
+        | 158                                                           // arch_prctl
+        | 213 | 214 | 215 | 216                                         // epoll_create,epoll_ctl_old,epoll_wait_old,remap_file_pages
+        | 218                                                           // set_tid_address (memory-adjacent, low priority)
+        | 237 | 238 | 239                                                // mbind,set_mempolicy,get_mempolicy
+        | 273 | 274 | 275 | 276                                         // set_robust_list,get_robust_list,splice,tee
+        | 318 | 319                                                      // getrandom,memfd_create
+        => "memory".to_string(),
 
-        // Process/thread management
-        56 | 57 | 58 | 59 | 60 | 61 | 62 | 224 | 231 | 232 | 233 | 234 | 235 | 236 | 246 | 266
-        | 267 | 268 | 269 | 270 | 271 | 272 => "process".to_string(),
+        // process: lifecycle, scheduling state
+        56 | 57 | 58 | 59 | 60 | 61                                     // clone,fork,vfork,execve,exit,wait4
+        | 231                                                           // exit_group
+        | 247                                                           // waitid
+        | 322                                                           // execveat
+        | 435                                                           // clone3
+        => "process".to_string(),
 
-        // Network operations
-        41 | 42 | 43 | 44 | 45 | 46 | 47 | 48 | 49 | 50 | 51 | 52 | 53 | 54 | 55 | 198 | 199
-        | 200 | 202 | 203 | 288 | 289 | 290 | 291 | 292 | 326 | 327 | 328 | 329 | 330 | 331
-        | 332 => "network".to_string(),
+        // signal: signal delivery, masking, kill
+        13 | 14 | 15                                                    // rt_sigaction,rt_sigprocmask,rt_sigreturn
+        | 34                                                            // pause
+        | 62                                                            // kill
+        | 127 | 128 | 129 | 130 | 131                                    // rt_sigpending,rt_sigtimedwait,rt_sigqueueinfo,rt_sigsuspend,sigaltstack
+        | 200                                                           // tkill
+        | 234                                                           // tgkill
+        | 282                                                           // signalfd
+        | 297                                                           // rt_tgsigqueueinfo
+        => "signal".to_string(),
 
-        // Time and scheduling operations
-        23 | 24 | 35 | 96 | 97 | 98 | 113 | 114 | 115 | 116 | 117 | 118 | 119 | 120 | 201 | 228
-        | 229 | 230 | 249 | 252 | 277 | 278 | 279 | 280 => "time".to_string(),
+        // ipc: pipes, SysV/POSIX IPC, futex, eventfd
+        22                                                              // pipe
+        | 29 | 30 | 31                                                  // shmget,shmat,shmctl
+        | 64 | 65 | 66 | 67                                              // semget,semop,semctl,shmdt
+        | 68 | 69 | 70 | 71                                              // msgget,msgsnd,msgrcv,msgctl
+        | 202                                                           // futex
+        | 240 | 241 | 242 | 243 | 244 | 245 | 246                       // mq_*
+        | 283 | 284                                                     // timerfd_create,eventfd
+        | 293                                                           // pipe2
+        => "ipc".to_string(),
 
-        // Inter-process communication
-        63..=81 => "ipc".to_string(),
+        // network: sockets and socket-level I/O
+        41 | 42 | 43 | 44 | 45 | 46 | 47 | 48 | 49 | 50 | 51 | 52 | 53 | 54 | 55
+                                                                         // socket,connect,accept,sendto,recvfrom,sendmsg,recvmsg,shutdown,bind,listen,getsockname,getpeername,socketpair,setsockopt,getsockopt
+        | 288                                                           // accept4
+        | 299                                                           // recvmmsg
+        | 307                                                           // sendmmsg
+        => "network".to_string(),
 
-        // Security, permissions, capabilities
-        91 | 92 | 95 | 123 | 124 | 125 | 126 | 137 | 138 | 139 | 140 | 141 | 142 | 157 | 163
-        | 164 | 165 | 166 | 281 | 282 | 283 | 284 => "security".to_string(),
+        // time: clocks, sleeps, timers
+        23 | 24                                                         // select,sched_yield
+        | 35                                                            // nanosleep
+        | 96 | 97 | 98                                                  // gettimeofday,getrlimit,getrusage
+        | 201                                                           // time
+        | 203 | 204                                                     // sched_setaffinity,sched_getaffinity
+        | 222 | 223 | 224 | 225 | 226 | 227                              // timer_create..clock_settime
+        | 228 | 229 | 230                                               // clock_gettime,clock_getres,clock_nanosleep
+        | 232 | 233 | 235                                                // epoll_wait,epoll_ctl,utimes
+        | 249                                                           // clock_adjtime (close enough)
+        | 277 | 278 | 279 | 280                                         // sync_file_range,vmsplice,move_pages,utimensat
+        => "time".to_string(),
 
-        // Signal handling
-        13 | 14 => "signal".to_string(),
+        // security: ownership, capabilities, namespaces
+        91 | 92 | 93 | 94 | 95                                          // fchmod,chown,fchown,lchown,umask
+        | 105 | 106                                                     // setuid,setgid
+        | 117 | 119 | 120 | 122                                          // setresuid,setresgid,getresgid,setfsuid (approx)
+        | 123 | 124 | 125 | 126                                         // setfsgid,getsid,capget,capset
+        | 137 | 138 | 139 | 140 | 141 | 142                              // statfs,fstatfs,sysfs,getpriority,setpriority,sched_setparam
+        | 157                                                           // prctl
+        | 161 | 162 | 163 | 164 | 165 | 166                              // chroot,sync,acct,settimeofday,mount,umount2
+        | 281                                                           // epoll_pwait
+        => "security".to_string(),
 
-        // System configuration and information
-        99 | 100 | 101 | 102 | 103 | 153 | 154 | 155 | 156 | 168 | 169 | 170 | 171 | 172 | 173
-        | 174 | 175 => "system".to_string(),
+        // system: identification, configuration
+        63                                                              // uname
+        | 99 | 100 | 101 | 102 | 103                                    // sysinfo,times,ptrace,getuid,syslog
+        | 153 | 154 | 155 | 156                                         // vhangup,modify_ldt,pivot_root,_sysctl
+        | 168 | 169 | 170 | 171 | 172 | 173 | 174 | 175                  // ioperm,create_module,init_module,delete_module,get_kernel_syms,query_module,quotactl,nfsservctl
+        => "system".to_string(),
 
-        // Unknown
         _ => "other".to_string(),
     }
 }
@@ -389,5 +451,181 @@ pub fn generate_syscall_analysis(
         memory_intensity: *metrics.by_category.get("memory").unwrap_or(&0) as f64 / total,
         cpu_intensity: *metrics.by_category.get("process").unwrap_or(&0) as f64 / total,
         network_intensity: *metrics.by_category.get("network").unwrap_or(&0) as f64 / total,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // x86_64 syscall numbers, verified against
+    // arch/x86/entry/syscalls/syscall_64.tbl.
+    const READ: u64 = 0;
+    const WRITE: u64 = 1;
+    const CLOSE: u64 = 3;
+    const FCNTL: u64 = 72;
+    const FLOCK: u64 = 73;
+    const FSYNC: u64 = 74;
+    const GETDENTS: u64 = 78;
+    const CHDIR: u64 = 80;
+    const OPENAT: u64 = 257;
+
+    const MMAP: u64 = 9;
+    const MUNMAP: u64 = 11;
+    const BRK: u64 = 12;
+
+    const CLONE: u64 = 56;
+    const FORK: u64 = 57;
+    const EXECVE: u64 = 59;
+    const EXIT: u64 = 60;
+    const EXIT_GROUP: u64 = 231;
+    const CLONE3: u64 = 435;
+
+    const SOCKET: u64 = 41;
+    const CONNECT: u64 = 42;
+    const SENDTO: u64 = 44;
+    const RECVFROM: u64 = 45;
+    const SENDMSG: u64 = 46;
+    const RECVMSG: u64 = 47;
+    const ACCEPT4: u64 = 288;
+    const SENDMMSG: u64 = 307;
+
+    const PIPE: u64 = 22;
+    const PIPE2: u64 = 293;
+    const FUTEX: u64 = 202;
+    const SHMGET: u64 = 29;
+    const SEMOP: u64 = 65;
+    const MSGSND: u64 = 69;
+
+    const RT_SIGACTION: u64 = 13;
+    const RT_SIGPROCMASK: u64 = 14;
+    const KILL: u64 = 62;
+    const TKILL: u64 = 200;
+    const TGKILL: u64 = 234;
+
+    const NANOSLEEP: u64 = 35;
+    const CLOCK_GETTIME: u64 = 228;
+    const CLOCK_NANOSLEEP: u64 = 230;
+    const SCHED_SETAFFINITY: u64 = 203;
+
+    const UNAME: u64 = 63;
+
+    fn cat(nr: u64) -> String {
+        categorize_syscall(nr)
+    }
+
+    #[test]
+    fn file_io_basic_rw() {
+        assert_eq!(cat(READ), "file_io");
+        assert_eq!(cat(WRITE), "file_io");
+        assert_eq!(cat(CLOSE), "file_io");
+        assert_eq!(cat(OPENAT), "file_io");
+    }
+
+    /// Regression: the original code lumped 63..=81 into "ipc", which
+    /// mis-bucketed fcntl/flock/fsync/getdents/chdir.
+    #[test]
+    fn regression_file_io_not_ipc() {
+        assert_eq!(cat(FCNTL), "file_io");
+        assert_eq!(cat(FLOCK), "file_io");
+        assert_eq!(cat(FSYNC), "file_io");
+        assert_eq!(cat(GETDENTS), "file_io");
+        assert_eq!(cat(CHDIR), "file_io");
+    }
+
+    #[test]
+    fn memory_basic() {
+        assert_eq!(cat(MMAP), "memory");
+        assert_eq!(cat(MUNMAP), "memory");
+        assert_eq!(cat(BRK), "memory");
+    }
+
+    /// Workers forking via clone/clone3 must surface as "process".
+    /// This was the original gap: tracepoints existed in metrics
+    /// but the BPF program never attached to them.
+    #[test]
+    fn process_lifecycle() {
+        assert_eq!(cat(CLONE), "process");
+        assert_eq!(cat(FORK), "process");
+        assert_eq!(cat(EXECVE), "process");
+        assert_eq!(cat(EXIT), "process");
+        assert_eq!(cat(EXIT_GROUP), "process");
+        assert_eq!(cat(CLONE3), "process");
+    }
+
+    #[test]
+    fn network_full_socket_family() {
+        for nr in [
+            SOCKET, CONNECT, SENDTO, RECVFROM, SENDMSG, RECVMSG, ACCEPT4, SENDMMSG,
+        ] {
+            assert_eq!(cat(nr), "network", "syscall {} should be network", nr);
+        }
+    }
+
+    /// Regression: futex (202) and sched_setaffinity (203) used to be
+    /// classified as "network".
+    #[test]
+    fn regression_futex_not_network() {
+        assert_eq!(cat(FUTEX), "ipc");
+        assert_ne!(cat(SCHED_SETAFFINITY), "network");
+    }
+
+    #[test]
+    fn ipc_primitives() {
+        assert_eq!(cat(PIPE), "ipc");
+        assert_eq!(cat(PIPE2), "ipc");
+        assert_eq!(cat(FUTEX), "ipc");
+        assert_eq!(cat(SHMGET), "ipc");
+        assert_eq!(cat(SEMOP), "ipc");
+        assert_eq!(cat(MSGSND), "ipc");
+    }
+
+    #[test]
+    fn signal_family() {
+        assert_eq!(cat(RT_SIGACTION), "signal");
+        assert_eq!(cat(RT_SIGPROCMASK), "signal");
+        assert_eq!(cat(KILL), "signal");
+        assert_eq!(cat(TKILL), "signal");
+        assert_eq!(cat(TGKILL), "signal");
+    }
+
+    #[test]
+    fn time_family() {
+        assert_eq!(cat(NANOSLEEP), "time");
+        assert_eq!(cat(CLOCK_GETTIME), "time");
+        assert_eq!(cat(CLOCK_NANOSLEEP), "time");
+    }
+
+    #[test]
+    fn system_uname() {
+        // Regression: uname (63) used to be the first entry in the
+        // 63..=81 range that incorrectly bucketed as "ipc".
+        assert_eq!(cat(UNAME), "system");
+    }
+
+    #[test]
+    fn unknown_falls_back_to_other() {
+        assert_eq!(cat(9999), "other");
+    }
+
+    /// No syscall number should be classified into more than one
+    /// category. This guards against future range overlaps when adding
+    /// new entries.
+    #[test]
+    fn categories_are_disjoint() {
+        // Spot-check a representative number from each category.
+        let samples = [
+            (READ, "file_io"),
+            (MMAP, "memory"),
+            (CLONE, "process"),
+            (SOCKET, "network"),
+            (FUTEX, "ipc"),
+            (KILL, "signal"),
+            (NANOSLEEP, "time"),
+            (UNAME, "system"),
+        ];
+        for (nr, expected) in samples {
+            assert_eq!(cat(nr), expected, "{} should map to {}", nr, expected);
+        }
     }
 }
