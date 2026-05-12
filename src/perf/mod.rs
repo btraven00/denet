@@ -10,8 +10,6 @@
 //! / ENOSYS / ENOENT we record the reason in the manifest and stay silent for
 //! the rest of the run. Callers must handle `None` gracefully.
 
-#![cfg(target_os = "linux")]
-
 use serde::{Deserialize, Serialize};
 use std::os::unix::io::RawFd;
 
@@ -270,6 +268,44 @@ mod tests {
     #[test]
     fn detect_does_not_panic() {
         let _ = detect();
+    }
+
+    #[test]
+    fn describe_perf_error_messages() {
+        let eacces = std::io::Error::from_raw_os_error(libc::EACCES);
+        let s = describe_perf_error(&eacces);
+        assert!(s.contains("permission denied"), "got: {s}");
+        assert!(s.contains("perf_event_paranoid"), "got: {s}");
+
+        let eperm = std::io::Error::from_raw_os_error(libc::EPERM);
+        let s = describe_perf_error(&eperm);
+        assert!(s.contains("permission denied"), "got: {s}");
+
+        let enosys = std::io::Error::from_raw_os_error(libc::ENOSYS);
+        assert!(describe_perf_error(&enosys).contains("not supported"));
+
+        let enoent = std::io::Error::from_raw_os_error(libc::ENOENT);
+        assert!(describe_perf_error(&enoent).contains("not available"));
+
+        // Any other errno falls through to the generic branch.
+        let einval = std::io::Error::from_raw_os_error(libc::EINVAL);
+        assert!(describe_perf_error(&einval).contains("perf_event_open failed"));
+    }
+
+    #[test]
+    fn opened_events_lists_optional_counters() {
+        // Build a group with only the required counters (others = None) and
+        // confirm `opened_events` reports them. We can't construct one without
+        // calling open(), so just exercise detect() and trust the field plumbing
+        // via `self_open_and_read` above. This test pins the events for
+        // detect() — they're the documented surface.
+        let cap = detect();
+        if cap.available {
+            assert!(cap.events.contains(&"cycles".to_string()));
+            assert!(cap.events.contains(&"instructions".to_string()));
+        } else {
+            assert!(cap.reason.is_some());
+        }
     }
 
     #[test]

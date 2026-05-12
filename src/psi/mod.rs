@@ -14,6 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "linux")]
 const SYSTEM_PSI_PATH: &str = "/proc/pressure/memory";
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq)]
@@ -132,5 +133,51 @@ mod tests {
         {
             assert!(parse("not a psi file").is_none());
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_missing_full_line_returns_none() {
+        // `some` present but `full` missing — both are required.
+        let s = "some avg10=1.0 avg60=0.0 avg300=0.0 total=0\n";
+        assert!(parse(s).is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_missing_avg10_token_returns_none() {
+        // Lines without `avg10=` token leave the target unset.
+        let s = "some avg60=1.0 avg300=0.0 total=0\n\
+                 full avg60=0.5 avg300=0.0 total=0\n";
+        assert!(parse(s).is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_skips_unknown_kind() {
+        // The `weird` line should be skipped, then `some`/`full` parse normally.
+        let s = "weird avg10=9.0\n\
+                 some avg10=0.5 avg60=0.0 avg300=0.0 total=0\n\
+                 full avg10=0.1 avg60=0.0 avg300=0.0 total=0\n";
+        let p = parse(s).unwrap();
+        assert!((p.some_avg10 - 0.5).abs() < 1e-4);
+        assert!((p.full_avg10 - 0.1).abs() < 1e-4);
+    }
+
+    #[test]
+    fn detect_does_not_panic() {
+        let cap = detect(std::process::id() as usize);
+        // On non-linux both flags are false; on linux at least one of the
+        // booleans corresponds to reality. Either way, calling is safe.
+        if !cap.system {
+            assert!(cap.reason.is_some());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_process_for_nonexistent_pid_returns_none() {
+        // PID 0 has no /proc entry — read should fail gracefully.
+        assert!(read_process(0).is_none());
     }
 }

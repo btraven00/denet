@@ -1090,6 +1090,10 @@ impl ProcessMonitor {
                 ebpf: None, // Will be populated below if eBPF is enabled
                 gpu: None,  // Will be populated below if GPU is enabled
                 psi_mem: parent.psi_mem,
+                // On Linux `perf` is `Option<PerfCounters>` (Copy); on non-Linux
+                // it's `Option<serde_json::Value>` (not Copy). `.clone()` is the
+                // portable choice; clippy's lint fires only on the Linux build.
+                #[cfg_attr(target_os = "linux", allow(clippy::clone_on_copy))]
                 perf: parent.perf.clone(),
             };
 

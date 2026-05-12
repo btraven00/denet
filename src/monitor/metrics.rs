@@ -929,6 +929,115 @@ mod tests {
         assert_eq!(mc.verdict, "insufficient-data");
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn from_metrics_with_perf_computes_ratios() {
+        let mut m = Metrics::new();
+        m.perf = Some(crate::perf::PerfCounters {
+            cycles: 1000,
+            instructions: 500,
+            cache_refs: 200,
+            cache_misses: 50,
+            stalled_backend: 700,
+        });
+        let mc = MemoryCharacterization::from_metrics(&[m]).unwrap();
+        assert!((mc.mean_ipc.unwrap() - 0.5).abs() < 1e-9);
+        assert!((mc.llc_miss_rate.unwrap() - 0.25).abs() < 1e-9);
+        assert!((mc.backend_stall_ratio.unwrap() - 0.7).abs() < 1e-9);
+        // High stall + low IPC → memory-bound.
+        assert_eq!(mc.verdict, "memory-bound");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn from_metrics_perf_with_zero_denominators() {
+        // Counters present but all zero — ratios should be None, not panic.
+        let mut m = Metrics::new();
+        m.perf = Some(crate::perf::PerfCounters::default());
+        let mc = MemoryCharacterization::from_metrics(&[m]).unwrap();
+        assert!(mc.mean_ipc.is_none());
+        assert!(mc.llc_miss_rate.is_none());
+        assert!(mc.backend_stall_ratio.is_none());
+    }
+
+    #[test]
+    fn from_aggregated_empty_returns_none() {
+        assert!(MemoryCharacterization::from_aggregated(&[]).is_none());
+    }
+
+    #[test]
+    fn from_aggregated_psi_pressure_classifies_memory_bound() {
+        let mut a = AggregatedMetrics::default();
+        a.psi_mem = Some(PsiMem {
+            some_avg10: 0.8,
+            full_avg10: 0.3,
+        });
+        let mc = MemoryCharacterization::from_aggregated(&[a]).unwrap();
+        assert_eq!(mc.verdict, "memory-bound");
+        assert!((mc.psi_some_fraction.unwrap() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn from_aggregated_perf_sums_across_samples() {
+        let make = |cycles, instr| {
+            let mut a = AggregatedMetrics::default();
+            a.perf = Some(crate::perf::PerfCounters {
+                cycles,
+                instructions: instr,
+                cache_refs: 0,
+                cache_misses: 0,
+                stalled_backend: 0,
+            });
+            a
+        };
+        let mc =
+            MemoryCharacterization::from_aggregated(&[make(100, 200), make(100, 200)]).unwrap();
+        // (200 + 200) / (100 + 100) = 2.0 — high IPC, no stalls → cpu-bound.
+        assert!((mc.mean_ipc.unwrap() - 2.0).abs() < 1e-9);
+        assert_eq!(mc.verdict, "cpu-bound");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn aggregated_metrics_from_metrics_aggregates_perf() {
+        let mut m1 = Metrics::new();
+        m1.perf = Some(crate::perf::PerfCounters {
+            cycles: 100,
+            instructions: 50,
+            cache_refs: 10,
+            cache_misses: 2,
+            stalled_backend: 30,
+        });
+        let mut m2 = Metrics::new();
+        m2.perf = Some(crate::perf::PerfCounters {
+            cycles: 200,
+            instructions: 150,
+            cache_refs: 20,
+            cache_misses: 4,
+            stalled_backend: 60,
+        });
+        let agg = AggregatedMetrics::from_metrics(&[m1, m2]);
+        let p = agg.perf.expect("perf should aggregate");
+        assert_eq!(p.cycles, 300);
+        assert_eq!(p.instructions, 200);
+        assert_eq!(p.cache_refs, 30);
+        assert_eq!(p.cache_misses, 6);
+        assert_eq!(p.stalled_backend, 90);
+    }
+
+    #[test]
+    fn aggregated_metrics_propagates_psi_from_first_sample() {
+        let mut m = Metrics::new();
+        m.psi_mem = Some(PsiMem {
+            some_avg10: 0.42,
+            full_avg10: 0.10,
+        });
+        let agg = AggregatedMetrics::from_metrics(&[m]);
+        let p = agg.psi_mem.expect("psi should propagate");
+        assert!((p.some_avg10 - 0.42).abs() < 1e-6);
+    }
+
     // ---- existing tests -----------------------------------------------------
 
     #[test]
