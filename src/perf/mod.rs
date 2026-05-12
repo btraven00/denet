@@ -65,7 +65,7 @@ unsafe fn perf_event_open(
 
 // ---- public types ---------------------------------------------------------
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PerfCounters {
     pub cycles: u64,
     pub instructions: u64,
@@ -75,6 +75,37 @@ pub struct PerfCounters {
     /// to do because of stalls. High ratio relative to `cycles` is the most
     /// direct evidence that the workload is memory-bound.
     pub stalled_backend: u64,
+}
+
+impl PerfCounters {
+    /// Saturating field-wise subtraction. Counters are monotonic, but a
+    /// returning-from-suspend or counter-multiplexing event can briefly make
+    /// `prev > self`; we clamp to zero rather than wrap.
+    pub fn delta_since(&self, prev: &PerfCounters) -> PerfCounters {
+        PerfCounters {
+            cycles: self.cycles.saturating_sub(prev.cycles),
+            instructions: self.instructions.saturating_sub(prev.instructions),
+            cache_refs: self.cache_refs.saturating_sub(prev.cache_refs),
+            cache_misses: self.cache_misses.saturating_sub(prev.cache_misses),
+            stalled_backend: self.stalled_backend.saturating_sub(prev.stalled_backend),
+        }
+    }
+}
+
+/// Names of opened events given which optional counters are present. Required
+/// counters (cycles, instructions) are always listed.
+pub(crate) fn events_list(have_refs: bool, have_misses: bool, have_stalled: bool) -> Vec<String> {
+    let mut v = vec!["cycles".to_string(), "instructions".to_string()];
+    if have_refs {
+        v.push("cache-references".to_string());
+    }
+    if have_misses {
+        v.push("cache-misses".to_string());
+    }
+    if have_stalled {
+        v.push("stalled-cycles-backend".to_string());
+    }
+    v
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -124,17 +155,11 @@ impl PerfGroup {
     /// List of event names that opened successfully on this group. Drives the
     /// `events` field of the manifest so consumers know what to expect.
     pub fn opened_events(&self) -> Vec<String> {
-        let mut v = vec!["cycles".to_string(), "instructions".to_string()];
-        if self.cache_refs.is_some() {
-            v.push("cache-references".to_string());
-        }
-        if self.cache_misses.is_some() {
-            v.push("cache-misses".to_string());
-        }
-        if self.stalled_backend.is_some() {
-            v.push("stalled-cycles-backend".to_string());
-        }
-        v
+        events_list(
+            self.cache_refs.is_some(),
+            self.cache_misses.is_some(),
+            self.stalled_backend.is_some(),
+        )
     }
 
     /// Read all counters and return the delta since the previous call.
@@ -148,13 +173,7 @@ impl PerfGroup {
             stalled_backend: self.stalled_backend.and_then(read_counter).unwrap_or(0),
         };
         let delta = match self.last {
-            Some(prev) => PerfCounters {
-                cycles: cur.cycles.saturating_sub(prev.cycles),
-                instructions: cur.instructions.saturating_sub(prev.instructions),
-                cache_refs: cur.cache_refs.saturating_sub(prev.cache_refs),
-                cache_misses: cur.cache_misses.saturating_sub(prev.cache_misses),
-                stalled_backend: cur.stalled_backend.saturating_sub(prev.stalled_backend),
-            },
+            Some(prev) => cur.delta_since(&prev),
             None => PerfCounters::default(),
         };
         self.last = Some(cur);
@@ -290,6 +309,82 @@ mod tests {
         // Any other errno falls through to the generic branch.
         let einval = std::io::Error::from_raw_os_error(libc::EINVAL);
         assert!(describe_perf_error(&einval).contains("perf_event_open failed"));
+    }
+
+    #[test]
+    fn delta_since_subtracts_field_wise() {
+        let prev = PerfCounters {
+            cycles: 100,
+            instructions: 50,
+            cache_refs: 10,
+            cache_misses: 2,
+            stalled_backend: 30,
+        };
+        let cur = PerfCounters {
+            cycles: 250,
+            instructions: 150,
+            cache_refs: 30,
+            cache_misses: 7,
+            stalled_backend: 80,
+        };
+        let d = cur.delta_since(&prev);
+        assert_eq!(d.cycles, 150);
+        assert_eq!(d.instructions, 100);
+        assert_eq!(d.cache_refs, 20);
+        assert_eq!(d.cache_misses, 5);
+        assert_eq!(d.stalled_backend, 50);
+    }
+
+    #[test]
+    fn delta_since_saturates_on_counter_regression() {
+        // Mid-sample multiplexing or suspend/resume can briefly make a current
+        // read smaller than a previous one. Saturating math must clamp to 0,
+        // not underflow into a huge u64.
+        let prev = PerfCounters {
+            cycles: 100,
+            ..PerfCounters::default()
+        };
+        let cur = PerfCounters {
+            cycles: 50,
+            ..PerfCounters::default()
+        };
+        assert_eq!(cur.delta_since(&prev).cycles, 0);
+    }
+
+    #[test]
+    fn events_list_required_only() {
+        let v = events_list(false, false, false);
+        assert_eq!(v, vec!["cycles".to_string(), "instructions".to_string()]);
+    }
+
+    #[test]
+    fn events_list_all_optional() {
+        let v = events_list(true, true, true);
+        assert_eq!(
+            v,
+            vec![
+                "cycles",
+                "instructions",
+                "cache-references",
+                "cache-misses",
+                "stalled-cycles-backend",
+            ]
+        );
+    }
+
+    #[test]
+    fn events_list_partial() {
+        // cache-references opened but cache-misses didn't (some CPUs).
+        let v = events_list(true, false, true);
+        assert_eq!(
+            v,
+            vec![
+                "cycles",
+                "instructions",
+                "cache-references",
+                "stalled-cycles-backend",
+            ]
+        );
     }
 
     #[test]
