@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use aya::{maps::HashMap as BpfHashMap, Ebpf, EbpfLoader};
 
 #[cfg(feature = "ebpf")]
+#[allow(dead_code)]
 type EbpfMaps = (
     Ebpf,
     BpfHashMap<aya::maps::MapData, u32, u32>,
@@ -752,9 +753,51 @@ impl SyscallTracker {
             })?;
         crate::ebpf::debug::debug_println("pid_syscall_map created successfully");
 
-        // Define the syscalls we want to trace
+        // Syscalls we trace. Must stay in sync with TRACE_SYSCALL() entries
+        // in src/ebpf/programs/syscall_tracer.c. Some entries (e.g. `fork`,
+        // `vfork`, `pipe`) are unavailable on every kernel/arch; attach
+        // failures are tolerated below as long as at least one succeeds.
         let tracepoints = [
-            "openat", "read", "write", "close", "mmap", "socket", "connect", "recvfrom", "sendto",
+            // file_io
+            "read",
+            "write",
+            "close",
+            "openat",
+            // memory
+            "mmap",
+            "munmap",
+            "brk",
+            // process
+            "clone",
+            "fork",
+            "vfork",
+            "execve",
+            "exit",
+            "wait4",
+            "kill",
+            "exit_group",
+            // network
+            "socket",
+            "connect",
+            "accept",
+            "sendto",
+            "recvfrom",
+            "sendmsg",
+            "recvmsg",
+            "bind",
+            "accept4",
+            // ipc
+            "futex",
+            "pipe",
+            "pipe2",
+            // signal
+            "rt_sigaction",
+            "rt_sigprocmask",
+            "tgkill",
+            // time
+            "nanosleep",
+            "clock_gettime",
+            "clock_nanosleep",
         ];
 
         // Load and attach all tracepoint programs
