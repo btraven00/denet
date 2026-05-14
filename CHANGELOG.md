@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.0](https://github.com/btraven00/denet/compare/v0.6.2...v0.7.0) (2026-05-14)
+
+
+### Features
+
+* **env:** add env record with host/NUMA/affinity for reproducibility ([#31](https://github.com/btraven00/denet/issues/31)) ([bd497c0](https://github.com/btraven00/denet/commit/bd497c0c4b52c7e352469622c998761fb6aa8c28))
+* mem characterization ([#27](https://github.com/btraven00/denet/issues/27)) ([5add293](https://github.com/btraven00/denet/commit/5add2934f1818d7a6c7209ba621563951c79692e))
+
+
+### Bug Fixes
+
+* **ebpf:** expand syscall probe coverage and fix categorizer mis-bucketing ([#30](https://github.com/btraven00/denet/issues/30)) ([231c8c6](https://github.com/btraven00/denet/commit/231c8c62145c02953392985888be220898766ed7))
+* increase waiting time ([f28474f](https://github.com/btraven00/denet/commit/f28474fdcae80aed8a79c6c2c9f25218aaae4a10))
+
 ## [0.6.2](https://github.com/btraven00/denet/compare/v0.6.1...v0.6.2) (2026-04-27)
 
 
