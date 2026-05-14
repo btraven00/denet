@@ -3,7 +3,7 @@ use colored::Colorize;
 #[cfg(feature = "ebpf")]
 use denet::ebpf::debug;
 use denet::error::Result;
-use denet::monitor::{AggregatedMetrics, Metrics, Summary, SummaryGenerator};
+use denet::monitor::{tagged_json, AggregatedMetrics, Metrics, Summary, SummaryGenerator};
 use denet::ProcessMonitor;
 use std::fs::File;
 use std::io::{self, Write};
@@ -70,6 +70,10 @@ struct Args {
     /// Disable polling - wait until process completion for pure event-driven collection
     #[clap(long)]
     no_polling: bool,
+
+    /// Write a host/NUMA/affinity `env` record before metadata (for reproducibility)
+    #[clap(long)]
+    write_env: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -306,12 +310,23 @@ fn execute_monitoring_with_output(
         None
     };
 
+    // Emit env record first (if requested) — captures host/NUMA/affinity for reproducibility.
+    if args.write_env {
+        let env_json = tagged_json("env", &monitor.get_env()).unwrap();
+        if let Some(file) = &mut file_handles.out_file {
+            writeln!(file, "{env_json}")?;
+        }
+        if args.json && !args.quiet {
+            println!("{env_json}");
+        }
+    }
+
     // Get metadata
     let metadata = monitor.get_metadata();
 
-    // Emit metadata first (always for files, only output to console if JSON mode)
+    // Emit metadata (always for files, only output to console if JSON mode)
     if let Some(metadata_ref) = &metadata {
-        let metadata_json = serde_json::to_string(&metadata_ref).unwrap();
+        let metadata_json = tagged_json("metadata", metadata_ref).unwrap();
         if let Some(file) = &mut file_handles.out_file {
             writeln!(file, "{metadata_json}")?;
         }
@@ -346,7 +361,7 @@ fn execute_monitoring_with_output(
 
         let final_tree_metrics = monitor.sample_tree_metrics();
         if args.json {
-            let json = serde_json::to_string(&final_tree_metrics).unwrap();
+            let json = tagged_json("tree", &final_tree_metrics).unwrap();
             println!("{json}");
         } else if let Some(agg) = final_tree_metrics.aggregated {
             results.push(convert_aggregated_to_metrics(&agg));
@@ -375,7 +390,7 @@ fn execute_monitoring_with_output(
 
                     // Format and display metrics
                     if args.json {
-                        let json = serde_json::to_string(&metrics).unwrap();
+                        let json = tagged_json("sample", &metrics).unwrap();
                         if let Some(file) = &mut file_handles.out_file {
                             writeln!(file, "{json}")?;
                         }
@@ -401,7 +416,7 @@ fn execute_monitoring_with_output(
                     } else {
                         let formatted = format_metrics(&metrics);
                         if let Some(file) = &mut file_handles.out_file {
-                            writeln!(file, "{}", serde_json::to_string(&metrics).unwrap())?;
+                            writeln!(file, "{}", tagged_json("sample", &metrics).unwrap())?;
                         }
                         if !args.quiet {
                             if update_in_place {
@@ -441,7 +456,7 @@ fn execute_monitoring_with_output(
 
                     // Format and display tree metrics
                     if args.json {
-                        let json = serde_json::to_string(&tree_metrics).unwrap();
+                        let json = tagged_json("tree", &tree_metrics).unwrap();
                         if let Some(file) = &mut file_handles.out_file {
                             writeln!(file, "{json}")?;
                         }
@@ -469,7 +484,7 @@ fn execute_monitoring_with_output(
                         // Format and display tree metrics with parent and children
                         let formatted = format_aggregated_metrics(agg_metrics);
                         if let Some(file) = &mut file_handles.out_file {
-                            writeln!(file, "{}", serde_json::to_string(&tree_metrics).unwrap())?;
+                            writeln!(file, "{}", tagged_json("tree", &tree_metrics).unwrap())?;
                         }
                         if !args.quiet {
                             if update_in_place {

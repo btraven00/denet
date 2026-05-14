@@ -169,32 +169,35 @@ pub fn summary_from_json_file<P: AsRef<Path>>(path: P) -> io::Result<Summary> {
             continue;
         }
 
-        // Try to parse as different types of metrics
-        if let Ok(agg_metric) = serde_json::from_str::<AggregatedMetrics>(&line) {
-            // Got aggregated metrics
-            if first_timestamp.is_none() {
-                first_timestamp = Some(agg_metric.ts_ms);
-            }
-            last_timestamp = Some(agg_metric.ts_ms);
-            metrics_vec.push(agg_metric);
-        } else if let Ok(tree_metrics) = serde_json::from_str::<ProcessTreeMetrics>(&line) {
-            // Got tree metrics, extract aggregated metrics if available
-            if let Some(agg) = tree_metrics.aggregated {
+        // Try the tagged Record schema first; fall back to legacy untagged
+        // shapes for files written before the `kind` discriminator existed.
+        match crate::monitor::record::parse_record(&line) {
+            Some(crate::monitor::record::Record::Aggregated(agg)) => {
                 if first_timestamp.is_none() {
                     first_timestamp = Some(agg.ts_ms);
                 }
                 last_timestamp = Some(agg.ts_ms);
-                metrics_vec.push(agg);
+                metrics_vec.push(*agg);
             }
-        } else if let Ok(metric) = serde_json::from_str::<Metrics>(&line) {
-            // Got regular metrics
-            if first_timestamp.is_none() {
-                first_timestamp = Some(metric.ts_ms);
+            Some(crate::monitor::record::Record::Tree(tree)) => {
+                if let Some(agg) = tree.aggregated {
+                    if first_timestamp.is_none() {
+                        first_timestamp = Some(agg.ts_ms);
+                    }
+                    last_timestamp = Some(agg.ts_ms);
+                    metrics_vec.push(agg);
+                }
             }
-            last_timestamp = Some(metric.ts_ms);
-            regular_metrics.push(metric);
+            Some(crate::monitor::record::Record::Sample(metric)) => {
+                if first_timestamp.is_none() {
+                    first_timestamp = Some(metric.ts_ms);
+                }
+                last_timestamp = Some(metric.ts_ms);
+                regular_metrics.push(metric);
+            }
+            // Env / Metadata / unknown: header records, no metric content.
+            _ => {}
         }
-        // Ignore metadata and other lines we can't parse
     }
 
     // Calculate total time
@@ -856,6 +859,12 @@ impl ProcessMonitor {
     /// Get whether children processes are included in monitoring
     pub fn get_include_children(&self) -> bool {
         self.include_children
+    }
+
+    /// Snapshot host/NUMA/affinity/governor state for the monitored PID.
+    /// One-shot, suitable for writing as the first JSONL line.
+    pub fn get_env(&self) -> crate::monitor::EnvRecord {
+        crate::monitor::EnvRecord::collect(self.pid as u32)
     }
 
     /// Returns metadata about the monitored process
@@ -2223,6 +2232,21 @@ mod tests {
                 agg.mem_vms_kb >= agg.mem_rss_kb,
                 "Aggregated VMS should be >= RSS"
             );
+        }
+    }
+
+    #[test]
+    fn test_get_env_returns_record_for_running_process() {
+        // get_env is a one-shot wrapper; just verify it returns a record
+        // whose ts_ms is populated and host/kernel are non-empty on Linux.
+        let cmd = vec!["sleep".to_string(), "1".to_string()];
+        let monitor = create_test_monitor(cmd).unwrap();
+        let env = monitor.get_env();
+        assert!(env.ts_ms > 0);
+        #[cfg(target_os = "linux")]
+        {
+            assert!(!env.host.is_empty());
+            assert!(!env.kernel.is_empty());
         }
     }
 
