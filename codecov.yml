@@ -32,6 +32,10 @@ comment:
 ignore:
   - "tests/**/*"
   - "docs/**/*"
+  # perf_event_open(2) syscall plumbing. CI sandboxes deny the syscall, so
+  # these paths can't be exercised from GitHub Actions. The pure logic that
+  # consumes the syscall's output lives in src/perf/mod.rs and IS covered.
+  - "src/perf/syscall.rs"
 
 flags:
   python:

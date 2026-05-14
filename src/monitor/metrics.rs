@@ -6,6 +6,21 @@
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Capability manifest emitted once in the JSONL header line. Tells downstream
+/// tooling which optional metric sources resolved at startup so it knows which
+/// per-sample fields to expect.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct Capabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub psi: Option<crate::psi::PsiCapability>,
+    #[cfg(target_os = "linux")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub perf_hw: Option<crate::perf::PerfCapability>,
+    #[cfg(not(target_os = "linux"))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub perf_hw: Option<serde_json::Value>,
+}
+
 /// Metadata about a monitored process
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProcessMetadata {
@@ -13,6 +28,10 @@ pub struct ProcessMetadata {
     pub cmd: Vec<String>,
     pub executable: String,
     pub t0_ms: u64,
+    /// Manifest of optional metric sources detected at startup. Absent in
+    /// older logs; present here is purely additive.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub capabilities: Option<Capabilities>,
 }
 
 impl ProcessMetadata {
@@ -27,6 +46,7 @@ impl ProcessMetadata {
             cmd,
             executable,
             t0_ms,
+            capabilities: None,
         }
     }
 }
@@ -75,6 +95,24 @@ pub struct Metrics {
     #[cfg(not(feature = "gpu"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu: Option<serde_json::Value>,
+
+    /// Memory pressure (PSI) — last `avg10` window, fraction in [0, 1].
+    /// Per-process if `/proc/<pid>/pressure/memory` was readable, otherwise
+    /// the system-wide value (see manifest in header for which).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub psi_mem: Option<crate::psi::PsiMem>,
+
+    /// Hardware perf-counter deltas since the previous sample. Linux-only,
+    /// requires `perf_event_paranoid <= 2` or `CAP_PERFMON`. Consumer can
+    /// derive IPC = `instructions/cycles` and LLC miss rate from a single
+    /// sample without needing global state.
+    #[cfg(target_os = "linux")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub perf: Option<crate::perf::PerfCounters>,
+
+    #[cfg(not(target_os = "linux"))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub perf: Option<serde_json::Value>,
 }
 
 impl Metrics {
@@ -102,6 +140,8 @@ impl Metrics {
             uptime_secs: 0,
             cpu_core: None,
             gpu: None,
+            psi_mem: None,
+            perf: None,
         }
     }
 }
@@ -171,6 +211,23 @@ pub struct AggregatedMetrics {
     #[cfg(not(feature = "gpu"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu: Option<serde_json::Value>,
+
+    /// Memory pressure for the whole tree. PSI is sampled once per tick (system
+    /// or per-process root); we just propagate the parent's value rather than
+    /// inventing an aggregation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub psi_mem: Option<crate::psi::PsiMem>,
+
+    /// Sum of per-process perf-counter deltas across the tree. Sums are
+    /// meaningful for IPC/miss-rate ratios because we sum numerator and
+    /// denominator together.
+    #[cfg(target_os = "linux")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub perf: Option<crate::perf::PerfCounters>,
+
+    #[cfg(not(target_os = "linux"))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub perf: Option<serde_json::Value>,
 }
 
 impl AggregatedMetrics {
@@ -237,7 +294,33 @@ impl AggregatedMetrics {
             uptime_secs: max_uptime,
             ebpf: None, // eBPF metrics are added separately
             gpu: None,  // GPU metrics are added separately
+            psi_mem: metrics.iter().find_map(|m| m.psi_mem),
+            #[cfg(target_os = "linux")]
+            perf: aggregate_perf(metrics),
+            #[cfg(not(target_os = "linux"))]
+            perf: None,
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn aggregate_perf(metrics: &[Metrics]) -> Option<crate::perf::PerfCounters> {
+    let mut acc = crate::perf::PerfCounters::default();
+    let mut any = false;
+    for m in metrics {
+        if let Some(p) = m.perf {
+            acc.cycles += p.cycles;
+            acc.instructions += p.instructions;
+            acc.cache_refs += p.cache_refs;
+            acc.cache_misses += p.cache_misses;
+            acc.stalled_backend += p.stalled_backend;
+            any = true;
+        }
+    }
+    if any {
+        Some(acc)
+    } else {
+        None
     }
 }
 
@@ -266,6 +349,8 @@ impl Default for AggregatedMetrics {
             uptime_secs: 0,
             ebpf: None,
             gpu: None,
+            psi_mem: None,
+            perf: None,
         }
     }
 }
@@ -281,6 +366,87 @@ pub struct SyscallIntensitySummary {
     pub avg_memory_syscall_fraction: f64,
     pub avg_cpu_syscall_fraction: f64,
     pub avg_network_syscall_fraction: f64,
+}
+
+/// End-of-run memory-boundedness verdict, derived from accumulated perf
+/// counters and PSI fractions. Each field is only present when the underlying
+/// signal was collected for at least one sample.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MemoryCharacterization {
+    /// instructions / cycles, summed across the run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mean_ipc: Option<f64>,
+    /// cache_misses / cache_refs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llc_miss_rate: Option<f64>,
+    /// stalled_backend / cycles. The most direct memory-bound signal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_stall_ratio: Option<f64>,
+    /// Fraction of samples in which PSI `some_avg10 > 0`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub psi_some_fraction: Option<f64>,
+    /// Coarse classification: "memory-bound", "cpu-bound", "mixed", or
+    /// "insufficient-data". Threshold rule documented in the source.
+    pub verdict: String,
+}
+
+// Classification thresholds. Backend-stall ratio and IPC thresholds are
+// derived from common microarchitecture profiling rules of thumb; PSI threshold
+// is chosen conservatively (majority of samples showing any stall).
+const MEMORY_BOUND_STALL_THRESHOLD: f64 = 0.5;
+const MEMORY_BOUND_IPC_CEILING: f64 = 1.0;
+const CPU_BOUND_STALL_CEILING: f64 = 0.2;
+const CPU_BOUND_IPC_FLOOR: f64 = 1.5;
+const PSI_PRESSURE_THRESHOLD: f64 = 0.5;
+
+impl MemoryCharacterization {
+    /// Compute the roll-up over any window of per-process samples. Caller
+    /// chooses the window — end-of-run, per pipeline stage, sliding, etc.
+    /// Returns `None` if no perf nor PSI data appears in the slice.
+    pub fn from_metrics(metrics: &[Metrics]) -> Option<Self> {
+        memchar_from(metrics, metric_perf, |m: &&Metrics| {
+            m.psi_mem.map(|p| p.some_avg10)
+        })
+    }
+
+    /// Same as `from_metrics`, for tree-aggregated samples.
+    pub fn from_aggregated(metrics: &[AggregatedMetrics]) -> Option<Self> {
+        memchar_from(metrics, agg_perf, |m: &&AggregatedMetrics| {
+            m.psi_mem.map(|p| p.some_avg10)
+        })
+    }
+
+    fn classify(
+        mean_ipc: Option<f64>,
+        backend_stall_ratio: Option<f64>,
+        psi_some_fraction: Option<f64>,
+    ) -> String {
+        // Perf counters give the strongest signal: high backend stalls with low
+        // IPC is memory-bound; low stalls with high IPC is cpu-bound. PSI acts
+        // as a tiebreaker when perf is inconclusive, and as the sole signal when
+        // perf counters aren't available.
+        match (mean_ipc, backend_stall_ratio) {
+            (Some(ipc), Some(stalls)) => {
+                if stalls > MEMORY_BOUND_STALL_THRESHOLD && ipc < MEMORY_BOUND_IPC_CEILING {
+                    "memory-bound".to_string()
+                } else if stalls < CPU_BOUND_STALL_CEILING && ipc > CPU_BOUND_IPC_FLOOR {
+                    "cpu-bound".to_string()
+                } else if psi_some_fraction.unwrap_or(0.0) > PSI_PRESSURE_THRESHOLD {
+                    "memory-bound".to_string()
+                } else {
+                    "mixed".to_string()
+                }
+            }
+            _ => {
+                // No perf counters — use PSI alone if available.
+                if psi_some_fraction.unwrap_or(0.0) > PSI_PRESSURE_THRESHOLD {
+                    "memory-bound".to_string()
+                } else {
+                    "insufficient-data".to_string()
+                }
+            }
+        }
+    }
 }
 
 /// Summarizes metrics collected during a monitoring session
@@ -330,6 +496,118 @@ pub struct Summary {
     #[cfg(not(feature = "gpu"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu: Option<serde_json::Value>,
+
+    /// End-of-run memory-boundedness roll-up. Absent if no perf or PSI data
+    /// was collected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_characterization: Option<MemoryCharacterization>,
+}
+
+/// Compute the memory-characterization roll-up from any iterable of samples
+/// that expose perf-counter deltas and PSI fractions. Returns `None` when
+/// neither source produced data.
+fn memchar_from<F1, F2, I>(metrics: I, perf_of: F1, psi_of: F2) -> Option<MemoryCharacterization>
+where
+    I: IntoIterator,
+    F1: Fn(&I::Item) -> Option<PerfSnapshot>,
+    F2: Fn(&I::Item) -> Option<f32>,
+{
+    let mut sum = PerfSnapshot::default();
+    let mut perf_seen = false;
+    let mut psi_total = 0usize;
+    let mut psi_pressured = 0usize;
+    for m in metrics {
+        if let Some(p) = perf_of(&m) {
+            sum.cycles += p.cycles;
+            sum.instructions += p.instructions;
+            sum.cache_refs += p.cache_refs;
+            sum.cache_misses += p.cache_misses;
+            sum.stalled_backend += p.stalled_backend;
+            perf_seen = true;
+        }
+        if let Some(some_avg10) = psi_of(&m) {
+            psi_total += 1;
+            if some_avg10 > 0.0 {
+                psi_pressured += 1;
+            }
+        }
+    }
+    if !perf_seen && psi_total == 0 {
+        return None;
+    }
+
+    let div = |num: u64, den: u64| -> Option<f64> {
+        if den == 0 {
+            None
+        } else {
+            Some(num as f64 / den as f64)
+        }
+    };
+    let mean_ipc = if perf_seen {
+        div(sum.instructions, sum.cycles)
+    } else {
+        None
+    };
+    let llc_miss_rate = if perf_seen {
+        div(sum.cache_misses, sum.cache_refs)
+    } else {
+        None
+    };
+    let backend_stall_ratio = if perf_seen {
+        div(sum.stalled_backend, sum.cycles)
+    } else {
+        None
+    };
+    let psi_some_fraction = if psi_total > 0 {
+        Some(psi_pressured as f64 / psi_total as f64)
+    } else {
+        None
+    };
+    Some(MemoryCharacterization {
+        verdict: MemoryCharacterization::classify(mean_ipc, backend_stall_ratio, psi_some_fraction),
+        mean_ipc,
+        llc_miss_rate,
+        backend_stall_ratio,
+        psi_some_fraction,
+    })
+}
+
+#[derive(Default, Clone, Copy)]
+struct PerfSnapshot {
+    cycles: u64,
+    instructions: u64,
+    cache_refs: u64,
+    cache_misses: u64,
+    stalled_backend: u64,
+}
+
+#[cfg(target_os = "linux")]
+fn perf_snapshot(p: &crate::perf::PerfCounters) -> PerfSnapshot {
+    PerfSnapshot {
+        cycles: p.cycles,
+        instructions: p.instructions,
+        cache_refs: p.cache_refs,
+        cache_misses: p.cache_misses,
+        stalled_backend: p.stalled_backend,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn metric_perf(m: &&Metrics) -> Option<PerfSnapshot> {
+    m.perf.as_ref().map(perf_snapshot)
+}
+#[cfg(not(target_os = "linux"))]
+fn metric_perf(_m: &&Metrics) -> Option<PerfSnapshot> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn agg_perf(m: &&AggregatedMetrics) -> Option<PerfSnapshot> {
+    m.perf.as_ref().map(perf_snapshot)
+}
+#[cfg(not(target_os = "linux"))]
+fn agg_perf(_m: &&AggregatedMetrics) -> Option<PerfSnapshot> {
+    None
 }
 
 impl Summary {
@@ -395,6 +673,7 @@ impl Summary {
             },
             syscalls: None,
             gpu,
+            memory_characterization: MemoryCharacterization::from_metrics(metrics),
         }
     }
 
@@ -495,6 +774,7 @@ impl Summary {
             },
             syscalls,
             gpu,
+            memory_characterization: MemoryCharacterization::from_aggregated(metrics),
         }
     }
 }
@@ -518,6 +798,7 @@ impl Default for Summary {
             avg_cpu_usage: 0.0,
             syscalls: None,
             gpu: None,
+            memory_characterization: None,
         }
     }
 }
@@ -525,6 +806,239 @@ impl Default for Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::psi::PsiMem;
+
+    // ---- classify unit tests ------------------------------------------------
+
+    #[test]
+    fn classify_memory_bound_via_perf() {
+        assert_eq!(
+            MemoryCharacterization::classify(Some(0.5), Some(0.7), None),
+            "memory-bound"
+        );
+    }
+
+    #[test]
+    fn classify_cpu_bound_via_perf() {
+        assert_eq!(
+            MemoryCharacterization::classify(Some(2.0), Some(0.1), None),
+            "cpu-bound"
+        );
+    }
+
+    #[test]
+    fn classify_mixed_inconclusive_perf() {
+        assert_eq!(
+            MemoryCharacterization::classify(Some(1.2), Some(0.3), None),
+            "mixed"
+        );
+    }
+
+    #[test]
+    fn classify_psi_tiebreaker_tips_to_memory_bound() {
+        // Inconclusive perf, but high PSI → memory-bound.
+        assert_eq!(
+            MemoryCharacterization::classify(Some(1.2), Some(0.3), Some(0.8)),
+            "memory-bound"
+        );
+    }
+
+    #[test]
+    fn classify_psi_only_high_pressure() {
+        assert_eq!(
+            MemoryCharacterization::classify(None, None, Some(0.8)),
+            "memory-bound"
+        );
+    }
+
+    #[test]
+    fn classify_psi_only_low_pressure() {
+        // PSI available but below threshold → not enough to call it memory-bound.
+        assert_eq!(
+            MemoryCharacterization::classify(None, None, Some(0.2)),
+            "insufficient-data"
+        );
+    }
+
+    #[test]
+    fn classify_psi_only_zero_pressure() {
+        assert_eq!(
+            MemoryCharacterization::classify(None, None, Some(0.0)),
+            "insufficient-data"
+        );
+    }
+
+    #[test]
+    fn classify_no_data() {
+        assert_eq!(
+            MemoryCharacterization::classify(None, None, None),
+            "insufficient-data"
+        );
+    }
+
+    // ---- from_metrics integration tests -------------------------------------
+
+    #[test]
+    fn from_metrics_empty_slice_returns_none() {
+        assert!(MemoryCharacterization::from_metrics(&[]).is_none());
+    }
+
+    #[test]
+    fn from_metrics_no_signals_returns_none() {
+        assert!(MemoryCharacterization::from_metrics(&[Metrics::new()]).is_none());
+    }
+
+    #[test]
+    fn from_metrics_psi_only_high_pressure() {
+        let mut m = Metrics::new();
+        m.psi_mem = Some(PsiMem {
+            some_avg10: 0.9,
+            full_avg10: 0.4,
+        });
+        let mc = MemoryCharacterization::from_metrics(&[m]).unwrap();
+        assert_eq!(mc.verdict, "memory-bound");
+        assert!((mc.psi_some_fraction.unwrap() - 1.0).abs() < f64::EPSILON);
+        assert!(mc.mean_ipc.is_none());
+        assert!(mc.llc_miss_rate.is_none());
+        assert!(mc.backend_stall_ratio.is_none());
+    }
+
+    #[test]
+    fn from_metrics_psi_fraction_counts_pressured_samples() {
+        let pressured = {
+            let mut m = Metrics::new();
+            m.psi_mem = Some(PsiMem {
+                some_avg10: 1.0,
+                full_avg10: 0.0,
+            });
+            m
+        };
+        let calm = {
+            let mut m = Metrics::new();
+            m.psi_mem = Some(PsiMem {
+                some_avg10: 0.0,
+                full_avg10: 0.0,
+            });
+            m
+        };
+        // 1 pressured out of 4 → fraction = 0.25, below PSI_PRESSURE_THRESHOLD.
+        let mc =
+            MemoryCharacterization::from_metrics(&[pressured, calm.clone(), calm.clone(), calm])
+                .unwrap();
+        assert!((mc.psi_some_fraction.unwrap() - 0.25).abs() < 1e-9);
+        assert_eq!(mc.verdict, "insufficient-data");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn from_metrics_with_perf_computes_ratios() {
+        let mut m = Metrics::new();
+        m.perf = Some(crate::perf::PerfCounters {
+            cycles: 1000,
+            instructions: 500,
+            cache_refs: 200,
+            cache_misses: 50,
+            stalled_backend: 700,
+        });
+        let mc = MemoryCharacterization::from_metrics(&[m]).unwrap();
+        assert!((mc.mean_ipc.unwrap() - 0.5).abs() < 1e-9);
+        assert!((mc.llc_miss_rate.unwrap() - 0.25).abs() < 1e-9);
+        assert!((mc.backend_stall_ratio.unwrap() - 0.7).abs() < 1e-9);
+        // High stall + low IPC → memory-bound.
+        assert_eq!(mc.verdict, "memory-bound");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn from_metrics_perf_with_zero_denominators() {
+        // Counters present but all zero — ratios should be None, not panic.
+        let mut m = Metrics::new();
+        m.perf = Some(crate::perf::PerfCounters::default());
+        let mc = MemoryCharacterization::from_metrics(&[m]).unwrap();
+        assert!(mc.mean_ipc.is_none());
+        assert!(mc.llc_miss_rate.is_none());
+        assert!(mc.backend_stall_ratio.is_none());
+    }
+
+    #[test]
+    fn from_aggregated_empty_returns_none() {
+        assert!(MemoryCharacterization::from_aggregated(&[]).is_none());
+    }
+
+    #[test]
+    fn from_aggregated_psi_pressure_classifies_memory_bound() {
+        let mut a = AggregatedMetrics::default();
+        a.psi_mem = Some(PsiMem {
+            some_avg10: 0.8,
+            full_avg10: 0.3,
+        });
+        let mc = MemoryCharacterization::from_aggregated(&[a]).unwrap();
+        assert_eq!(mc.verdict, "memory-bound");
+        assert!((mc.psi_some_fraction.unwrap() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn from_aggregated_perf_sums_across_samples() {
+        let make = |cycles, instr| {
+            let mut a = AggregatedMetrics::default();
+            a.perf = Some(crate::perf::PerfCounters {
+                cycles,
+                instructions: instr,
+                cache_refs: 0,
+                cache_misses: 0,
+                stalled_backend: 0,
+            });
+            a
+        };
+        let mc =
+            MemoryCharacterization::from_aggregated(&[make(100, 200), make(100, 200)]).unwrap();
+        // (200 + 200) / (100 + 100) = 2.0 — high IPC, no stalls → cpu-bound.
+        assert!((mc.mean_ipc.unwrap() - 2.0).abs() < 1e-9);
+        assert_eq!(mc.verdict, "cpu-bound");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn aggregated_metrics_from_metrics_aggregates_perf() {
+        let mut m1 = Metrics::new();
+        m1.perf = Some(crate::perf::PerfCounters {
+            cycles: 100,
+            instructions: 50,
+            cache_refs: 10,
+            cache_misses: 2,
+            stalled_backend: 30,
+        });
+        let mut m2 = Metrics::new();
+        m2.perf = Some(crate::perf::PerfCounters {
+            cycles: 200,
+            instructions: 150,
+            cache_refs: 20,
+            cache_misses: 4,
+            stalled_backend: 60,
+        });
+        let agg = AggregatedMetrics::from_metrics(&[m1, m2]);
+        let p = agg.perf.expect("perf should aggregate");
+        assert_eq!(p.cycles, 300);
+        assert_eq!(p.instructions, 200);
+        assert_eq!(p.cache_refs, 30);
+        assert_eq!(p.cache_misses, 6);
+        assert_eq!(p.stalled_backend, 90);
+    }
+
+    #[test]
+    fn aggregated_metrics_propagates_psi_from_first_sample() {
+        let mut m = Metrics::new();
+        m.psi_mem = Some(PsiMem {
+            some_avg10: 0.42,
+            full_avg10: 0.10,
+        });
+        let agg = AggregatedMetrics::from_metrics(&[m]);
+        let p = agg.psi_mem.expect("psi should propagate");
+        assert!((p.some_avg10 - 0.42).abs() < 1e-6);
+    }
+
+    // ---- existing tests -----------------------------------------------------
 
     #[test]
     fn test_process_metadata_new() {

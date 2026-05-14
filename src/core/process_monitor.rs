@@ -3,7 +3,8 @@
 use crate::core::constants::delays;
 use crate::core::constants::system;
 use crate::monitor::{
-    AggregatedMetrics, ChildProcessMetrics, Metrics, ProcessMetadata, ProcessTreeMetrics, Summary,
+    AggregatedMetrics, Capabilities, ChildProcessMetrics, Metrics, ProcessMetadata,
+    ProcessTreeMetrics, Summary,
 };
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
@@ -107,6 +108,46 @@ fn option_sub(cur: Option<u64>, base: Option<u64>) -> Option<u64> {
         (Some(c), Some(b)) => Some(c.saturating_sub(b)),
         _ => None,
     }
+}
+
+/// Detect optional memory-characterization sources at startup. Always returns
+/// a populated `Capabilities`; on non-Linux or restricted environments the
+/// fields just describe why each source was skipped.
+#[cfg(target_os = "linux")]
+fn init_mem_sources(pid: usize) -> (Option<crate::perf::PerfGroup>, Capabilities) {
+    let psi = Some(crate::psi::detect(pid));
+    let mut perf_cap = crate::perf::detect();
+    let perf_group = if perf_cap.available {
+        match crate::perf::PerfGroup::open(pid as libc::pid_t) {
+            Ok(g) => {
+                // Replace the speculative event list from detect() with the
+                // events that actually opened on the target.
+                perf_cap.events = g.opened_events();
+                Some(g)
+            }
+            Err(reason) => {
+                perf_cap.available = false;
+                perf_cap.reason = Some(format!("opened on self but not on target pid: {reason}"));
+                perf_cap.events.clear();
+                None
+            }
+        }
+    } else {
+        None
+    };
+    (
+        perf_group,
+        Capabilities {
+            psi,
+            perf_hw: Some(perf_cap),
+        },
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+fn init_mem_sources(pid: usize) -> ((), Capabilities) {
+    let psi = Some(crate::psi::detect(pid));
+    ((), Capabilities { psi, perf_hw: None })
 }
 
 /// Read metrics from a JSON file and generate a summary
@@ -222,6 +263,16 @@ pub struct ProcessMonitor {
     cpu_sampler: crate::cpu_sampler::CpuSampler,
     #[cfg(feature = "gpu")]
     gpu_monitor: crate::gpu::GpuMonitor,
+    /// Per-pid hardware perf counters; `None` if perf_event_open was denied or
+    /// not supported. Detected once at startup.
+    #[cfg(target_os = "linux")]
+    perf_group: Option<crate::perf::PerfGroup>,
+    /// Whether per-process PSI is readable for `pid`. System-wide PSI is
+    /// always tried as a fallback.
+    psi_per_process: bool,
+    /// Capability manifest, captured once at startup so `get_metadata()` can
+    /// surface it in the JSONL header without re-detecting.
+    capabilities: Capabilities,
 }
 
 // We'll use a Result type directly instead of a custom ErrorType to avoid orphan rule issues
@@ -263,9 +314,19 @@ impl ProcessMonitor {
         sys.refresh_cpu_all();
 
         let now = Instant::now();
+        let pid_usize: usize = pid.try_into().unwrap();
+        #[cfg(target_os = "linux")]
+        let (perf_group, capabilities) = init_mem_sources(pid_usize);
+        #[cfg(not(target_os = "linux"))]
+        let (_unit, capabilities) = init_mem_sources(pid_usize);
+        let psi_per_process = capabilities
+            .psi
+            .as_ref()
+            .map(|c| c.per_process)
+            .unwrap_or(false);
         Ok(Self {
             child: Some(child),
-            pid: pid.try_into().unwrap(),
+            pid: pid_usize,
             sys,
             base_interval,
             max_interval,
@@ -289,6 +350,10 @@ impl ProcessMonitor {
             cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
             #[cfg(feature = "gpu")]
             gpu_monitor: crate::gpu::GpuMonitor::new(),
+            #[cfg(target_os = "linux")]
+            perf_group,
+            psi_per_process,
+            capabilities,
         })
     }
 
@@ -344,6 +409,15 @@ impl ProcessMonitor {
         }
 
         let now = Instant::now();
+        #[cfg(target_os = "linux")]
+        let (perf_group, capabilities) = init_mem_sources(pid);
+        #[cfg(not(target_os = "linux"))]
+        let (_unit, capabilities) = init_mem_sources(pid);
+        let psi_per_process = capabilities
+            .psi
+            .as_ref()
+            .map(|c| c.per_process)
+            .unwrap_or(false);
         Ok(Self {
             child: None,
             pid,
@@ -370,6 +444,10 @@ impl ProcessMonitor {
             cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
             #[cfg(feature = "gpu")]
             gpu_monitor: crate::gpu::GpuMonitor::new(),
+            #[cfg(target_os = "linux")]
+            perf_group,
+            psi_per_process,
+            capabilities,
         })
     }
 
@@ -693,6 +771,19 @@ impl ProcessMonitor {
         #[cfg(not(feature = "gpu"))]
         let gpu_metrics = None;
 
+        // PSI: prefer per-process if available, else fall back to system-wide.
+        let psi_mem = if self.psi_per_process {
+            crate::psi::read_process(self.pid).or_else(crate::psi::read_system)
+        } else {
+            crate::psi::read_system()
+        };
+
+        // Hardware perf counter deltas (Linux only).
+        #[cfg(target_os = "linux")]
+        let perf = self.perf_group.as_mut().and_then(|g| g.sample_delta());
+        #[cfg(not(target_os = "linux"))]
+        let perf = None;
+
         Some(Metrics {
             ts_ms,
             cpu_usage,
@@ -710,6 +801,8 @@ impl ProcessMonitor {
             uptime_secs,
             cpu_core: Self::get_process_cpu_core(self.pid),
             gpu: gpu_metrics,
+            psi_mem,
+            perf,
         })
     }
 
@@ -794,6 +887,7 @@ impl ProcessMonitor {
                 cmd,
                 executable,
                 t0_ms: self.t0_ms,
+                capabilities: Some(self.capabilities.clone()),
             })
         } else {
             None
@@ -953,7 +1047,9 @@ impl ProcessMonitor {
                     thread_count: get_thread_count(*child_pid),
                     uptime_secs: proc.run_time(),
                     cpu_core: Self::get_process_cpu_core(*child_pid),
-                    gpu: None, // Child processes don't get individual GPU metrics
+                    gpu: None,     // Child processes don't get individual GPU metrics
+                    psi_mem: None, // PSI is per-tree, captured on the parent
+                    perf: None,    // Per-child perf groups not opened (parent uses inherit=1)
                 };
 
                 child_metrics.push(ChildProcessMetrics {
@@ -993,6 +1089,12 @@ impl ProcessMonitor {
                 uptime_secs: parent.uptime_secs,
                 ebpf: None, // Will be populated below if eBPF is enabled
                 gpu: None,  // Will be populated below if GPU is enabled
+                psi_mem: parent.psi_mem,
+                // On Linux `perf` is `Option<PerfCounters>` (Copy); on non-Linux
+                // it's `Option<serde_json::Value>` (not Copy). `.clone()` is the
+                // portable choice; clippy's lint fires only on the Linux build.
+                #[cfg_attr(target_os = "linux", allow(clippy::clone_on_copy))]
+                perf: parent.perf.clone(),
             };
 
             // Add child metrics

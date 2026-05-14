@@ -22,6 +22,16 @@ Denet outputs JSON in a streaming format optimized for efficiency and time-serie
 | `cmd` | string[] | Command line arguments |
 | `exe` | string | Executable path |
 | `t0_ms` | number | Process start time (Unix milliseconds) |
+| `capabilities` | object? | Manifest of optional metric sources detected at startup. See below. |
+
+### Capabilities (optional)
+
+Tells consumers which optional per-sample fields to expect. Each entry is `{available, reason?}` plus source-specific metadata.
+
+| Source | Per-sample field | Notes |
+|---|---|---|
+| `psi` | `psi_mem` | `/proc/pressure/memory` (system or per-process). Always Linux-only. |
+| `perf_hw` | `perf` | `perf_event_open` hardware counters. Requires `perf_event_paranoid <= 2` or `CAP_PERFMON`. The `events` array lists which counters opened — `cycles` and `instructions` are required, the rest degrade gracefully if the CPU doesn't expose them. |
 
 ## Metrics Fields
 
@@ -53,6 +63,15 @@ Denet outputs JSON in a streaming format optimized for efficiency and time-serie
 | `pid` | number | Child process ID |
 | `command` | string | Child process name |
 | `metrics` | Metrics | Child process metrics |
+
+### Optional Memory-Characterization Fields
+
+Both Individual and Aggregated metrics may include these when the corresponding source resolved at startup (see `capabilities` in the header):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `psi_mem` | object? | `{some_avg10, full_avg10}` — fraction of the last 10s window in which at least one task / every task stalled on memory. |
+| `perf` | object? | `{cycles, instructions, cache_refs, cache_misses, stalled_backend}` — counter **deltas since the previous sample**. IPC = `instructions/cycles`. LLC miss rate = `cache_misses/cache_refs`. |
 
 ### Aggregated Metrics
 Includes all fields from Individual Process Metrics plus:
@@ -108,8 +127,17 @@ When a monitoring session completes, statistics are calculated and can be shown 
   "total_net_rx_bytes": 512,
   "total_net_tx_bytes": 256,
   "peak_mem_rss_kb": 12288,
-  "avg_cpu_usage": 18.7
+  "avg_cpu_usage": 18.7,
+  "memory_characterization": {
+    "mean_ipc": 4.73,
+    "llc_miss_rate": 0.128,
+    "backend_stall_ratio": 0.61,
+    "psi_some_fraction": 0.0,
+    "verdict": "memory-bound"
+  }
 }
 ```
+
+`memory_characterization` is also exposed via `denet::MemoryCharacterization::from_metrics(&[Metrics])` and `from_aggregated(&[AggregatedMetrics])`, so downstream code can compute the same roll-up over arbitrary windows (e.g. per pipeline stage), not just end-of-run. The `verdict` is a coarse classification: `memory-bound`, `cpu-bound`, `mixed`, or `insufficient-data`.
 
 The `stats` command can be used to generate these statistics from a saved JSON file.
