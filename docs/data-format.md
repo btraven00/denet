@@ -88,10 +88,16 @@ Tells consumers which optional per-sample fields to expect. Each entry is `{avai
 | `mem_vms_kb` | number | Virtual memory (KB) |
 | `disk_read_bytes` | number | Disk bytes read |
 | `disk_write_bytes` | number | Disk bytes written |
-| `net_rx_bytes` | number | Network bytes received |
-| `net_tx_bytes` | number | Network bytes transmitted |
+| `syscall_read_bytes` | number? | Bytes read via read()-family syscalls (`rchar` from `/proc/<pid>/io`; includes page-cache hits). Linux only. |
+| `syscall_write_bytes` | number? | Bytes written via write()-family syscalls (`wchar`; counts data moved into the kernel, not flushed to storage). Linux only. |
+| `page_faults_cached` | number? | Minor page-fault count (warm-mmap / lazy anonymous). Event count, not bytes. Linux only. |
+| `page_faults_disk` | number? | Major page-fault count (cold-mmap / swap-in reads). Event count, not bytes. Linux only. |
+| `sys_net_rx_bytes` | number | System-wide network bytes received (alias `net_rx_bytes` accepted for legacy files). |
+| `sys_net_tx_bytes` | number | System-wide network bytes transmitted (alias `net_tx_bytes` accepted for legacy files). |
 | `thread_count` | number | Number of threads |
 | `uptime_secs` | number | Process uptime (seconds) |
+| `cpu_core` | number? | Last CPU core the process ran on, if known. |
+| `gpu` | object? | Per-process GPU metrics (only when the `gpu` feature is enabled and an NVIDIA GPU is present). |
 
 ### Child Process Metrics
 | Field | Type | Description |
@@ -114,6 +120,8 @@ Includes all fields from Individual Process Metrics plus:
 | Field | Type | Description |
 |-------|------|-------------|
 | `process_count` | number | Total processes (parent + children) |
+| `ebpf` | object? | eBPF profiling counters (only when the `ebpf` feature is enabled and `--enable-ebpf` is passed). |
+| `gpu` | object? | GPU metrics aggregated across all monitored processes (only with the `gpu` feature). |
 
 ## I/O Accounting
 
@@ -123,13 +131,11 @@ Includes all fields from Individual Process Metrics plus:
 
 ## Output Options
 
-- **Default**: Update metrics in-place in the terminal and write JSON to `out.json`
-- **`--json`**: Output JSON format to stdout
+- **Default**: Update metrics in-place in the terminal. No file is written unless `--out` is given.
+- **`--json`**: Output JSON format to stdout (suppresses the in-place UI)
 - **`--no-update`**: Print new lines instead of updating in-place
 - **`--quiet`**: Suppress stdout output (except when used with `--json`)
-- **`--nodump`**: Disable automatic JSON dump to `out.json`
-- **`--out FILE`**: Write JSON output to specified file
-- **`--stats FILE`**: Write summary statistics to specified file
+- **`--out FILE`**: Write JSONL output to specified file
 - **`--write-env`**: Prepend a one-shot `env` record (host/NUMA/affinity/governor/THP/SMT/cgroup) for reproducibility
 
 ## Example Complete Record

@@ -55,10 +55,6 @@ struct Args {
     #[clap(short, long)]
     quiet: bool,
 
-    /// Write statistics to file on completion
-    #[clap(long, value_name = "FILE")]
-    stats: Option<PathBuf>,
-
     /// Enable eBPF profiling (requires root privileges or CAP_BPF capability)
     #[clap(long)]
     enable_ebpf: bool,
@@ -128,7 +124,6 @@ fn handle_monitoring_commands(args: &Args) -> Result<()> {
 /// Output file handles for monitoring
 struct OutputHandles {
     out_file: Option<File>,
-    _stats_file: Option<File>,
 }
 
 /// Set up output files based on command line arguments
@@ -140,17 +135,7 @@ fn setup_output_files(args: &Args) -> Result<OutputHandles> {
         })
     });
 
-    let stats_file = args.stats.as_ref().map(|path| {
-        File::create(path).unwrap_or_else(|err| {
-            eprintln!("Error creating stats output file: {err}");
-            exit(1);
-        })
-    });
-
-    Ok(OutputHandles {
-        out_file,
-        _stats_file: stats_file,
-    })
+    Ok(OutputHandles { out_file })
 }
 
 /// Create a ProcessMonitor based on command line arguments
@@ -233,16 +218,11 @@ fn execute_monitoring_with_output(
     // Set debug mode for eBPF if requested
     #[cfg(feature = "ebpf")]
     {
+        unsafe {
+            debug::set_debug_mode(args.debug);
+        }
         if args.debug && !ui_quiet {
             println!("Debug mode enabled for eBPF profiling - verbose output will be shown");
-            // Set debug mode in the eBPF module
-            unsafe {
-                debug::set_debug_mode(args.debug);
-            }
-        } else {
-            unsafe {
-                debug::set_debug_mode(args.debug);
-            }
         }
     }
 

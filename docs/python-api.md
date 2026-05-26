@@ -61,7 +61,6 @@ exit_code, monitor = denet.execute_with_monitoring(
     store_in_memory=True,    # Store samples in memory
     output_file=None,        # Optional file output
     write_metadata=False,    # Write metadata as first line to output file (default False)
-    write_env=False,         # Prepend a host/NUMA/affinity `env` record (default False)
     include_children=True    # Monitor child processes (default True)
 )
 
@@ -112,16 +111,11 @@ exit_code, monitor = denet.execute_with_monitoring(
     write_metadata=True  # Includes metadata as first line: {"pid": 1234, "cmd": ["python", "script.py"], "executable": "/usr/bin/python", "t0_ms": 1625184000000}
 )
 
-# Capture host/NUMA/affinity reproducibility info as the very first line.
-# Useful when comparing benchmark runs across machines or affinity settings.
-exit_code, monitor = denet.execute_with_monitoring(
-    cmd=["python", "bench.py"],
-    output_file="metrics.jsonl",
-    write_env=True,
-    write_metadata=True,
-)
-# Or grab it as a string on demand:
+# The env record (host/NUMA/affinity) is available on demand from any monitor:
 env_line = monitor.get_env()  # tagged JSON: {"kind":"env","host":...,"numa":{...},"affinity_inherited":"0-127",...}
+# To have it written automatically as the first line of the output file, use
+# ProcessMonitor(..., write_env=True) directly — execute_with_monitoring does
+# not currently expose this kwarg.
 
 # execute_with_monitoring also accepts subprocess.run arguments:
 exit_code, monitor = denet.execute_with_monitoring(
