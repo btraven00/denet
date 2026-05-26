@@ -6,9 +6,11 @@ source:
   path: ../..
 
 build:
-  number: 0
+  number: 1
   script:
-    - if: unix
+    - if: linux
+      then: bash ${RECIPE_DIR}/build.sh --features gpu
+    - if: osx
       then: bash ${RECIPE_DIR}/build.sh
     - if: win
       then: cmd /C %RECIPE_DIR%\build.cmd
