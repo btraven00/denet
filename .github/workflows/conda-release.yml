@@ -33,12 +33,24 @@ jobs:
 
       - name: Set package version (unix)
         if: runner.os != 'Windows'
-        run: echo "PKG_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            echo "PKG_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            BASE=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+            echo "PKG_VERSION=${BASE}.dev0+${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          fi
 
       - name: Set package version (windows)
         if: runner.os == 'Windows'
         run: |
-          $version = "$env:GITHUB_REF_NAME" -replace '^v', ''
+          if ("$env:GITHUB_REF_TYPE" -eq "tag") {
+            $version = "$env:GITHUB_REF_NAME" -replace '^v', ''
+          } else {
+            $base = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+            $sha = "$env:GITHUB_SHA".Substring(0, 7)
+            $version = "$base.dev0+$sha"
+          }
           echo "PKG_VERSION=$version" >> $env:GITHUB_ENV
 
       - name: Cache Rust build
