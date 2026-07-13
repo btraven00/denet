@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/btraven00/denet/compare/v0.7.0...v0.7.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* support Python 3.13/3.14 and ship a forward-compatible wheel ([#32](https://github.com/btraven00/denet/issues/32)) ([c029928](https://github.com/btraven00/denet/commit/c02992866a483d7c5d846cab24035e6477ef3d34))
+
 ## [0.7.0](https://github.com/btraven00/denet/compare/v0.6.2...v0.7.0) (2026-05-26)
 
 
