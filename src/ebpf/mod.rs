@@ -11,6 +11,8 @@ pub mod memory_map_cache;
 #[cfg(target_os = "linux")]
 pub mod metrics;
 #[cfg(target_os = "linux")]
+pub mod net_monitor;
+#[cfg(target_os = "linux")]
 pub mod offcpu_profiler;
 #[cfg(target_os = "linux")]
 pub mod syscall_tracker;
@@ -21,6 +23,8 @@ pub use metrics::*;
 pub use debug::debug_println;
 #[cfg(target_os = "linux")]
 pub use memory_map_cache::MemoryMapCache;
+#[cfg(target_os = "linux")]
+pub use net_monitor::NetMonitor;
 #[cfg(target_os = "linux")]
 pub use offcpu_profiler::{OffCpuProfiler, OffCpuStats};
 #[cfg(target_os = "linux")]

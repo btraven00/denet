@@ -109,7 +109,12 @@ fn compile_ebpf_programs() {
         .unwrap_or(false);
 
     // List of eBPF programs to compile
-    let ebpf_programs = vec!["syscall_tracer.c", "simple_test.c", "offcpu_profiler.c"];
+    let ebpf_programs = vec![
+        "syscall_tracer.c",
+        "simple_test.c",
+        "offcpu_profiler.c",
+        "net_monitor.c",
+    ];
 
     for program in ebpf_programs {
         let src_path = PathBuf::from(ebpf_src_dir).join(program);
