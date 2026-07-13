@@ -127,7 +127,7 @@ Includes all fields from Individual Process Metrics plus:
 
 - **Default**: Shows delta I/O since monitoring started
 - **`--since-process-start`**: Shows cumulative I/O since process start
-- **Network I/O**: System-wide approximation (not per-process)
+- **Network I/O**: `sys_net_*` fields are a system-wide approximation (not per-process). With the `ebpf` feature and `--enable-ebpf`, per-process bytes appear under `ebpf.network` (see docs/ebpf.md).
 
 ## Output Options
 

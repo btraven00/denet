@@ -255,6 +255,56 @@ When eBPF profiling is enabled, JSON output will include additional fields:
 
 The `top_syscalls` field shows the most frequently called syscalls with their actual counts, and the `by_category` field shows how these syscalls are distributed across functional categories. The intensity fields are fractions of total tracked syscalls (uncategorized syscalls are excluded, so they do not sum to 1.0).
 
+## Per-Process Network Bytes
+
+With eBPF enabled, denet reports network bytes attributed to the monitored
+process tree — unlike the `sys_net_rx_bytes`/`sys_net_tx_bytes` fields, which
+remain a system-wide approximation from `/proc/net/dev` and are kept as the
+fallback when eBPF is unavailable.
+
+**How it works:** kprobes on the socket-layer send/receive paths
+(`tcp_sendmsg`/`tcp_recvmsg`, `udp_sendmsg`/`udp_recvmsg`) run in process
+context, so every byte is attributed by the kernel to the calling process. A
+BPF-side PID filter, synced with the process tree each sample, restricts
+accounting to the monitored tree.
+
+**Semantics:**
+
+- Cumulative since monitoring started, including bytes from children that
+  have already exited (totals never decrease).
+- RX counts bytes actually returned to userspace; TX counts bytes requested
+  at the socket layer (a failed send may overcount slightly).
+- Socket-layer application bytes: no TCP/IP headers, no retransmissions.
+- Covers TCP over IPv4 and IPv6, and UDP over IPv4. UDP over IPv6 uses
+  separate kernel entry points (`udpv6_sendmsg`) and is not yet counted.
+- Children that transfer bytes between fork and the next sample are picked
+  up at the next PID-filter sync (same window as syscall tracking).
+
+**JSON output** (inside the aggregated metrics' `ebpf` object):
+
+```json
+"network": { "rx_bytes": 10019992, "tx_bytes": 747 }
+```
+
+If eBPF could not attach (missing capabilities), the object carries an
+`error` string instead of silently reporting zeros as real data.
+
+**Required capabilities** are the same as the rest of the eBPF features
+(`cap_bpf,cap_perfmon,cap_dac_read_search` — see above). To verify the whole
+capability matrix, including graceful degradation without caps and real data
+with caps-but-no-root:
+
+```bash
+./scripts/test_ebpf_caps.sh            # Phases A (no caps) + B (setcap)
+./scripts/test_ebpf_caps.sh --with-root
+```
+
+The privileged integration tests can also be run directly:
+
+```bash
+sudo -E cargo test --features ebpf --test ebpf_net_monitor_tests -- --ignored
+```
+
 ## Implementation Details
 
 The eBPF implementation works by:

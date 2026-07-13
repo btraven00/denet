@@ -14,7 +14,29 @@ pub struct EbpfMetrics {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offcpu: Option<OffCpuMetrics>,
 
+    /// Per-process network byte counts (TCP + UDP, via kprobes)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<NetworkMetrics>,
+
     /// Error message if eBPF collection failed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Per-process network byte counts collected via eBPF kprobes.
+/// Cumulative since attach (including exited children), attributed to the
+/// monitored process tree — unlike the procfs-based `sys_net_*` fields,
+/// which are system-wide. Covers TCP (v4/v6) and UDP (v4); RX counts bytes
+/// returned to userspace, TX counts bytes requested at the socket layer.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NetworkMetrics {
+    /// Bytes received by the monitored processes
+    pub rx_bytes: u64,
+
+    /// Bytes sent by the monitored processes
+    pub tx_bytes: u64,
+
+    /// Error message if collection failed (e.g. kprobe attach denied)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -23,9 +45,8 @@ impl EbpfMetrics {
     /// Create metrics with an error message
     pub fn error(message: &str) -> Self {
         Self {
-            syscalls: None,
-            offcpu: None,
             error: Some(message.to_string()),
+            ..Default::default()
         }
     }
 
@@ -33,17 +54,15 @@ impl EbpfMetrics {
     pub fn with_syscalls(syscalls: SyscallMetrics) -> Self {
         Self {
             syscalls: Some(syscalls),
-            offcpu: None,
-            error: None,
+            ..Default::default()
         }
     }
 
     /// Create metrics with off-CPU profiling data
     pub fn with_offcpu(offcpu: OffCpuMetrics) -> Self {
         Self {
-            syscalls: None,
             offcpu: Some(offcpu),
-            error: None,
+            ..Default::default()
         }
     }
 
@@ -52,7 +71,7 @@ impl EbpfMetrics {
         Self {
             syscalls: Some(syscalls),
             offcpu: Some(offcpu),
-            error: None,
+            ..Default::default()
         }
     }
 

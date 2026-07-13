@@ -261,6 +261,8 @@ pub struct ProcessMonitor {
     ebpf_tracker: Option<crate::ebpf::SyscallTracker>,
     #[cfg(feature = "ebpf")]
     offcpu_profiler: Option<crate::ebpf::OffCpuProfiler>,
+    #[cfg(feature = "ebpf")]
+    net_monitor: Option<crate::ebpf::NetMonitor>,
     last_refresh_time: Instant,
     #[cfg(target_os = "linux")]
     cpu_sampler: crate::cpu_sampler::CpuSampler,
@@ -348,6 +350,8 @@ impl ProcessMonitor {
             ebpf_tracker: None,
             #[cfg(feature = "ebpf")]
             offcpu_profiler: None,
+            #[cfg(feature = "ebpf")]
+            net_monitor: None,
             last_refresh_time: now,
             #[cfg(target_os = "linux")]
             cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
@@ -442,6 +446,8 @@ impl ProcessMonitor {
             ebpf_tracker: None,
             #[cfg(feature = "ebpf")]
             offcpu_profiler: None,
+            #[cfg(feature = "ebpf")]
+            net_monitor: None,
             last_refresh_time: now,
             #[cfg(target_os = "linux")]
             cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
@@ -568,7 +574,7 @@ impl ProcessMonitor {
             }
 
             // Initialize off-CPU profiler
-            match crate::ebpf::OffCpuProfiler::new(pids) {
+            match crate::ebpf::OffCpuProfiler::new(pids.clone()) {
                 Ok(mut profiler) => {
                     if self.debug_mode {
                         profiler.enable_debug_mode();
@@ -578,6 +584,18 @@ impl ProcessMonitor {
                 }
                 Err(e) => {
                     log::warn!("Failed to enable off-CPU profiler: {}", e);
+                }
+            }
+
+            // Initialize per-process network monitor (infallible: degrades to
+            // an error string in metrics if kprobes can't attach)
+            match crate::ebpf::NetMonitor::new(pids) {
+                Ok(monitor) => {
+                    self.net_monitor = Some(monitor);
+                    log::info!("Network monitor enabled");
+                }
+                Err(e) => {
+                    log::warn!("Failed to enable network monitor: {}", e);
                 }
             }
 
@@ -1164,6 +1182,12 @@ impl ProcessMonitor {
                         if !stats.is_empty() {
                             ebpf_metrics.offcpu = Some(build_offcpu_metrics(&stats));
                         }
+                    }
+
+                    // Collect per-process network bytes
+                    if let Some(ref mut monitor) = self.net_monitor {
+                        monitor.update_pids(&all_pids);
+                        ebpf_metrics.network = Some(monitor.get_metrics());
                     }
 
                     agg.ebpf = Some(ebpf_metrics);
