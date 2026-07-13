@@ -165,10 +165,10 @@ impl PyProcessMonitor {
         use std::time::Duration;
 
         // Import Python modules for subprocess and signal handling
-        let subprocess = py.import_bound("subprocess")?;
-        let os = py.import_bound("os")?;
-        let signal = py.import_bound("signal")?;
-        let _time = py.import_bound("time")?;
+        let subprocess = py.import("subprocess")?;
+        let os = py.import("os")?;
+        let signal = py.import("signal")?;
+        let _time = py.import("time")?;
 
         // Prepare file handles for redirection
         let stdout_arg = if let Some(path) = &stdout_file {
@@ -196,7 +196,7 @@ impl PyProcessMonitor {
         };
 
         // Create subprocess using Python's subprocess module for better signal control
-        let popen_kwargs = pyo3::types::PyDict::new_bound(py);
+        let popen_kwargs = pyo3::types::PyDict::new(py);
         popen_kwargs.set_item("start_new_session", true)?;
 
         if stdout_arg.is_some() {
@@ -259,7 +259,7 @@ impl PyProcessMonitor {
 
         // Wait for process completion with timeout
         let exit_code = if let Some(timeout_secs) = timeout {
-            let timeout_dict = pyo3::types::PyDict::new_bound(py);
+            let timeout_dict = pyo3::types::PyDict::new(py);
             timeout_dict.set_item("timeout", timeout_secs)?;
 
             match process.call_method("wait", (), Some(&timeout_dict)) {

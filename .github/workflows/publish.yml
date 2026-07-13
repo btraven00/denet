@@ -45,7 +45,9 @@ jobs:
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         run: |
-          maturin build --release
+          # abi3 wheel (one wheel for py3.9+, incl. 3.13/3.14) + sdist
+          # so systems with older glibc than the manylinux wheel can build.
+          maturin build --release --sdist
 
       - name: List built packages
         run: |

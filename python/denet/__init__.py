@@ -16,7 +16,12 @@ from .analysis import (
     save_metrics,
 )
 
-__version__ = "0.7.0"
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+try:
+    __version__ = _pkg_version("denet")
+except PackageNotFoundError:  # pragma: no cover - source tree, denet not installed
+    __version__ = "0.0.0+unknown"
 
 __all__ = [
     "ProcessMonitor",

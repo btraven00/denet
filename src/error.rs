@@ -287,7 +287,7 @@ mod tests {
         use pyo3::exceptions::*;
         use pyo3::Python;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             // Test IO error conversion
             let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
             let denet_err = DenetError::Io(io_err);

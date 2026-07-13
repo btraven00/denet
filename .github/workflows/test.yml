@@ -9,13 +9,15 @@ on:
 
 jobs:
   test:
-    name: Test on ${{ matrix.os }} (py${{ matrix.python-version }})
+    # Lint + Rust/Python unit tests + coverage. Pinned to one Python because
+    # pixi provides its own interpreter (python==3.12); multi-version functional
+    # coverage lives in the build-wheels/test-wheels jobs below.
+    name: Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -26,11 +28,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt, llvm-tools-preview
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
 
       - name: Install pixi
         run: |
@@ -113,7 +110,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
 
     steps:
       - uses: actions/checkout@v4
@@ -153,7 +150,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
 
     steps:
       - uses: actions/checkout@v4
