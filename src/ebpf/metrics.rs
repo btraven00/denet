@@ -1,7 +1,7 @@
 //! eBPF-specific metrics structures
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// eBPF profiling metrics
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -39,6 +39,32 @@ pub struct NetworkMetrics {
     /// Error message if collection failed (e.g. kprobe attach denied)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+
+    /// Bytes broken out per live PID in the monitored tree (root + children).
+    /// The summed `rx_bytes`/`tx_bytes` above stay authoritative — they also
+    /// include already-exited PIDs (see `retired`). BTreeMap for deterministic
+    /// ordering in reports and tests.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub per_pid: BTreeMap<u32, PidNetBytes>,
+
+    /// Bytes from children that have exited, no longer attributable to any
+    /// live PID. `sum(per_pid) + retired == {rx,tx}_bytes` exactly, so a
+    /// report's breakdown adds up to the totals. Omitted while zero.
+    #[serde(skip_serializing_if = "PidNetBytes::is_zero", default)]
+    pub retired: PidNetBytes,
+}
+
+/// One PID's slice of the tree's network bytes. See [`NetworkMetrics::per_pid`].
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct PidNetBytes {
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+}
+
+impl PidNetBytes {
+    fn is_zero(&self) -> bool {
+        self.rx_bytes == 0 && self.tx_bytes == 0
+    }
 }
 
 impl EbpfMetrics {

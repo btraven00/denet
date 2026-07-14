@@ -9,9 +9,9 @@
 //! errors (missing capabilities, locked-down kernel) surface as an error
 //! string in the returned metrics, and all methods become safe no-ops.
 
-use crate::ebpf::metrics::NetworkMetrics;
+use crate::ebpf::metrics::{NetworkMetrics, PidNetBytes};
 use crate::error::{DenetError, Result};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use aya::{maps::HashMap as BpfHashMap, programs::KProbe, Ebpf};
 
@@ -188,21 +188,33 @@ impl NetMonitor {
     pub fn get_metrics(&self) -> NetworkMetrics {
         let Some(ref map) = self.net_bytes else {
             return NetworkMetrics {
-                rx_bytes: 0,
-                tx_bytes: 0,
                 error: self.init_error.clone(),
+                ..Default::default()
             };
         };
 
         let (mut rx, mut tx) = (self.retired_rx, self.retired_tx);
-        for (_tgid, [r, t]) in map.iter().flatten() {
+        let mut per_pid = BTreeMap::new();
+        for (tgid, [r, t]) in map.iter().flatten() {
             rx += r;
             tx += t;
+            per_pid.insert(
+                tgid,
+                PidNetBytes {
+                    rx_bytes: r,
+                    tx_bytes: t,
+                },
+            );
         }
         NetworkMetrics {
             rx_bytes: rx,
             tx_bytes: tx,
             error: None,
+            per_pid,
+            retired: PidNetBytes {
+                rx_bytes: self.retired_rx,
+                tx_bytes: self.retired_tx,
+            },
         }
     }
 }

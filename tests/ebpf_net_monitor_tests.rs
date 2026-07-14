@@ -58,11 +58,17 @@ fn test_net_monitor_graceful_degradation() {
         let _ = monitor.get_metrics();
     }
 
-    // JSON shape pin: rx/tx always present, error only when set.
+    // JSON shape pin: rx/tx always present, error only when set, per_pid
+    // omitted while empty (degraded mode never populates it).
     let json = serde_json::to_value(&metrics).unwrap();
     assert!(json.get("rx_bytes").is_some());
     assert!(json.get("tx_bytes").is_some());
     assert_eq!(json.get("error").is_some(), metrics.error.is_some());
+    assert_eq!(json.get("per_pid").is_some(), !metrics.per_pid.is_empty());
+    assert_eq!(json.get("retired").is_none(), metrics.retired == Default::default());
+    if metrics.error.is_some() {
+        assert!(metrics.per_pid.is_empty(), "degraded mode leaked per_pid");
+    }
 }
 
 /// Transfer `total` bytes over localhost TCP within this process, so both
@@ -127,6 +133,27 @@ fn test_net_monitor_tcp_localhost_privileged() {
         TOTAL,
         TOTAL + SLOP
     );
+
+    // Per-child breakdown: single-process tree, so our pid is the sole live
+    // entry and its bytes equal the aggregate (nothing retired here). This is
+    // the same map-iteration path that keys every child tgid separately.
+    let own = m.per_pid.get(&own_pid()).expect("own pid missing from per_pid");
+    assert_eq!(own.rx_bytes, m.rx_bytes, "per_pid rx != aggregate: {:?}", m);
+    assert_eq!(own.tx_bytes, m.tx_bytes, "per_pid tx != aggregate: {:?}", m);
+    assert!(
+        !m.per_pid.contains_key(&1),
+        "unmonitored pid leaked into per_pid: {:?}",
+        m
+    );
+
+    // Breakdown reconciles exactly: sum(per_pid) + retired == totals.
+    let (mut prx, mut ptx) = (m.retired.rx_bytes, m.retired.tx_bytes);
+    for b in m.per_pid.values() {
+        prx += b.rx_bytes;
+        ptx += b.tx_bytes;
+    }
+    assert_eq!(prx, m.rx_bytes, "per_pid+retired rx != total: {:?}", m);
+    assert_eq!(ptx, m.tx_bytes, "per_pid+retired tx != total: {:?}", m);
 }
 
 #[test]
