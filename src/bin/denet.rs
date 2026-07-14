@@ -80,7 +80,7 @@ enum Commands {
     /// Run and monitor a new process
     Run {
         /// Command to run and monitor
-        #[clap(required = true)]
+        #[clap(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
 

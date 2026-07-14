@@ -45,6 +45,10 @@ denet attach 1234
 
 # Save metrics as JSONL
 denet --json --out metrics.jsonl run python train.py
+
+# Turn a saved run into a report (timelines, regime detection, eBPF syscalls)
+pip install denet[report]
+denet-report metrics.jsonl -o report.html
 ```
 
 CPU usage follows the `top` convention: 100% = one fully utilized core, so a 4-core workload shows 400%.
@@ -60,6 +64,7 @@ denet -i 50 -m 500 run python train.py
 | Topic | Doc |
 |---|---|
 | Python API (`ProcessMonitor`, `execute_with_monitoring`, analysis) | [docs/python-api.md](docs/python-api.md) |
+| HTML/PNG/SVG reports (`denet-report`) | [docs/python-api.md#reports](docs/python-api.md#reports) |
 | GPU monitoring | [docs/gpu.md](docs/gpu.md) |
 | eBPF profiling (off-CPU, syscall tracking) | [docs/ebpf.md](docs/ebpf.md) |
 | Disk I/O metrics and how to interpret them | [docs/disk-io.md](docs/disk-io.md) |

@@ -1,6 +1,7 @@
 [package]
 name = "denet"
 version = "0.7.2"
+default-run = "denet"
 edition = "2021"
 description = "a simple process monitor"
 license = "GPL-3.0-or-later"

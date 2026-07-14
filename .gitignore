@@ -19,3 +19,6 @@ __pycache__/*
 
 out.json
 scripts/*.png
+
+# scanpy example downloads its dataset here
+python/examples/data/
