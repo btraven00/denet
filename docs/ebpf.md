@@ -283,11 +283,24 @@ accounting to the monitored tree.
 **JSON output** (inside the aggregated metrics' `ebpf` object):
 
 ```json
-"network": { "rx_bytes": 10019992, "tx_bytes": 747 }
+"network": {
+  "rx_bytes": 10019992,
+  "tx_bytes": 747,
+  "per_pid": {
+    "4123": { "rx_bytes": 10019992, "tx_bytes": 512 },
+    "4130": { "rx_bytes": 0, "tx_bytes": 235 }
+  },
+  "retired": { "rx_bytes": 0, "tx_bytes": 0 }
+}
 ```
 
-If eBPF could not attach (missing capabilities), the object carries an
-`error` string instead of silently reporting zeros as real data.
+`rx_bytes`/`tx_bytes` are the tree totals (authoritative). `per_pid` breaks
+the bytes out by live PID (root + current children), omitted while empty.
+`retired` holds bytes from children that have already exited and are no longer
+attributable to a live PID, omitted while zero. The three reconcile exactly:
+`sum(per_pid) + retired == {rx,tx}_bytes`, so a report's breakdown always adds
+up to the totals. If eBPF could not attach (missing capabilities), the object
+carries an `error` string instead of silently reporting zeros as real data.
 
 **Required capabilities** are the same as the rest of the eBPF features
 (`cap_bpf,cap_perfmon,cap_dac_read_search` — see above). To verify the whole
