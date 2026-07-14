@@ -151,3 +151,64 @@ tree_analysis = denet.process_tree_analysis(metrics)
 # Example: Analyze CPU usage from multi-process workload
 # See scripts/analyze_cpu.py for detailed CPU analysis example
 ```
+
+## Reports
+
+Generate a report (CPU / memory / network timelines rendered with Vega-Lite)
+from a saved JSONL file. Requires the `report` extra:
+
+```bash
+pip install denet[report]
+denet-report metrics.jsonl                 # -> metrics.html (interactive, default)
+denet-report metrics.jsonl -o out.png      # static PNG (format from extension)
+denet-report metrics.jsonl -f svg -o r.svg # static SVG
+```
+
+`denet-report` is a console entry point installed with the package; `python -m
+denet.report ...` is equivalent. Run `denet-report --help` for the full option
+list.
+
+Or from Python:
+
+```python
+import denet
+denet.generate_report("metrics.jsonl", "report.html")     # default html
+denet.generate_report("metrics.jsonl", "report.png")      # format inferred from extension
+denet.generate_report("metrics.jsonl", fmt="svg")         # explicit format
+```
+
+**Output formats** (`-f/--format`, default `html`):
+
+| Format | Interactive? | Notes |
+|---|---|---|
+| `html` | yes (JavaScript) | Self-contained, open in a browser. The default. |
+| `png`  | no | Static raster; opens in any viewer, editor preview, or GitHub. |
+| `svg`  | no | Static vector; no JavaScript. |
+
+When `--format` is omitted it is inferred from the `-o` extension, falling back
+to `html`.
+
+The report header states which optional capabilities the run had (eBPF, PSI,
+perf counters) and whether network figures are per-process (eBPF) or the
+system-wide approximation. Long runs are downsampled to at most 512 time slots
+(mean for gauges, max for rates, so spikes survive).
+
+The report also runs **regime detection**: binary segmentation over the
+z-scored CPU / memory / network series splits the run into piecewise-constant
+phases (e.g. idle → compute → write-out). Detected regimes are shaded as
+alternating bands across the timelines and summarised in a table (span, mean
+CPU, mean RSS, dominant activity). Short runs (fewer than ~8 slots) are left
+unsegmented.
+
+Extra panels appear only when the run carries the data for them:
+
+- **Memory pressure (PSI)** — a `some`/`full` memory-stall timeline, shown
+  whenever PSI was recorded. A flat-zero trace is kept: "no memory pressure"
+  is itself a useful reading.
+- **Syscalls by category, per regime (eBPF)** — a normalized stacked bar of the
+  syscall mix (file_io / memory / network / …) for each regime, so you can see
+  how the syscall profile shifts between phases. Every regime stays on the axis
+  (an empty row means that phase made no tracked syscalls), and it is hidden
+  entirely when there is no eBPF syscall data. The per-sample counts are
+  alive-PID snapshots rather than clean per-window deltas, so the bar shows the
+  phase's typical *mix* (proportions), not absolute call totals.

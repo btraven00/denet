@@ -18,6 +18,16 @@ from .analysis import (
 
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
+
+def __getattr__(name):
+    # Lazy so `python -m denet.report` doesn't double-import the module
+    if name == "generate_report":
+        from .report import generate_report
+
+        return generate_report
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 try:
     __version__ = _pkg_version("denet")
 except PackageNotFoundError:  # pragma: no cover - source tree, denet not installed
@@ -35,6 +45,7 @@ __all__ = [
     "resource_utilization",
     "save_metrics",
     "execute_with_monitoring",
+    "generate_report",
 ]
 
 import os
