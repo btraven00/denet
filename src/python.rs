@@ -51,10 +51,20 @@ fn build_output_config(
     Ok(builder.build())
 }
 
+/// Enable eBPF on a monitor if requested, warning-and-continuing on failure
+/// (missing caps, non-eBPF build) — same graceful degradation as the CLI.
+fn maybe_enable_ebpf(inner: &mut ProcessMonitor, enable_ebpf: bool) {
+    if enable_ebpf {
+        if let Err(e) = inner.enable_ebpf() {
+            log::warn!("Failed to enable eBPF profiling: {e}");
+        }
+    }
+}
+
 #[pymethods]
 impl PyProcessMonitor {
     #[new]
-    #[pyo3(signature = (cmd, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false, write_env=false))]
+    #[pyo3(signature = (cmd, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false, write_env=false, enable_ebpf=false))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         cmd: Vec<String>,
@@ -68,6 +78,7 @@ impl PyProcessMonitor {
         include_children: bool,
         write_metadata: bool,
         write_env: bool,
+        enable_ebpf: bool,
     ) -> PyResult<Self> {
         let output_config = build_output_config(
             output_file,
@@ -88,6 +99,7 @@ impl PyProcessMonitor {
 
         // Enable child process monitoring if requested
         inner.set_include_children(include_children);
+        maybe_enable_ebpf(&mut inner, enable_ebpf);
 
         Ok(PyProcessMonitor {
             inner,
@@ -100,7 +112,7 @@ impl PyProcessMonitor {
 
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (pid, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false, write_env=false))]
+    #[pyo3(signature = (pid, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false, write_env=false, enable_ebpf=false))]
     fn from_pid(
         pid: usize,
         base_interval_ms: u64,
@@ -113,6 +125,7 @@ impl PyProcessMonitor {
         include_children: bool,
         write_metadata: Option<bool>,
         write_env: Option<bool>,
+        enable_ebpf: bool,
     ) -> PyResult<Self> {
         let output_config = build_output_config(
             output_file,
@@ -132,6 +145,7 @@ impl PyProcessMonitor {
 
         // Enable child process monitoring if requested
         inner.set_include_children(include_children);
+        maybe_enable_ebpf(&mut inner, enable_ebpf);
 
         Ok(PyProcessMonitor {
             inner,
@@ -144,7 +158,7 @@ impl PyProcessMonitor {
 
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (cmd, stdout_file=None, stderr_file=None, timeout=None, base_interval_ms=100, max_interval_ms=1000, store_in_memory=true, output_file=None, output_format="jsonl", since_process_start=false, pause_for_attachment=true, quiet=false, include_children=true))]
+    #[pyo3(signature = (cmd, stdout_file=None, stderr_file=None, timeout=None, base_interval_ms=100, max_interval_ms=1000, store_in_memory=true, output_file=None, output_format="jsonl", since_process_start=false, pause_for_attachment=true, quiet=false, include_children=true, enable_ebpf=false))]
     fn execute_with_monitoring(
         py: Python,
         cmd: Vec<String>,
@@ -160,6 +174,7 @@ impl PyProcessMonitor {
         pause_for_attachment: bool,
         quiet: bool,
         include_children: bool,
+        enable_ebpf: bool,
     ) -> PyResult<(i32, PyProcessMonitor)> {
         use std::fs::OpenOptions;
         use std::time::Duration;
@@ -242,6 +257,7 @@ impl PyProcessMonitor {
 
         // Set include_children flag
         inner.set_include_children(include_children);
+        maybe_enable_ebpf(&mut inner, enable_ebpf);
 
         let monitor = PyProcessMonitor {
             inner,

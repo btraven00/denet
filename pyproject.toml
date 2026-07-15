@@ -51,6 +51,9 @@ build = { cmd = "maturin build --release --features python" }
 
 
 develop = { cmd = "./scripts/build_and_install.sh --features python" }
+# Linux-only: builds the extension with eBPF so execute_with_monitoring(enable_ebpf=True)
+# actually attaches (per-process network etc). Needs clang; shipped wheels stay python-only.
+develop-ebpf = { cmd = "./scripts/build_and_install.sh --features python,ebpf" }
 test = { cmd = "python -m pytest -n 4 tests/python/" }
 
 # 2 workers for github runners

@@ -302,6 +302,13 @@ attributable to a live PID, omitted while zero. The three reconcile exactly:
 up to the totals. If eBPF could not attach (missing capabilities), the object
 carries an `error` string instead of silently reporting zeros as real data.
 
+**From Python:** pass `enable_ebpf=True` to `execute_with_monitoring` (or the
+`ProcessMonitor` constructors). This only does anything when the extension was
+built with the eBPF feature — the published wheels are eBPF-free, so build it
+yourself on Linux with `pixi run develop-ebpf` (needs clang). Without the
+feature, or without capabilities, the flag degrades to a logged warning. See
+`python/examples/network_children.sh` for an end-to-end run.
+
 **Required capabilities** are the same as the rest of the eBPF features
 (`cap_bpf,cap_perfmon,cap_dac_read_search` — see above). To verify the whole
 capability matrix, including graceful degradation without caps and real data
