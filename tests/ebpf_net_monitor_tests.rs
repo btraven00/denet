@@ -65,7 +65,10 @@ fn test_net_monitor_graceful_degradation() {
     assert!(json.get("tx_bytes").is_some());
     assert_eq!(json.get("error").is_some(), metrics.error.is_some());
     assert_eq!(json.get("per_pid").is_some(), !metrics.per_pid.is_empty());
-    assert_eq!(json.get("retired").is_none(), metrics.retired == Default::default());
+    assert_eq!(
+        json.get("retired").is_none(),
+        metrics.retired == Default::default()
+    );
     if metrics.error.is_some() {
         assert!(metrics.per_pid.is_empty(), "degraded mode leaked per_pid");
     }
@@ -137,7 +140,10 @@ fn test_net_monitor_tcp_localhost_privileged() {
     // Per-child breakdown: single-process tree, so our pid is the sole live
     // entry and its bytes equal the aggregate (nothing retired here). This is
     // the same map-iteration path that keys every child tgid separately.
-    let own = m.per_pid.get(&own_pid()).expect("own pid missing from per_pid");
+    let own = m
+        .per_pid
+        .get(&own_pid())
+        .expect("own pid missing from per_pid");
     assert_eq!(own.rx_bytes, m.rx_bytes, "per_pid rx != aggregate: {:?}", m);
     assert_eq!(own.tx_bytes, m.tx_bytes, "per_pid tx != aggregate: {:?}", m);
     assert!(
