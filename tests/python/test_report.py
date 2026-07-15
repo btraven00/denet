@@ -109,6 +109,60 @@ def test_ebpf_net_preferred(tmp_path):
     assert "per-process (eBPF)" in (tmp_path / "r.html").read_text()
 
 
+def _tree_with_per_pid(ts_ms, per_pid):
+    """Tree record whose aggregated ebpf.network carries a per_pid breakdown."""
+    rx = sum(b["rx_bytes"] for b in per_pid.values())
+    tx = sum(b["tx_bytes"] for b in per_pid.values())
+    m = {
+        "ts_ms": ts_ms,
+        "cpu_usage": 10.0,
+        "mem_rss_kb": 1024,
+        "ebpf": {"network": {"rx_bytes": rx, "tx_bytes": tx, "per_pid": per_pid}},
+    }
+    return {"kind": "tree", "ts_ms": ts_ms, "parent": m, "children": [], "aggregated": m}
+
+
+def test_per_child_net_breakdown(tmp_path):
+    from denet.report import _per_child_net_chart, _per_child_net_frame
+
+    # two children each growing their own cumulative counters
+    records = [{"kind": "metadata", "pid": 1, "cmd": ["x"], "executable": "x", "t0_ms": 0}]
+    records += [
+        _tree_with_per_pid(
+            i * 100,
+            {
+                "111": {"rx_bytes": i * 1000, "tx_bytes": i * 100},
+                "222": {"rx_bytes": i * 2000, "tx_bytes": 0},
+            },
+        )
+        for i in range(6)
+    ]
+    src = tmp_path / "children.jsonl"
+    _write_jsonl(src, records)
+    _, rows = _load_records(str(src))
+
+    long = _per_child_net_frame(rows)
+    assert set(long["pid"].unique()) == {111, 222}
+    # pid 222 rx: 2000 bytes per 0.1 s step -> 20000 bytes/s
+    p222_rx = long[(long["pid"] == 222) & (long["dir"] == "rx")]["rate"]
+    assert p222_rx.iloc[-1] == pytest.approx(20000)
+
+    generate_report(str(src), str(tmp_path / "r.html"))
+    assert "per-PID network (eBPF)" in (tmp_path / "r.html").read_text()
+
+    # a single active PID is not worth a breakdown -> None (and no chart)
+    solo = [{"kind": "metadata", "pid": 1, "cmd": ["x"], "t0_ms": 0}]
+    solo += [_tree_with_per_pid(i * 100, {"111": {"rx_bytes": i * 1000, "tx_bytes": 0}}) for i in range(6)]
+    _, solo_rows = _load_records(str(_write_and_path(tmp_path / "solo.jsonl", solo)))
+    assert _per_child_net_frame(solo_rows) is None
+    assert _per_child_net_chart(None, None, 700) is None
+
+
+def _write_and_path(path, lines):
+    _write_jsonl(path, lines)
+    return path
+
+
 def test_sparse_run_warns_and_still_renders(tmp_path):
     # a process that exited early yields ~1 sample; the report must not be blank
     records = [

@@ -102,6 +102,59 @@ def _to_frame(rows: list[dict[str, Any]]):
     return df, per_process
 
 
+def _per_child_net_frame(rows: list[dict[str, Any]]):
+    """Per-PID network rates from ``ebpf.network.per_pid``.
+
+    Returns a long DataFrame ``[t, pid, dir, rate]`` (bytes/s) covering only the
+    PIDs that actually moved bytes, or None when the breakdown is absent or just
+    one PID was active — a single active PID is already the main network panel,
+    so splitting it out adds nothing. Retired children drop out of per_pid; a
+    resulting negative cumulative diff is clipped to 0.
+    """
+    import pandas as pd
+
+    t0 = rows[0]["ts_ms"]
+    recs = []
+    for m in rows:
+        per_pid = ((m.get("ebpf") or {}).get("network") or {}).get("per_pid") or {}
+        t = (m["ts_ms"] - t0) / 1000.0
+        for pid, b in per_pid.items():
+            recs.append({"t": t, "pid": int(pid), "rx": b.get("rx_bytes", 0), "tx": b.get("tx_bytes", 0)})
+    if not recs:
+        return None
+
+    df = pd.DataFrame(recs).sort_values(["pid", "t"])
+    g = df.groupby("pid")
+    dt = g["t"].diff()
+    df["rx_rate"] = (g["rx"].diff().clip(lower=0) / dt).fillna(0)
+    df["tx_rate"] = (g["tx"].diff().clip(lower=0) / dt).fillna(0)
+
+    active = [pid for pid, sub in df.groupby("pid") if sub["rx"].max() + sub["tx"].max() > 0]
+    if len(active) < 2:
+        return None
+    df = df[df["pid"].isin(active)]
+    long = df.melt(id_vars=["t", "pid"], value_vars=["rx_rate", "tx_rate"], var_name="dir", value_name="rate")
+    long["dir"] = long["dir"].str.removesuffix("_rate")
+    return long
+
+
+def _per_child_net_chart(alt, long, width: int):
+    """One small network timeline per PID (facet row), when >1 PID was active."""
+    if long is None:
+        return None
+    return (
+        alt.Chart(long)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("t:Q", title="elapsed (s)"),
+            y=alt.Y("rate:Q", title="bytes/s"),
+            color=alt.Color("dir:N", title=None),
+        )
+        .properties(width=width, height=80)
+        .facet(row=alt.Row("pid:N", title="per-PID network (eBPF)"))
+    )
+
+
 def _slotted(df):
     """Aggregate into at most MAX_SLOTS time slots (mean gauges, max rates)."""
     if len(df) <= MAX_SLOTS or df["t"].iloc[-1] <= 0:
@@ -379,6 +432,12 @@ def generate_report(input_path: str, output_path: str | None = None, fmt: str | 
     ).properties(width=width, height=height)
 
     panels = [cpu, mem, net]
+
+    # eBPF-only: split network by PID when >1 child moved bytes (bands omitted —
+    # this is a drill-down under the aggregate net panel, not a main timeline)
+    child_net = _per_child_net_chart(alt, _per_child_net_frame(rows), width)
+    if child_net is not None:
+        panels.append(child_net)
 
     # memory-pressure (PSI) timeline — only when there was actual pressure
     psi_df = _psi_frame(rows)
