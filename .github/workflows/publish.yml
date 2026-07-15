@@ -35,6 +35,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install maturin twine
 
+      - name: Install eBPF build deps
+        # clang compiles the BPF programs baked into the Linux wheel (libbpf
+        # headers are vendored, so no -dev package needed). Runtime needs no
+        # clang — only CAP_BPF to actually attach.
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+
       - name: Update version if provided
         if: github.event.inputs.version != ''
         run: |
@@ -45,9 +51,14 @@ jobs:
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         run: |
-          # abi3 wheel (one wheel for py3.9+, incl. 3.13/3.14) + sdist
-          # so systems with older glibc than the manylinux wheel can build.
-          maturin build --release --sdist
+          # Linux abi3 wheel (one wheel for py3.9+) WITH eBPF, so Linux pip
+          # users get per-process metrics without a source build. aya is pure
+          # Rust — no new shared-lib deps, manylinux compat unchanged.
+          maturin build --release --features python,ebpf
+          # sdist stays eBPF-free: it's the fallback macOS/other platforms build
+          # from, where the BPF toolchain isn't assumed. Its features come from
+          # pyproject ([tool.maturin] features = ["python"]) at build time.
+          maturin sdist
 
       - name: List built packages
         run: |

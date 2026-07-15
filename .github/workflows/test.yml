@@ -131,11 +131,20 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install maturin twine pytest
 
+      - name: Install eBPF build deps (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+
       - name: Build wheels
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         run: |
-          maturin build --release
+          # Linux wheels ship eBPF; macOS wheels stay python-only (no BPF toolchain).
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            maturin build --release --features python,ebpf
+          else
+            maturin build --release
+          fi
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
