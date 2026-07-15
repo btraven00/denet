@@ -71,6 +71,7 @@ def execute_with_monitoring(
     quiet: bool = False,
     include_children: bool = True,
     write_metadata: bool = False,
+    enable_ebpf: bool = False,
 ) -> Tuple[int, "ProcessMonitor"]:
     """
     Execute a command with monitoring from the very start using signal-based process control.
@@ -97,6 +98,8 @@ def execute_with_monitoring(
         quiet: Whether to suppress output
         include_children: Whether to monitor child processes (default True)
         write_metadata: Whether to write metadata as first line to output file (default False)
+        enable_ebpf: Enable eBPF profiling incl. per-process network bytes (default False).
+            Needs CAP_BPF+CAP_PERFMON (root or setcap); degrades to a warning otherwise.
 
     Returns:
         Tuple of (exit_code, monitor)
@@ -149,6 +152,7 @@ def execute_with_monitoring(
                 quiet=quiet,
                 include_children=include_children,
                 write_metadata=write_metadata,
+                enable_ebpf=enable_ebpf,
             )
 
             # 4. Resume the process if it was paused
