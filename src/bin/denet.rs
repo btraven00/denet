@@ -745,6 +745,7 @@ fn convert_aggregated_to_metrics(agg: &AggregatedMetrics) -> Metrics {
         cpu_core: None,
         gpu: agg.gpu.clone(),
         psi_mem: agg.psi_mem,
+        rapl: agg.rapl,
         #[cfg_attr(target_os = "linux", allow(clippy::clone_on_copy))]
         perf: agg.perf.clone(),
     }

@@ -19,6 +19,8 @@ pub struct Capabilities {
     #[cfg(not(target_os = "linux"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub perf_hw: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rapl: Option<crate::rapl::RaplCapability>,
 }
 
 /// Metadata about a monitored process
@@ -102,6 +104,11 @@ pub struct Metrics {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub psi_mem: Option<crate::psi::PsiMem>,
 
+    /// CPU package energy this interval (RAPL), plus the slice attributed to
+    /// this process. Linux-only, requires readable powercap sysfs (usually root).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rapl: Option<crate::rapl::RaplEnergy>,
+
     /// Hardware perf-counter deltas since the previous sample. Linux-only,
     /// requires `perf_event_paranoid <= 2` or `CAP_PERFMON`. Consumer can
     /// derive IPC = `instructions/cycles` and LLC miss rate from a single
@@ -141,6 +148,7 @@ impl Metrics {
             cpu_core: None,
             gpu: None,
             psi_mem: None,
+            rapl: None,
             perf: None,
         }
     }
@@ -217,6 +225,11 @@ pub struct AggregatedMetrics {
     /// inventing an aggregation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub psi_mem: Option<crate::psi::PsiMem>,
+
+    /// CPU package energy this interval (RAPL), per-tree like PSI. Taken from
+    /// the first sample that reported it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rapl: Option<crate::rapl::RaplEnergy>,
 
     /// Sum of per-process perf-counter deltas across the tree. Sums are
     /// meaningful for IPC/miss-rate ratios because we sum numerator and
@@ -295,6 +308,7 @@ impl AggregatedMetrics {
             ebpf: None, // eBPF metrics are added separately
             gpu: None,  // GPU metrics are added separately
             psi_mem: metrics.iter().find_map(|m| m.psi_mem),
+            rapl: metrics.iter().find_map(|m| m.rapl),
             #[cfg(target_os = "linux")]
             perf: aggregate_perf(metrics),
             #[cfg(not(target_os = "linux"))]
@@ -350,6 +364,7 @@ impl Default for AggregatedMetrics {
             ebpf: None,
             gpu: None,
             psi_mem: None,
+            rapl: None,
             perf: None,
         }
     }
