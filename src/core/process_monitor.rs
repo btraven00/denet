@@ -140,6 +140,7 @@ fn init_mem_sources(pid: usize) -> (Option<crate::perf::PerfGroup>, Capabilities
         Capabilities {
             psi,
             perf_hw: Some(perf_cap),
+            rapl: Some(crate::rapl::detect()),
         },
     )
 }
@@ -147,7 +148,14 @@ fn init_mem_sources(pid: usize) -> (Option<crate::perf::PerfGroup>, Capabilities
 #[cfg(not(target_os = "linux"))]
 fn init_mem_sources(pid: usize) -> ((), Capabilities) {
     let psi = Some(crate::psi::detect(pid));
-    ((), Capabilities { psi, perf_hw: None })
+    (
+        (),
+        Capabilities {
+            psi,
+            perf_hw: None,
+            rapl: Some(crate::rapl::detect()),
+        },
+    )
 }
 
 /// Read metrics from a JSON file and generate a summary
@@ -272,6 +280,9 @@ pub struct ProcessMonitor {
     /// not supported. Detected once at startup.
     #[cfg(target_os = "linux")]
     perf_group: Option<crate::perf::PerfGroup>,
+    /// Cumulative CPU-package energy reader (RAPL); `None` if powercap sysfs is
+    /// absent or unreadable (usually not root). Holds prev counter per zone.
+    rapl_sampler: Option<crate::rapl::RaplSampler>,
     /// Whether per-process PSI is readable for `pid`. System-wide PSI is
     /// always tried as a fallback.
     psi_per_process: bool,
@@ -359,6 +370,7 @@ impl ProcessMonitor {
             gpu_monitor: crate::gpu::GpuMonitor::new(),
             #[cfg(target_os = "linux")]
             perf_group,
+            rapl_sampler: crate::rapl::RaplSampler::new(),
             psi_per_process,
             capabilities,
         })
@@ -455,6 +467,7 @@ impl ProcessMonitor {
             gpu_monitor: crate::gpu::GpuMonitor::new(),
             #[cfg(target_os = "linux")]
             perf_group,
+            rapl_sampler: crate::rapl::RaplSampler::new(),
             psi_per_process,
             capabilities,
         })
@@ -784,7 +797,16 @@ impl ProcessMonitor {
         // Sample GPU metrics if available
         #[cfg(feature = "gpu")]
         let gpu_metrics = if self.gpu_monitor.is_enabled() {
-            Some(self.gpu_monitor.sample_metrics(&[self.pid as u32]))
+            let mut gm = self.gpu_monitor.sample_metrics(&[self.pid as u32]);
+            // Board energy is read here — exactly once per tick — then attributed
+            // to this pid by its GPU-util share. `sample_metrics` deliberately
+            // does not touch the counter (it runs multiple times per tick).
+            if let Some(pkg_j) = self.gpu_monitor.board_energy_delta_joules() {
+                let utils: Vec<u32> =
+                    gm.process_data.iter().filter_map(|p| p.gpu_utilization).collect();
+                gm.gpu_energy = Some(crate::gpu::attribute_gpu_energy(pkg_j, &utils));
+            }
+            Some(gm)
         } else {
             None
         };
@@ -805,6 +827,12 @@ impl ProcessMonitor {
         #[cfg(not(target_os = "linux"))]
         let perf = None;
 
+        // CPU package energy (RAPL) + slice attributed by CPU share.
+        let rapl = self
+            .rapl_sampler
+            .as_mut()
+            .and_then(|s| s.sample_delta(cpu_usage));
+
         Some(Metrics {
             ts_ms,
             cpu_usage,
@@ -823,6 +851,7 @@ impl ProcessMonitor {
             cpu_core: Self::get_process_cpu_core(self.pid),
             gpu: gpu_metrics,
             psi_mem,
+            rapl,
             perf,
         })
     }
@@ -1076,6 +1105,7 @@ impl ProcessMonitor {
                     cpu_core: Self::get_process_cpu_core(*child_pid),
                     gpu: None,     // Child processes don't get individual GPU metrics
                     psi_mem: None, // PSI is per-tree, captured on the parent
+                    rapl: None,    // RAPL is per-tree, captured on the parent
                     perf: None,    // Per-child perf groups not opened (parent uses inherit=1)
                 };
 
@@ -1117,6 +1147,7 @@ impl ProcessMonitor {
                 ebpf: None, // Will be populated below if eBPF is enabled
                 gpu: None,  // Will be populated below if GPU is enabled
                 psi_mem: parent.psi_mem,
+                rapl: parent.rapl,
                 // On Linux `perf` is `Option<PerfCounters>` (Copy); on non-Linux
                 // it's `Option<serde_json::Value>` (not Copy). `.clone()` is the
                 // portable choice; clippy's lint fires only on the Linux build.
@@ -1205,7 +1236,16 @@ impl ProcessMonitor {
                 let all_pids: Vec<u32> = std::iter::once(self.pid as u32)
                     .chain(child_pids.iter().map(|&pid| pid as u32))
                     .collect();
-                agg.gpu = Some(self.gpu_monitor.sample_metrics(&all_pids));
+                let mut ag = self.gpu_monitor.sample_metrics(&all_pids);
+                // Reuse the board total already read for the parent this tick
+                // (do NOT read the counter again), re-attributed over all pids.
+                if let Some(pe) = parent.gpu.as_ref().and_then(|g| g.gpu_energy) {
+                    let utils: Vec<u32> =
+                        ag.process_data.iter().filter_map(|p| p.gpu_utilization).collect();
+                    ag.gpu_energy =
+                        Some(crate::gpu::attribute_gpu_energy(pe.package_joules, &utils));
+                }
+                agg.gpu = Some(ag);
             }
 
             #[cfg(not(feature = "gpu"))]

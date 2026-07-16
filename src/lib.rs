@@ -36,6 +36,7 @@ pub mod cpu_sampler;
 #[cfg(target_os = "linux")]
 pub mod perf;
 pub mod psi;
+pub mod rapl;
 
 // eBPF profiling (optional feature)
 #[cfg(feature = "ebpf")]

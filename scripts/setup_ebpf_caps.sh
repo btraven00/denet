@@ -5,6 +5,8 @@
 #   cap_bpf                - load BPF programs, create maps
 #   cap_perfmon            - perf_event_open for tracepoints
 #   cap_dac_read_search    - read /sys/kernel/tracing/events/*/id (root-owned 0400)
+#                            and RAPL /sys/class/powercap/intel-rapl:*/energy_uj
+#                            (also root-owned 0400) for CPU energy attribution
 #
 # Usage: sudo ./scripts/setup_ebpf_caps.sh [path/to/denet]
 # Defaults to ./target/release/denet.

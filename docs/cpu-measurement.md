@@ -114,3 +114,31 @@ CPU Usage: 376.2%  // A process using ~3.8 cores fully
 - For accurate CPU measurements over time, it's recommended to sample at regular intervals
 - First measurement establishes a baseline and returns no CPU usage value
 - Process tree measurements automatically track and cleanup child processes
+
+## CPU Energy (RAPL)
+
+When available, each sample carries a `rapl` field with CPU-package energy for
+the interval (see `docs/data-format.md`). Source: the cumulative microjoule
+counters at `/sys/class/powercap/intel-rapl:*/energy_uj`, diffed per sample
+(wrap-safe against `max_energy_range_uj`) and summed across package sockets.
+
+Two numbers:
+
+- **`package_joules`** — total socket energy: all cores, all processes, plus
+  static/uncore power. This is measured, not modeled.
+- **`process_joules`** — the slice attributed to the monitored process, as
+  `package_joules × (cpu_usage/100)/ncpus`.
+
+The attribution is a deliberate first-order model: it assumes package power
+tracks CPU-capacity share linearly. It ignores per-core DVFS, that an idle
+package still draws static power, and DRAM/uncore domains. Treat
+`process_joules` as an estimate and `package_joules` as ground truth. Upgrade
+paths (per-core `intel-rapl:N:0` energy, or cpu-time weighting against
+`/proc/stat` busy time) are noted in `src/rapl/mod.rs`.
+
+**Access:** `energy_uj` is root-owned `0400` on current kernels
+(CVE-2020-8694), so `rapl` resolves only under **root** or with
+**`CAP_DAC_READ_SEARCH`**. `scripts/setup_ebpf_caps.sh` grants that capability
+alongside the eBPF ones, so a caps-configured binary gets energy for free.
+Without it, the capability manifest reports `available: false` with a reason
+and the field is simply omitted.

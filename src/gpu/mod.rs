@@ -17,6 +17,15 @@
 //!
 //! The key insight is that NVML's device.utilization_rates() returns system-wide
 //! utilization, not per-process. For true per-process monitoring, we need nvidia-smi.
+//!
+//! # Energy
+//!
+//! NVML's `total_energy_consumption` is a cumulative millijoule counter for the
+//! **whole board** (all processes + static/idle draw) — there is no per-process
+//! energy counter. We diff it per sample for `package_joules` (ground truth) and
+//! attribute a `process_joules` slice by GPU-utilization share (an estimate, as
+//! coarse as the util proxy that feeds it). Volta+ only; older GPUs report no
+//! counter and `gpu_energy` is omitted.
 
 #[cfg(feature = "gpu")]
 use nvml_wrapper::enums::device::UsedGpuMemory;
@@ -62,6 +71,34 @@ pub struct SystemGpuMetrics {
     pub power_usage: Option<u32>,
 }
 
+/// GPU energy over one sample interval, in joules.
+///
+/// `package_joules` is whole-card energy (all processes + static draw), measured
+/// via NVML's cumulative counter. `process_joules` is the slice attributed to the
+/// monitored process(es) by GPU-utilization share — an estimate, not a
+/// per-process measurement (NVML exposes no such counter). See module docs.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq)]
+pub struct GpuEnergy {
+    /// Total board energy over the interval — all processes, all draw.
+    pub package_joules: f64,
+    /// Estimated slice for the monitored process(es) by GPU-util share.
+    pub process_joules: f64,
+}
+
+/// Split whole-board energy (joules over the interval) into total and the slice
+/// attributed to the monitored process(es) by summed GPU-util share (clamped).
+/// `package_joules` covers every process on the board; only `process_joules` is
+/// scoped to our pids — via `proc_utils`, which nvidia-smi reports per-pid, so
+/// other users' load lowers our util share rather than being charged to us.
+#[cfg(any(feature = "gpu", test))]
+pub(crate) fn attribute_gpu_energy(package_joules: f64, proc_utils: &[u32]) -> GpuEnergy {
+    let util_share = (proc_utils.iter().map(|&u| u as f64 / 100.0).sum::<f64>()).clamp(0.0, 1.0);
+    GpuEnergy {
+        package_joules,
+        process_joules: package_joules * util_share + 0.0, // `+ 0.0` normalizes -0.0
+    }
+}
+
 /// Complete GPU monitoring data for a single process
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct GpuMetrics {
@@ -73,6 +110,10 @@ pub struct GpuMetrics {
     pub has_process_data: bool,
     /// Method used for process data collection
     pub collection_method: String,
+    /// Board energy this interval + attributed slice. Present only when NVML's
+    /// `total_energy_consumption` counter is available (Volta+, ~2017 on).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_energy: Option<GpuEnergy>,
 }
 
 /// GPU monitoring summary
@@ -117,6 +158,12 @@ pub struct GpuMonitor {
     device_count: u32,
     enabled: bool,
     nvidia_smi_available: bool,
+    /// Previous cumulative energy per device (millijoules) for delta computation.
+    /// `RefCell` because `sample_metrics` takes `&self`; single-threaded sampling
+    /// so no contention. ponytail: RefCell over threading the state through every
+    /// caller — swap to `&mut self` only if sampling ever goes concurrent.
+    #[cfg(feature = "gpu")]
+    prev_energy_mj: std::cell::RefCell<std::collections::HashMap<u32, u64>>,
 }
 
 impl Default for GpuMonitor {
@@ -144,6 +191,7 @@ impl GpuMonitor {
                         device_count,
                         enabled: true,
                         nvidia_smi_available,
+                        prev_energy_mj: Default::default(),
                     }
                 }
                 Err(e) => {
@@ -154,6 +202,7 @@ impl GpuMonitor {
                             device_count: Self::get_device_count_nvidia_smi(),
                             enabled: true,
                             nvidia_smi_available: true,
+                            prev_energy_mj: Default::default(),
                         }
                     } else {
                         log::info!("GPU monitoring disabled: {}", e);
@@ -162,6 +211,7 @@ impl GpuMonitor {
                             device_count: 0,
                             enabled: false,
                             nvidia_smi_available: false,
+                            prev_energy_mj: Default::default(),
                         }
                     }
                 }
@@ -234,6 +284,40 @@ impl GpuMonitor {
         #[cfg(not(feature = "gpu"))]
         {
             0
+        }
+    }
+
+    /// Whole-board energy since the previous call, in joules, summed across
+    /// devices. Reads NVML's cumulative `total_energy_consumption` counter and
+    /// advances the per-device baseline — so call it **exactly once per emitted
+    /// sample** (`sample_metrics` may run several times per tick and must not
+    /// touch the counter). Returns `None` if no device exposes the counter
+    /// (pre-Volta) or the GPU is disabled.
+    pub fn board_energy_delta_joules(&self) -> Option<f64> {
+        #[cfg(feature = "gpu")]
+        {
+            let nvml = self.nvml.as_ref()?;
+            let mut delta_mj: u64 = 0;
+            let mut seen = false;
+            let mut prev = self.prev_energy_mj.borrow_mut();
+            for device_index in 0..self.device_count {
+                if let Ok(device) = nvml.device_by_index(device_index) {
+                    if let Ok(cur_mj) = device.total_energy_consumption() {
+                        seen = true;
+                        // Cumulative since driver reload; monotonic, so a decrease
+                        // only means the driver reset — treat as 0.
+                        if let Some(&last) = prev.get(&device_index) {
+                            delta_mj += cur_mj.saturating_sub(last);
+                        }
+                        prev.insert(device_index, cur_mj);
+                    }
+                }
+            }
+            seen.then(|| delta_mj as f64 / 1000.0)
+        }
+        #[cfg(not(feature = "gpu"))]
+        {
+            None
         }
     }
 
@@ -328,6 +412,10 @@ impl GpuMonitor {
                 process_data,
                 has_process_data,
                 collection_method,
+                // Energy is read once per tick via `board_energy_delta_joules`
+                // (this method is called several times per tick); the caller
+                // attaches it. See ProcessMonitor sampling.
+                gpu_energy: None,
             }
         }
 
@@ -520,6 +608,23 @@ mod tests {
         // Should not panic regardless of GPU availability
         let _device_count = monitor.device_count();
         let _enabled = monitor.is_enabled();
+    }
+
+    #[test]
+    fn test_gpu_energy_attribution() {
+        // 5 J board energy; one proc at 40% util → 2 J attributed.
+        let e = attribute_gpu_energy(5.0, &[40]);
+        assert!((e.package_joules - 5.0).abs() < 1e-9);
+        assert!((e.process_joules - 2.0).abs() < 1e-9);
+
+        // Multiple procs sum; over-100% clamps to the whole board.
+        let e = attribute_gpu_energy(5.0, &[80, 70]);
+        assert!((e.process_joules - 5.0).abs() < 1e-9);
+
+        // No per-process util → total known, nothing attributed.
+        let e = attribute_gpu_energy(5.0, &[]);
+        assert_eq!(e.process_joules, 0.0);
+        assert!((e.package_joules - 5.0).abs() < 1e-9);
     }
 
     #[test]

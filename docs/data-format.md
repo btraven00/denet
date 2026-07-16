@@ -68,6 +68,7 @@ Tells consumers which optional per-sample fields to expect. Each entry is `{avai
 |---|---|---|
 | `psi` | `psi_mem` | `/proc/pressure/memory` (system or per-process). Always Linux-only. |
 | `perf_hw` | `perf` | `perf_event_open` hardware counters. Requires `perf_event_paranoid <= 2` or `CAP_PERFMON`. The `events` array lists which counters opened — `cycles` and `instructions` are required, the rest degrade gracefully if the CPU doesn't expose them. |
+| `rapl` | `rapl` | Intel/AMD RAPL CPU-package energy via `/sys/class/powercap/intel-rapl:*/energy_uj`. `energy_uj` is root-owned `0400` on current kernels (CVE-2020-8694), so needs **root** or **`CAP_DAC_READ_SEARCH`** — `scripts/setup_ebpf_caps.sh` already grants it. The `zones` field counts package sockets being read. |
 
 ## Metrics Fields
 
@@ -97,7 +98,7 @@ Tells consumers which optional per-sample fields to expect. Each entry is `{avai
 | `thread_count` | number | Number of threads |
 | `uptime_secs` | number | Process uptime (seconds) |
 | `cpu_core` | number? | Last CPU core the process ran on, if known. |
-| `gpu` | object? | Per-process GPU metrics (only when the `gpu` feature is enabled and an NVIDIA GPU is present). |
+| `gpu` | object? | Per-process GPU metrics (only when the `gpu` feature is enabled and an NVIDIA GPU is present). May include `gpu_energy: {package_joules, process_joules}` — whole-board energy over the interval plus the slice attributed by GPU-util share (Volta+; see `docs/gpu.md`). |
 
 ### Child Process Metrics
 | Field | Type | Description |
@@ -114,6 +115,7 @@ Both Individual and Aggregated metrics may include these when the corresponding 
 |-------|------|-------------|
 | `psi_mem` | object? | `{some_avg10, full_avg10}` — fraction of the last 10s window in which at least one task / every task stalled on memory. |
 | `perf` | object? | `{cycles, instructions, cache_refs, cache_misses, stalled_backend}` — counter **deltas since the previous sample**. IPC = `instructions/cycles`. LLC miss rate = `cache_misses/cache_refs`. |
+| `rapl` | object? | `{package_joules, process_joules}` — CPU-package energy **over the sample interval** (joules). `package_joules` is the whole socket (all cores/processes); `process_joules` is the slice attributed to this process by CPU-capacity share `(cpu_usage/100)/ncpus`. A first-order model — see `docs/cpu-measurement.md`. |
 
 ### Aggregated Metrics
 Includes all fields from Individual Process Metrics plus:
