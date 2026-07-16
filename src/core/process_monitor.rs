@@ -802,8 +802,11 @@ impl ProcessMonitor {
             // to this pid by its GPU-util share. `sample_metrics` deliberately
             // does not touch the counter (it runs multiple times per tick).
             if let Some(pkg_j) = self.gpu_monitor.board_energy_delta_joules() {
-                let utils: Vec<u32> =
-                    gm.process_data.iter().filter_map(|p| p.gpu_utilization).collect();
+                let utils: Vec<u32> = gm
+                    .process_data
+                    .iter()
+                    .filter_map(|p| p.gpu_utilization)
+                    .collect();
                 gm.gpu_energy = Some(crate::gpu::attribute_gpu_energy(pkg_j, &utils));
             }
             Some(gm)
@@ -1240,8 +1243,11 @@ impl ProcessMonitor {
                 // Reuse the board total already read for the parent this tick
                 // (do NOT read the counter again), re-attributed over all pids.
                 if let Some(pe) = parent.gpu.as_ref().and_then(|g| g.gpu_energy) {
-                    let utils: Vec<u32> =
-                        ag.process_data.iter().filter_map(|p| p.gpu_utilization).collect();
+                    let utils: Vec<u32> = ag
+                        .process_data
+                        .iter()
+                        .filter_map(|p| p.gpu_utilization)
+                        .collect();
                     ag.gpu_energy =
                         Some(crate::gpu::attribute_gpu_energy(pe.package_joules, &utils));
                 }
