@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/btraven00/denet/compare/v0.7.2...v0.8.0) (2026-07-16)
+
+
+### Features
+
+* **ebpf:** expose per-child network byte breakdown ([c715632](https://github.com/btraven00/denet/commit/c71563264b8e1752a3e39a2f29755a523dc2fc07))
+* **ebpf:** per-process network byte accounting ([#35](https://github.com/btraven00/denet/issues/35)) ([16f4a6b](https://github.com/btraven00/denet/commit/16f4a6b09fa9a157f891ce60dc0df40679be96e1))
+* **energy:** CPU (RAPL) + GPU (NVML) energy with per-process attribution ([3b77960](https://github.com/btraven00/denet/commit/3b77960a891e71b4aad83ce3aafb34de3d6acd6f))
+* **python:** enable_ebpf flag on the monitoring API ([850370d](https://github.com/btraven00/denet/commit/850370d5c93ebc4bda3566657cf510d125af23ab))
+* **report:** per-PID network breakdown widget + example ([6fa5903](https://github.com/btraven00/denet/commit/6fa59036bf89e4bae17e18b41473dc81fa8959ef))
+* **report:** static HTML/PNG/SVG report with regime detection, PSI, and eBPF syscall breakdown ([4df4376](https://github.com/btraven00/denet/commit/4df4376a463e4eb3331569889bb292fe3d6b7240))
+
 ## [0.7.0](https://github.com/btraven00/denet/compare/v0.6.2...v0.7.0) (2026-05-26)
 
 
