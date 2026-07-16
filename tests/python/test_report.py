@@ -331,3 +331,109 @@ def test_no_records_raises(tmp_path):
     src.write_text('{"kind":"metadata","pid":1,"cmd":["x"],"executable":"x","t0_ms":0}\n')
     with pytest.raises(ValueError, match="No metric records"):
         generate_report(str(src))
+
+
+def test_load_records_skips_junk_and_infers_legacy(tmp_path):
+    from denet.report import _load_records
+
+    p = tmp_path / "mixed.jsonl"
+    p.write_text(
+        "\n"  # blank -> skip
+        "not json{\n"  # malformed -> skip
+        "[1, 2, 3]\n"  # valid JSON but not a dict -> skip
+        + json.dumps({"pid": 1, "cmd": ["x"], "t0_ms": 0}) + "\n"  # legacy metadata (has cmd)
+        + json.dumps({"ts_ms": 10, "cpu_usage": 1.0, "mem_rss_kb": 8}) + "\n"  # legacy sample (has cpu_usage)
+        + json.dumps({"foo": "bar"}) + "\n"  # no kind/cmd/aggregated/cpu_usage -> skip
+        + json.dumps({"kind": "sample", "ts_ms": 20, "cpu_usage": 2.0, "mem_rss_kb": 8, "ebpf": {"syscalls": {}}})
+        + "\n"  # tagged sample carrying ebpf
+    )
+    meta, rows = _load_records(str(p))
+    assert meta["cmd"] == ["x"]
+    assert meta["_ebpf_seen"] is True  # set by the tagged sample's ebpf key
+    assert len(rows) == 2  # the two samples; junk and unknown records dropped
+
+
+def test_slotted_downsamples_large_run(tmp_path):
+    from denet.report import MAX_SLOTS, _load_records, _slotted, _to_frame
+
+    records = [{"kind": "metadata", "pid": 1, "cmd": ["x"], "t0_ms": 0}]
+    records += [_tree_record(i * 100, cpu=float(i % 7), rx=i * 10) for i in range(MAX_SLOTS + 50)]
+    src = tmp_path / "big.jsonl"
+    _write_jsonl(src, records)
+    df, _ = _to_frame(_load_records(str(src))[1])
+    slotted = _slotted(df)
+    assert len(df) > MAX_SLOTS
+    # collapsed into the slot budget (+1 boundary bin from floor-division binning)
+    assert len(slotted) < len(df)
+    assert len(slotted) <= MAX_SLOTS + 1
+
+
+def test_syscall_chart_empty_breakdown_is_none():
+    import altair as alt
+
+    from denet.report import _syscall_chart
+
+    assert _syscall_chart(alt, [], 700, ["R1"]) is None
+
+
+def test_syscalls_per_regime_skips_empty_window():
+    import pandas as pd
+
+    from denet.report import _syscalls_per_regime
+
+    sc_df = pd.DataFrame([{"t": 0.0, "file_io": 5}, {"t": 1.0, "file_io": 5}])
+    # first window contains no samples (empty -> skipped), second one does
+    breakdown = _syscalls_per_regime(sc_df, [{"t0": 10.0, "t1": 20.0}, {"t0": 0.0, "t1": 1.0}])
+    assert breakdown and all(b["regime"] == "R2" for b in breakdown)
+
+
+def test_long_command_is_truncated(tmp_path):
+    records = [{"kind": "metadata", "pid": 1, "cmd": ["run", "y" * 200], "t0_ms": 0}]
+    records += [_tree_record(i * 100, cpu=1.0, rx=i) for i in range(5)]
+    src = tmp_path / "long.jsonl"
+    _write_jsonl(src, records)
+    out = generate_report(str(src), str(tmp_path / "l.svg"))
+    assert "..." in Path(out).read_text()  # title was truncated
+
+
+def test_missing_altair_raises_friendly(tmp_path, monkeypatch):
+    import builtins
+
+    from denet import report as report_mod
+
+    _write_jsonl(
+        tmp_path / "m.jsonl",
+        [{"kind": "metadata", "pid": 1, "cmd": ["x"], "t0_ms": 0}, _tree_record(0, cpu=1.0, rx=0)],
+    )
+    real_import = builtins.__import__
+
+    def no_altair(name, *args, **kwargs):
+        if name == "altair":
+            raise ImportError("simulated missing altair")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_altair)
+    with pytest.raises(ImportError, match="report feature needs"):
+        report_mod.generate_report(str(tmp_path / "m.jsonl"))
+
+
+def test_main_cli_renders_and_errors(tmp_path, monkeypatch, capsys):
+    import sys
+
+    from denet import report as report_mod
+
+    records = [{"kind": "metadata", "pid": 1, "cmd": ["x"], "t0_ms": 0}]
+    records += [_tree_record(i * 100, cpu=5.0, rx=i * 100) for i in range(6)]
+    src = tmp_path / "cli.jsonl"
+    _write_jsonl(src, records)
+    out = tmp_path / "cli.svg"
+
+    monkeypatch.setattr(sys, "argv", ["denet-report", str(src), "-o", str(out), "-f", "svg"])
+    report_mod.main()
+    assert out.exists()
+    assert str(out) in capsys.readouterr().out
+
+    # missing input -> caught and re-raised as SystemExit with a friendly message
+    monkeypatch.setattr(sys, "argv", ["denet-report", str(tmp_path / "nope.jsonl")])
+    with pytest.raises(SystemExit):
+        report_mod.main()
