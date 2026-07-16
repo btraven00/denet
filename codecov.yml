@@ -36,6 +36,10 @@ ignore:
   # these paths can't be exercised from GitHub Actions. The pure logic that
   # consumes the syscall's output lives in src/perf/mod.rs and IS covered.
   - "src/perf/syscall.rs"
+  # RAPL powercap sysfs plumbing. Reading energy_uj needs root, so CI can't
+  # exercise these paths. The pure logic (cpu_share, counter_delta) lives in
+  # src/rapl/mod.rs and IS covered.
+  - "src/rapl/sysfs.rs"
 
 flags:
   python:
