@@ -147,7 +147,7 @@ def test_per_child_net_breakdown(tmp_path):
     p222_rx = long[(long["pid"] == 222) & (long["dir"] == "rx")]["rate"]
     assert p222_rx.iloc[-1] == pytest.approx(20000)
 
-    generate_report(str(src), str(tmp_path / "r.html"))
+    generate_report(str(src), str(tmp_path / "r.html"), panels="net")
     assert "per-PID network (eBPF)" in (tmp_path / "r.html").read_text()
 
     # a single active PID is not worth a breakdown -> None (and no chart)
@@ -250,7 +250,7 @@ def test_syscalls_per_regime(tmp_path):
     last = by_regime[max(by_regime)]
     assert last.get("memory", 0) > last.get("file_io", 0)
 
-    generate_report(str(src), str(tmp_path / "r.html"))
+    generate_report(str(src), str(tmp_path / "r.html"), panels="cpu,syscalls")
     assert "Syscalls by category" in (tmp_path / "r.html").read_text()
 
 
@@ -285,7 +285,7 @@ def test_psi_panel_shown_when_present(tmp_path):
         _write_jsonl(src, make(True, some_fn))
         _, rows = _load_records(str(src))
         assert _psi_frame(rows) is not None
-        generate_report(str(src), str(tmp_path / f"{label}.html"))
+        generate_report(str(src), str(tmp_path / f"{label}.html"), panels=["cpu", "psi"])
         assert "mem stall" in (tmp_path / f"{label}.html").read_text()
 
     # no psi_mem at all -> no panel
@@ -293,8 +293,10 @@ def test_psi_panel_shown_when_present(tmp_path):
     _write_jsonl(none_src, make(False))
     _, rows2 = _load_records(str(none_src))
     assert _psi_frame(rows2) is None
-    generate_report(str(none_src), str(tmp_path / "nopsi.html"))
-    assert "mem stall" not in (tmp_path / "nopsi.html").read_text()
+    generate_report(str(none_src), str(tmp_path / "nopsi.html"), panels="cpu,psi")
+    html = (tmp_path / "nopsi.html").read_text()
+    assert "mem stall" not in html
+    assert "psi (no data)" in html
 
 
 def test_no_syscall_chart_without_ebpf(tmp_path):
@@ -341,9 +343,12 @@ def test_load_records_skips_junk_and_infers_legacy(tmp_path):
         "\n"  # blank -> skip
         "not json{\n"  # malformed -> skip
         "[1, 2, 3]\n"  # valid JSON but not a dict -> skip
-        + json.dumps({"pid": 1, "cmd": ["x"], "t0_ms": 0}) + "\n"  # legacy metadata (has cmd)
-        + json.dumps({"ts_ms": 10, "cpu_usage": 1.0, "mem_rss_kb": 8}) + "\n"  # legacy sample (has cpu_usage)
-        + json.dumps({"foo": "bar"}) + "\n"  # no kind/cmd/aggregated/cpu_usage -> skip
+        + json.dumps({"pid": 1, "cmd": ["x"], "t0_ms": 0})
+        + "\n"  # legacy metadata (has cmd)
+        + json.dumps({"ts_ms": 10, "cpu_usage": 1.0, "mem_rss_kb": 8})
+        + "\n"  # legacy sample (has cpu_usage)
+        + json.dumps({"foo": "bar"})
+        + "\n"  # no kind/cmd/aggregated/cpu_usage -> skip
         + json.dumps({"kind": "sample", "ts_ms": 20, "cpu_usage": 2.0, "mem_rss_kb": 8, "ebpf": {"syscalls": {}}})
         + "\n"  # tagged sample carrying ebpf
     )
@@ -436,4 +441,134 @@ def test_main_cli_renders_and_errors(tmp_path, monkeypatch, capsys):
     # missing input -> caught and re-raised as SystemExit with a friendly message
     monkeypatch.setattr(sys, "argv", ["denet-report", str(tmp_path / "nope.jsonl")])
     with pytest.raises(SystemExit):
+        report_mod.main()
+
+
+# --- panel selection -------------------------------------------------------
+
+from denet.report import PANELS, _panel_status, _parse_panels, _regime_cols, _select_panels  # noqa: E402
+
+OK = dict.fromkeys(PANELS, "ok")
+
+
+def test_parse_panels():
+    assert _parse_panels(None) is None
+    assert _parse_panels("all") == PANELS
+    assert _parse_panels(" NET, cpu ") == ("cpu", "net")  # canonical order, case-insensitive
+    assert _parse_panels(["psi", "mem"]) == ("mem", "psi")
+    for bad in ("cpu,gpu", "", " , "):
+        with pytest.raises(ValueError, match="choose from"):
+            _parse_panels(bad)
+
+
+def test_select_defaults_hide_empty_and_list_opt_ins():
+    status = {**OK, "disk": "empty", "net": "machine-wide", "psi": "missing"}
+    shown, notes = _select_panels(None, status)
+    assert shown == ["cpu", "mem"]
+    assert notes == ["disk (empty)", "net", "syscalls"]  # psi has no data: not offered
+
+
+def test_select_requested_panels_shown_even_if_flat_or_machine_wide():
+    status = {**OK, "cpu": "empty", "net": "machine-wide", "syscalls": "missing"}
+    shown, notes = _select_panels(("cpu", "net", "syscalls"), status)
+    assert shown == ["cpu", "net"]
+    assert notes == ["syscalls (no data)"]
+
+
+def test_select_never_renders_nothing():
+    status = {**OK, "cpu": "empty", "mem": "empty", "disk": "empty"}
+    shown, notes = _select_panels(None, status)
+    assert shown == ["cpu"]
+    assert not any(n.startswith("cpu") for n in notes)
+
+
+def test_regime_cols_skip_machine_wide_and_hidden():
+    status = {**OK, "net": "machine-wide"}
+    assert _regime_cols(["cpu", "net", "psi"], status) == ["cpu"]
+    assert _regime_cols(["mem", "disk", "net"], OK) == ["mem_mib", "read_rate", "write_rate", "rx_rate", "tx_rate"]
+
+
+def _frame(tmp_path, records, name="p.jsonl"):
+    src = tmp_path / name
+    _write_jsonl(src, [{"kind": "metadata", "pid": 1, "cmd": ["x"], "t0_ms": 0}, *records])
+    meta, rows = _load_records(str(src))
+    df, per_process = _to_frame(rows)
+    return src, meta, rows, df, per_process
+
+
+def test_panel_status(tmp_path):
+    recs = [_tree_record(i * 100, cpu=10.0, rx=i * 1000) for i in range(6)]
+    for i, r in enumerate(recs):
+        r["aggregated"]["disk_write_bytes"] = i * 4096
+    _, meta, rows, df, pp = _frame(tmp_path, recs)
+    status = _panel_status(df, _psi_frame(rows), _syscall_frame(rows), pp, meta)
+    assert status == {**OK, "net": "machine-wide", "psi": "missing", "syscalls": "missing"}
+
+    ebpf = [_tree_record(i * 100, cpu=0.0, rx=i * 1000, ebpf=True) for i in range(6)]
+    for r in ebpf:
+        r["aggregated"]["psi_mem"] = {"some_avg10": 0.0, "full_avg10": 0.0}
+    _, meta, rows, df, pp = _frame(tmp_path, ebpf, "e.jsonl")
+    meta["capabilities"] = {"psi": {"system": True, "per_process": True}}
+    status = _panel_status(df, _psi_frame(rows), _syscall_frame(rows), pp, meta)
+    assert status["cpu"] == "empty" and status["disk"] == "empty"
+    assert status["net"] == "ok"  # per-process via eBPF
+    assert status["psi"] == "empty"  # per-process, but flat zero
+
+
+def test_machine_wide_network_never_splits_a_phase(tmp_path):
+    # Steady CPU/memory; host traffic (sys_net, no eBPF) bursts in the middle. This is
+    # what gave local jobs bogus phases labelled "network".
+    recs = [_tree_record(i * 100, cpu=50.0, rx=0) for i in range(60)]
+    total = 0
+    for i, r in enumerate(recs):
+        total += 5_000_000 if 20 <= i < 40 else 0
+        r["aggregated"]["sys_net_rx_bytes"] = r["aggregated"]["sys_net_tx_bytes"] = total
+    src, meta, rows, df, pp = _frame(tmp_path, recs)
+    status = _panel_status(df, None, None, pp, meta)
+
+    for requested in (None, ("cpu", "mem", "net")):  # hidden, or shown but machine-wide
+        shown, _ = _select_panels(requested, status)
+        regimes = _detect_regimes(_slotted(df), cols=_regime_cols(shown, status))
+        assert len(regimes) <= 1
+        assert all(r["dominant"] != "network" for r in regimes)
+
+    # all signals (the old behaviour) do split on it
+    assert len(_detect_regimes(_slotted(df))) > 1
+
+
+def test_disk_panel_and_phase(tmp_path):
+    # quiet -> heavy writes -> quiet: disk is a default panel and drives the phases
+    recs = [_tree_record(i * 100, cpu=20.0, rx=0) for i in range(45)]
+    total = 0
+    for i, r in enumerate(recs):
+        total += 50_000_000 if 15 <= i < 30 else 0
+        r["aggregated"]["disk_write_bytes"] = total
+    src, meta, rows, df, pp = _frame(tmp_path, recs)
+    status = _panel_status(df, None, None, pp, meta)
+    shown, _ = _select_panels(None, status)
+    assert "disk" in shown
+    regimes = _detect_regimes(_slotted(df), cols=_regime_cols(shown, status))
+    assert "disk" in [r["dominant"] for r in regimes]
+
+    generate_report(str(src), str(tmp_path / "d.html"))
+    html = (tmp_path / "d.html").read_text()
+    assert "disk (bytes/s)" in html
+    assert "network (bytes/s)" not in html
+    assert "not shown: net; choose with --panels" in html
+
+
+def test_cli_panels_flag(tmp_path, monkeypatch, capsys):
+    import sys
+
+    from denet import report as report_mod
+
+    recs = [_tree_record(i * 100, cpu=5.0, rx=i * 100) for i in range(6)]
+    src, *_ = _frame(tmp_path, recs)
+    out = tmp_path / "cli.html"
+    monkeypatch.setattr(sys, "argv", ["denet-report", str(src), "-o", str(out), "--panels", "cpu,net"])
+    report_mod.main()
+    assert "network (bytes/s)" in out.read_text()
+
+    monkeypatch.setattr(sys, "argv", ["denet-report", str(src), "-p", "cpu,gpu"])
+    with pytest.raises(SystemExit, match="unknown panel"):
         report_mod.main()

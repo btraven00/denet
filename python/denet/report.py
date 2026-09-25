@@ -1,12 +1,13 @@
 """
 denet.report: Generate a static HTML report from a denet JSONL file.
 
-Renders CPU, memory, and network timelines with Altair/Vega-Lite, plus a
-header stating which optional capabilities (eBPF, PSI, perf counters) the
-run had. Requires the ``report`` extra: ``pip install denet[report]``.
+Renders timeline panels (CPU, memory, disk by default; network, memory
+stall and syscalls on request) with Altair/Vega-Lite, plus a header stating
+which optional capabilities (eBPF, PSI, perf counters) the run had. Requires
+the ``report`` extra: ``pip install 'denet[report]'``.
 
 Usage:
-    python -m denet.report metrics.jsonl -o report.html
+    python -m denet.report metrics.jsonl -o report.html --panels cpu,mem,net
 """
 
 import argparse
@@ -15,6 +16,73 @@ from pathlib import Path
 from typing import Any
 
 MAX_SLOTS = 512  # ponytail: fixed slot budget; make it a CLI flag if someone needs finer resolution
+
+PANELS = ("cpu", "mem", "disk", "net", "psi", "syscalls")
+DEFAULT_PANELS = ("cpu", "mem", "disk")
+# Timeline columns each panel contributes to regime detection (psi/syscalls: none).
+REGIME_COLS = {"cpu": ["cpu"], "mem": ["mem_mib"], "disk": ["read_rate", "write_rate"], "net": ["rx_rate", "tx_rate"]}
+
+
+def _parse_panels(spec) -> tuple[str, ...] | None:
+    """Normalize a panel request: None (defaults), "all", "cpu,net" or a list of names."""
+    if spec is None:
+        return None
+    names = [n.strip().lower() for n in (spec.split(",") if isinstance(spec, str) else spec) if n.strip()]
+    if "all" in names:
+        return PANELS
+    unknown = sorted(set(names) - set(PANELS))
+    if unknown or not names:
+        raise ValueError(f"unknown panel(s) {', '.join(unknown) or '(none)'}; choose from {', '.join(PANELS)} or all")
+    return tuple(p for p in PANELS if p in names)  # canonical order
+
+
+def _panel_status(df, psi_df, sc_df, per_process_net: bool, meta: dict[str, Any]) -> dict[str, str]:
+    """Classify each panel's data: "ok", "empty" (all zero), "machine-wide" or "missing".
+
+    Machine-wide panels show activity from the whole host (network without
+    eBPF; PSI unless read from the process's own cgroup), not the monitored job.
+    """
+
+    def zero(frame, cols) -> bool:
+        return not frame[cols].to_numpy().any()
+
+    psi_per_process = bool(((meta.get("capabilities") or {}).get("psi") or {}).get("per_process"))
+    status = {
+        "cpu": "empty" if zero(df, ["cpu"]) else "ok",
+        "mem": "empty" if zero(df, ["mem_mib"]) else "ok",
+        "disk": "empty" if zero(df, ["read_rate", "write_rate"]) else "ok",
+        "net": "empty" if zero(df, ["rx_rate", "tx_rate"]) else "ok" if per_process_net else "machine-wide",
+        "psi": "missing" if psi_df is None else "ok" if psi_per_process else "machine-wide",
+        "syscalls": "missing" if sc_df is None else "ok",
+    }
+    if status["psi"] != "missing" and zero(psi_df, ["some", "full"]):
+        status["psi"] = "empty"
+    return status
+
+
+def _select_panels(requested: tuple[str, ...] | None, status: dict[str, str]) -> tuple[list[str], list[str]]:
+    """Pick the panels to draw. Returns (shown, notes on what was left out).
+
+    Requested panels are drawn whenever they have data, even if flat or
+    machine-wide: the user asked. Unrequested defaults are dropped when empty
+    or machine-wide. Opt-in panels with data are listed so users find them.
+    """
+    if requested is not None:
+        shown = [p for p in requested if status[p] != "missing"]
+        notes = [f"{p} (no data)" for p in requested if status[p] == "missing"]
+    else:
+        shown = [p for p in DEFAULT_PANELS if status[p] == "ok"]
+        notes = [f"{p} ({status[p]})" for p in DEFAULT_PANELS if status[p] != "ok"]
+        notes += [p for p in PANELS if p not in DEFAULT_PANELS and status[p] != "missing"]
+    if not shown:  # never render an empty report
+        shown = ["cpu"]
+        notes = [n for n in notes if not n.startswith("cpu")]
+    return shown, notes
+
+
+def _regime_cols(shown: list[str], status: dict[str, str]) -> list[str]:
+    """Columns regime detection may use: shown panels with per-process data only."""
+    return [c for p in shown if status[p] == "ok" for c in REGIME_COLS.get(p, [])]
 
 
 def _load_records(path: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -85,6 +153,8 @@ def _to_frame(rows: list[dict[str, Any]]):
             "mem_mib": m.get("mem_rss_kb", 0) / 1024.0,
             "rx": net(m, "rx"),
             "tx": net(m, "tx"),
+            "disk_read": m.get("disk_read_bytes", 0),
+            "disk_write": m.get("disk_write_bytes", 0),
             "ebpf_rx": ebpf_net(m, "rx"),
             "ebpf_tx": ebpf_net(m, "tx"),
         }
@@ -99,6 +169,8 @@ def _to_frame(rows: list[dict[str, Any]]):
     dt = df["t"].diff()
     df["rx_rate"] = (df[rx].diff().clip(lower=0) / dt).fillna(0)
     df["tx_rate"] = (df[tx].diff().clip(lower=0) / dt).fillna(0)
+    df["read_rate"] = (df["disk_read"].diff().clip(lower=0) / dt).fillna(0)
+    df["write_rate"] = (df["disk_write"].diff().clip(lower=0) / dt).fillna(0)
     return df, per_process
 
 
@@ -162,28 +234,39 @@ def _slotted(df):
     slot = df["t"].iloc[-1] / MAX_SLOTS
     return (
         df.groupby((df["t"] // slot) * slot)
-        .agg({"cpu": "mean", "mem_mib": "mean", "rx_rate": "max", "tx_rate": "max"})
+        .agg(
+            {
+                "cpu": "mean",
+                "mem_mib": "mean",
+                **dict.fromkeys(["rx_rate", "tx_rate", "read_rate", "write_rate"], "max"),
+            }
+        )
         .rename_axis("t")
         .reset_index()
     )
 
 
-def _detect_regimes(df, max_regimes: int = 6) -> list[dict[str, Any]]:
+def _detect_regimes(df, max_regimes: int = 6, cols: list[str] | None = None) -> list[dict[str, Any]]:
     """Segment the run into piecewise-constant regimes via binary segmentation.
 
     Runs on the slotted series (<= MAX_SLOTS points), jointly over the z-scored
-    CPU / memory / network signals. Splits are accepted while the SSE gain beats
-    a BIC-style penalty; caps at ``max_regimes``. Returns [] for short runs.
+    ``cols`` (default: CPU / memory / disk / network). Only signals that are
+    shown and per-process should be passed: a hidden or machine-wide signal
+    must not split a phase. Splits are accepted while the SSE gain beats a
+    BIC-style penalty; caps at ``max_regimes``. Returns [] for short runs.
     """
     import numpy as np
 
-    cols = [c for c in ("cpu", "mem_mib", "rx_rate", "tx_rate") if c in df.columns]
+    if cols is None:
+        cols = [c for cs in REGIME_COLS.values() for c in cs]
+    cols = [c for c in cols if c in df.columns]
     n = len(df)
     if n < 8 or not cols:
         return []
 
     x = df[cols].to_numpy(dtype=float)
     std = x.std(axis=0)
+    varying = int((std > 0).sum())  # flat signals carry no information: don't let them raise the bar
     std[std == 0] = 1.0
     z = (x - x.mean(axis=0)) / std
     # prefix sums so any segment's SSE is O(1)
@@ -195,7 +278,7 @@ def _detect_regimes(df, max_regimes: int = 6) -> list[dict[str, Any]]:
         return float(np.sum(s2 - (s1 * s1) / (b - a)))
 
     min_size = max(2, n // 50)
-    penalty = len(cols) * float(np.log(n))  # ponytail: BIC-ish stop rule; tune if it over/under-splits real runs
+    penalty = max(varying, 1) * float(np.log(n))  # ponytail: BIC-ish stop rule; tune if it over/under-splits real runs
     segs = [(0, n)]
     while len(segs) < max_regimes:
         best = None  # (gain, seg_index, split_point)
@@ -216,8 +299,9 @@ def _detect_regimes(df, max_regimes: int = 6) -> list[dict[str, Any]]:
     # logical z-signals for the "dominant activity" label (net = mean of rx/tx z)
     zc = {c: z[:, i] for i, c in enumerate(cols)}
     signals = {"cpu": zc.get("cpu"), "memory": zc.get("mem_mib")}
-    if "rx_rate" in zc and "tx_rate" in zc:
-        signals["network"] = (zc["rx_rate"] + zc["tx_rate"]) / 2
+    for name, (a_col, b_col) in (("disk", ("read_rate", "write_rate")), ("network", ("rx_rate", "tx_rate"))):
+        if a_col in zc and b_col in zc:
+            signals[name] = (zc[a_col] + zc[b_col]) / 2
 
     segs.sort()
     t = df["t"].to_numpy()
@@ -378,17 +462,22 @@ def _regime_table(alt, regimes: list[dict[str, Any]], width: int):
     )
 
 
-def generate_report(input_path: str, output_path: str | None = None, fmt: str | None = None) -> str:
+def generate_report(input_path: str, output_path: str | None = None, fmt: str | None = None, panels=None) -> str:
     """Generate a report from a denet JSONL file.
 
     fmt is one of "html" (default; interactive, self-contained), "png", or "svg"
     (both static, no JS). When fmt is None it is inferred from output_path's
     extension, falling back to html. Returns the path of the written file.
+
+    panels selects the timelines: a list or comma string of cpu, mem, disk,
+    net, psi, syscalls, or "all". Default (None): cpu, mem and disk, each
+    dropped when all zero; see ``_select_panels``.
     """
+    requested = _parse_panels(panels)
     try:
         import altair as alt
     except ImportError as e:
-        raise ImportError("The report feature needs extra dependencies: pip install denet[report]") from e
+        raise ImportError("The report feature needs extra dependencies: pip install 'denet[report]'") from e
 
     meta, rows = _load_records(input_path)
     if not rows:
@@ -397,7 +486,11 @@ def generate_report(input_path: str, output_path: str | None = None, fmt: str | 
     df, per_process_net = _to_frame(rows)
     duration = df["t"].iloc[-1]
     df = _slotted(df)
-    regimes = _detect_regimes(df)
+    psi_df = _psi_frame(rows)
+    sc_df = _syscall_frame(rows)
+    status = _panel_status(df, psi_df, sc_df, per_process_net, meta)
+    shown, left_out = _select_panels(requested, status)
+    regimes = _detect_regimes(df, cols=_regime_cols(shown, status))
 
     x = alt.X("t:Q", title="elapsed (s)")
     width, height = 700, 150
@@ -416,66 +509,61 @@ def generate_report(input_path: str, output_path: str | None = None, fmt: str | 
     def timeline(chart):
         return alt.layer(band, chart) if band is not None else chart
 
-    # point=True so a 1-2 sample run still shows a visible dot (a line through one point draws nothing)
-    cpu = timeline(alt.Chart(df).mark_line(point=True).encode(x=x, y=alt.Y("cpu:Q", title="CPU (%)"))).properties(
-        width=width, height=height
-    )
-    mem = timeline(alt.Chart(df).mark_line(point=True).encode(x=x, y=alt.Y("mem_mib:Q", title="RSS (MiB)"))).properties(
-        width=width, height=height
-    )
-    net_df = df.melt(id_vars="t", value_vars=["rx_rate", "tx_rate"], var_name="dir", value_name="rate")
-    net_df["dir"] = net_df["dir"].str.removesuffix("_rate")
-    net = timeline(
-        alt.Chart(net_df)
-        .mark_line(point=True)
-        .encode(x=x, y=alt.Y("rate:Q", title="network (bytes/s)"), color=alt.Color("dir:N", title=None))
-    ).properties(width=width, height=height)
+    def line(data, y, title, color=None):
+        # point=True so a 1-2 sample run still shows a visible dot (a line through one point draws nothing)
+        enc = {"x": x, "y": alt.Y(y, title=title)}
+        if color:
+            enc["color"] = color
+        return timeline(alt.Chart(data).mark_line(point=True).encode(**enc)).properties(width=width, height=height)
 
-    panels = [cpu, mem, net]
+    def pair(cols, var, rename):  # two rate columns -> long form, colored by direction
+        long = df.melt(id_vars="t", value_vars=cols, var_name=var, value_name="rate")
+        long[var] = long[var].map(rename)
+        return long
 
-    # eBPF-only: split network by PID when >1 child moved bytes (bands omitted —
-    # this is a drill-down under the aggregate net panel, not a main timeline)
-    child_net = _per_child_net_chart(alt, _per_child_net_frame(rows), width)
-    if child_net is not None:
-        panels.append(child_net)
-
-    # memory-pressure (PSI) timeline — only when there was actual pressure
-    psi_df = _psi_frame(rows)
-    if psi_df is not None:
-        psi_long = psi_df.melt(id_vars="t", value_vars=["some", "full"], var_name="scope", value_name="pct")
-        panels.append(
-            timeline(
-                alt.Chart(psi_long)
-                .mark_line(point=True)
-                .encode(
-                    x=x,
-                    y=alt.Y("pct:Q", title="mem stall (% / 10s)"),
-                    color=alt.Color("scope:N", title="PSI"),
-                )
-            ).properties(width=width, height=height)
-        )
+    charts = []
+    for panel in shown:
+        if panel == "cpu":
+            charts.append(line(df, "cpu:Q", "CPU (%)"))
+        elif panel == "mem":
+            charts.append(line(df, "mem_mib:Q", "RSS (MiB)"))
+        elif panel == "disk":
+            disk = pair(["read_rate", "write_rate"], "dir", {"read_rate": "read", "write_rate": "write"})
+            charts.append(line(disk, "rate:Q", "disk (bytes/s)", alt.Color("dir:N", title=None)))
+        elif panel == "net":
+            net = pair(["rx_rate", "tx_rate"], "dir", {"rx_rate": "rx", "tx_rate": "tx"})
+            charts.append(line(net, "rate:Q", "network (bytes/s)", alt.Color("dir:N", title=None)))
+            # eBPF-only: split network by PID when >1 child moved bytes (bands omitted —
+            # this is a drill-down under the aggregate net panel, not a main timeline)
+            child_net = _per_child_net_chart(alt, _per_child_net_frame(rows), width)
+            if child_net is not None:
+                charts.append(child_net)
+        elif panel == "psi":
+            psi_long = psi_df.melt(id_vars="t", value_vars=["some", "full"], var_name="scope", value_name="pct")
+            charts.append(line(psi_long, "pct:Q", "mem stall (% / 10s)", alt.Color("scope:N", title="PSI")))
 
     table = _regime_table(alt, regimes, width)
     if table is not None:
-        panels.append(table)
+        charts.append(table)
 
     # eBPF-only: syscall category mix per regime
-    sc_df = _syscall_frame(rows)
-    if sc_df is not None:
+    if "syscalls" in shown:
         labels = [f"R{i + 1}" for i in range(len(regimes))] or ["R1"]
         sc_chart = _syscall_chart(alt, _syscalls_per_regime(sc_df, regimes), width, labels)
         if sc_chart is not None:
-            panels.append(sc_chart)
+            charts.append(sc_chart)
 
     # collapse whitespace (a -c script can embed newlines that break the title) and cap length
     cmd = " ".join(" ".join(meta.get("cmd", [])).split()) or "(unknown command)"
     if len(cmd) > 90:
         cmd = cmd[:87] + "..."
     subtitle = [f"{len(rows)} samples over {duration:.1f}s", _capability_line(meta, per_process_net)]
+    if left_out:
+        subtitle.append(f"not shown: {', '.join(left_out)}; choose with --panels")
     if len(rows) < 3:
         subtitle.append("warning: too few samples for a timeline — did the process exit early?")
     chart = (
-        alt.vconcat(*panels)
+        alt.vconcat(*charts)
         .resolve_scale(color="independent")  # keep net rx/tx and syscall-category legends separate
         .properties(title=alt.TitleParams(text=f"denet report: {cmd}", subtitle=subtitle, anchor="start"))
     )
@@ -507,10 +595,17 @@ def main() -> None:
             "  html  interactive, self-contained (JavaScript); the default. Open in a browser.\n"
             "  png   static raster image; opens in any viewer, editor preview, or GitHub.\n"
             "  svg   static vector image; no JavaScript.\n\n"
+            "panels:\n"
+            "  cpu, mem, disk      shown by default; each dropped when all zero\n"
+            "  net, psi, syscalls  opt-in. Without eBPF, net is machine-wide (every\n"
+            "                      process on the host), as is psi without per-process PSI\n"
+            "  Phases are detected only from shown, per-process panels.\n\n"
             "examples:\n"
             "  denet-report metrics.jsonl                 # -> metrics.html (interactive)\n"
             "  denet-report metrics.jsonl -o out.png      # static PNG (format from extension)\n"
-            "  denet-report metrics.jsonl -f svg -o r.svg # static SVG"
+            "  denet-report metrics.jsonl -f svg -o r.svg # static SVG\n"
+            "  denet-report metrics.jsonl --panels cpu,mem,net\n"
+            "  denet-report metrics.jsonl --panels all"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -523,9 +618,16 @@ def main() -> None:
         help="output format. Default: inferred from -o's extension, else html. "
         "html is interactive (JS); png and svg are static.",
     )
+    parser.add_argument(
+        "-p",
+        "--panels",
+        metavar="LIST",
+        help=f"comma-separated panels to draw ({', '.join(PANELS)}) or 'all'. "
+        f"Default: {','.join(DEFAULT_PANELS)}, hiding any that are all zero.",
+    )
     args = parser.parse_args()
     try:
-        print(generate_report(args.input, args.output, args.format))
+        print(generate_report(args.input, args.output, args.format, args.panels))
     except (ImportError, ValueError, FileNotFoundError) as e:
         raise SystemExit(f"denet-report: {e}")
 
