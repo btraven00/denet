@@ -47,7 +47,7 @@ denet attach 1234
 denet --json --out metrics.jsonl run python train.py
 
 # Turn a saved run into a report (timelines, regime detection, eBPF syscalls)
-pip install denet[report]
+pip install 'denet[report]'
 denet-report metrics.jsonl -o report.html
 ```
 
