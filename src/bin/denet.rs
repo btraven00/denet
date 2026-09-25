@@ -8,7 +8,7 @@ use denet::ProcessMonitor;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::process::exit;
+use std::process::{exit, ExitCode};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -104,23 +104,25 @@ enum Commands {
     },
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<ExitCode> {
     let args = Args::parse();
 
     if let Commands::Stats { file } = &args.command {
-        return handle_stats_command(file, &args);
+        handle_stats_command(file, &args)?;
+        return Ok(ExitCode::SUCCESS);
     }
 
-    // Handle monitoring commands
-    handle_monitoring_commands(&args)
+    // Propagate the monitored command's status so `denet run false` fails.
+    let code = handle_monitoring_commands(&args)?;
+    Ok(ExitCode::from(code.clamp(0, 255) as u8))
 }
 
 fn handle_stats_command(file: &PathBuf, args: &Args) -> Result<()> {
     generate_summary_from_file(file, args.json, args.out.as_ref())
 }
 
-/// Handle monitoring commands (run and attach)
-fn handle_monitoring_commands(args: &Args) -> Result<()> {
+/// Handle monitoring commands (run and attach); returns the process exit code
+fn handle_monitoring_commands(args: &Args) -> Result<i32> {
     let file_handles = setup_output_files(args)?;
     let monitor = create_monitor_from_args(args)?;
     execute_monitoring_with_output(monitor, file_handles, args)
@@ -214,7 +216,7 @@ fn execute_monitoring_with_output(
     mut monitor: ProcessMonitor,
     mut file_handles: OutputHandles,
     args: &Args,
-) -> Result<()> {
+) -> Result<i32> {
     // In JSON mode all human-readable UI is suppressed so stdout stays
     // parseable (e.g. piping to jq). Errors still go to stderr.
     let ui_quiet = args.quiet || args.json;
@@ -556,7 +558,14 @@ fn execute_monitoring_with_output(
         }
     }
 
-    Ok(())
+    // Child still running means we stopped early: 130 on Ctrl-C, 124 on
+    // --duration timeout (as timeout(1)). Attach has no child: 0.
+    Ok(match (&args.command, monitor.exit_code()) {
+        (_, Some(code)) => code,
+        (Commands::Run { .. }, None) if !running.load(Ordering::SeqCst) => 130,
+        (Commands::Run { .. }, None) => 124,
+        _ => 0,
+    })
 }
 
 fn color_for_cpu(cpu: f32) -> &'static str {

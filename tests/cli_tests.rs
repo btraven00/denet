@@ -104,6 +104,23 @@ fn test_cli_run_with_simple_command() {
     assert!(output.status.success());
 }
 
+#[cfg(unix)]
+#[test]
+fn test_cli_run_propagates_exit_code() {
+    let run = |cmd: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_denet"))
+            .args(["--quiet", "run"])
+            .args(cmd)
+            .status()
+            .expect("Failed to execute command")
+            .code()
+    };
+    assert_eq!(run(&["true"]), Some(0));
+    assert_eq!(run(&["false"]), Some(1));
+    assert_eq!(run(&["sh", "-c", "exit 3"]), Some(3));
+    assert_eq!(run(&["sh", "-c", "kill -9 $$"]), Some(137));
+}
+
 #[test]
 fn test_cli_run_with_output_file() {
     use tempfile::NamedTempFile;
