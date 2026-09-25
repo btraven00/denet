@@ -89,7 +89,13 @@ impl PyProcessMonitor {
             write_env,
         )?;
 
-        let mut inner = ProcessMonitor::new_with_options(
+        // With eBPF, hold the command until the probes attach (see new_held).
+        let spawn = if enable_ebpf {
+            ProcessMonitor::new_held
+        } else {
+            ProcessMonitor::new_with_options
+        };
+        let mut inner = spawn(
             cmd,
             Duration::from_millis(base_interval_ms),
             Duration::from_millis(max_interval_ms),
