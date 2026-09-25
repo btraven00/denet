@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/btraven00/denet/compare/v0.9.0...v0.9.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **conda:** build the linux package against glibc 2.28 ([06f66af](https://github.com/btraven00/denet/commit/06f66afc7b83b0e6dc9dadd1123c72f8ffd36e48))
+* **python:** release the GIL in run() and stop on zombie processes ([e7c83d9](https://github.com/btraven00/denet/commit/e7c83d90028ce55fc39bb5de51786c1a87727b02))
+
 ## [0.9.0](https://github.com/btraven00/denet/compare/v0.8.0...v0.9.0) (2026-09-25)
 
 
