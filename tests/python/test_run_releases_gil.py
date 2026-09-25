@@ -21,7 +21,9 @@ def test_run_in_thread_releases_gil_and_ends_on_zombie():
     while time.time() - start < 0.5:
         ticks += 1
         time.sleep(0.01)
-    assert ticks > 20, "main thread starved: run() is holding the GIL"
+    # A held GIL blocks this loop until run() returns (~1s), giving
+    # ~1 tick; macOS CI oversleeps sleep(0.01) badly, so only demand progress.
+    assert ticks > 3, "main thread starved: run() is holding the GIL"
 
     worker.join(timeout=5)
     try:
