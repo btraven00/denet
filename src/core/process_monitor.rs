@@ -428,7 +428,7 @@ impl ProcessMonitor {
             #[cfg(target_os = "linux")]
             cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
             #[cfg(feature = "gpu")]
-            gpu_monitor: crate::gpu::GpuMonitor::new(),
+            gpu_monitor: crate::gpu::GpuMonitor::disabled(),
             #[cfg(target_os = "linux")]
             perf_group,
             rapl_sampler: crate::rapl::RaplSampler::new(),
@@ -550,7 +550,7 @@ impl ProcessMonitor {
             #[cfg(target_os = "linux")]
             cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
             #[cfg(feature = "gpu")]
-            gpu_monitor: crate::gpu::GpuMonitor::new(),
+            gpu_monitor: crate::gpu::GpuMonitor::disabled(),
             #[cfg(target_os = "linux")]
             perf_group,
             rapl_sampler: crate::rapl::RaplSampler::new(),
@@ -996,6 +996,25 @@ impl ProcessMonitor {
     // Get the process ID
     pub fn get_pid(&self) -> usize {
         self.pid
+    }
+
+    /// Turn on GPU monitoring (off by default). Loads the NVIDIA driver library
+    /// (NVML) now, not before, so runs without it pay nothing. Returns whether a
+    /// GPU is being monitored: false when the build lacks the `gpu` feature,
+    /// NVML is missing, or no NVIDIA device exists (logged, never an error).
+    pub fn enable_gpu(&mut self) -> bool {
+        #[cfg(feature = "gpu")]
+        {
+            if !self.gpu_monitor.is_enabled() {
+                self.gpu_monitor = crate::gpu::GpuMonitor::new();
+            }
+            self.gpu_monitor.is_enabled()
+        }
+        #[cfg(not(feature = "gpu"))]
+        {
+            log::warn!("GPU monitoring requested, but denet was built without the `gpu` feature");
+            false
+        }
     }
 
     /// Set whether to include children processes in monitoring
@@ -3201,6 +3220,36 @@ mod tests {
             !monitor.is_running(),
             "pid-based monitor must report process as not running after exit"
         );
+    }
+}
+
+#[cfg(test)]
+mod gpu_opt_in_tests {
+    use super::*;
+
+    fn monitor() -> ProcessMonitor {
+        let ms = Duration::from_millis(100);
+        ProcessMonitor::new(vec!["sleep".into(), "0.2".into()], ms, ms).unwrap()
+    }
+
+    #[test]
+    fn gpu_is_off_until_enabled() {
+        let mut m = monitor();
+        #[cfg(feature = "gpu")]
+        assert!(!m.is_gpu_enabled(), "GPU monitoring must be opt-in");
+        let tree = m.sample_tree_metrics();
+        assert!(tree.aggregated.and_then(|a| a.gpu).is_none());
+    }
+
+    #[test]
+    fn enable_gpu_reports_availability_and_is_idempotent() {
+        let mut m = monitor();
+        let first = m.enable_gpu();
+        assert_eq!(m.enable_gpu(), first);
+        #[cfg(feature = "gpu")]
+        assert_eq!(m.is_gpu_enabled(), first);
+        #[cfg(not(feature = "gpu"))]
+        assert!(!first, "a build without the gpu feature can't monitor GPUs");
     }
 }
 

@@ -51,6 +51,14 @@ fn build_output_config(
     Ok(builder.build())
 }
 
+/// Enable GPU monitoring if requested (off by default: loading NVML is
+/// expensive); logs a warning when no GPU can be monitored.
+fn maybe_enable_gpu(inner: &mut ProcessMonitor, enable_gpu: bool) {
+    if enable_gpu && !inner.enable_gpu() {
+        log::warn!("GPU monitoring requested, but no NVIDIA GPU could be monitored");
+    }
+}
+
 /// Enable eBPF on a monitor if requested, warning-and-continuing on failure
 /// (missing caps, non-eBPF build) — same graceful degradation as the CLI.
 fn maybe_enable_ebpf(inner: &mut ProcessMonitor, enable_ebpf: bool) {
@@ -64,7 +72,7 @@ fn maybe_enable_ebpf(inner: &mut ProcessMonitor, enable_ebpf: bool) {
 #[pymethods]
 impl PyProcessMonitor {
     #[new]
-    #[pyo3(signature = (cmd, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false, write_env=false, enable_ebpf=false))]
+    #[pyo3(signature = (cmd, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false, write_env=false, enable_ebpf=false, enable_gpu=false))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         cmd: Vec<String>,
@@ -79,6 +87,7 @@ impl PyProcessMonitor {
         write_metadata: bool,
         write_env: bool,
         enable_ebpf: bool,
+        enable_gpu: bool,
     ) -> PyResult<Self> {
         let output_config = build_output_config(
             output_file,
@@ -105,6 +114,7 @@ impl PyProcessMonitor {
 
         // Enable child process monitoring if requested
         inner.set_include_children(include_children);
+        maybe_enable_gpu(&mut inner, enable_gpu);
         maybe_enable_ebpf(&mut inner, enable_ebpf);
 
         Ok(PyProcessMonitor {
@@ -118,7 +128,7 @@ impl PyProcessMonitor {
 
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (pid, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false, write_env=false, enable_ebpf=false))]
+    #[pyo3(signature = (pid, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false, write_env=false, enable_ebpf=false, enable_gpu=false))]
     fn from_pid(
         pid: usize,
         base_interval_ms: u64,
@@ -132,6 +142,7 @@ impl PyProcessMonitor {
         write_metadata: Option<bool>,
         write_env: Option<bool>,
         enable_ebpf: bool,
+        enable_gpu: bool,
     ) -> PyResult<Self> {
         let output_config = build_output_config(
             output_file,
@@ -151,6 +162,7 @@ impl PyProcessMonitor {
 
         // Enable child process monitoring if requested
         inner.set_include_children(include_children);
+        maybe_enable_gpu(&mut inner, enable_gpu);
         maybe_enable_ebpf(&mut inner, enable_ebpf);
 
         Ok(PyProcessMonitor {
@@ -164,7 +176,7 @@ impl PyProcessMonitor {
 
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (cmd, stdout_file=None, stderr_file=None, timeout=None, base_interval_ms=100, max_interval_ms=1000, store_in_memory=true, output_file=None, output_format="jsonl", since_process_start=false, pause_for_attachment=true, quiet=false, include_children=true, enable_ebpf=false))]
+    #[pyo3(signature = (cmd, stdout_file=None, stderr_file=None, timeout=None, base_interval_ms=100, max_interval_ms=1000, store_in_memory=true, output_file=None, output_format="jsonl", since_process_start=false, pause_for_attachment=true, quiet=false, include_children=true, enable_ebpf=false, enable_gpu=false))]
     fn execute_with_monitoring(
         py: Python,
         cmd: Vec<String>,
@@ -181,6 +193,7 @@ impl PyProcessMonitor {
         quiet: bool,
         include_children: bool,
         enable_ebpf: bool,
+        enable_gpu: bool,
     ) -> PyResult<(i32, PyProcessMonitor)> {
         use std::fs::OpenOptions;
         use std::time::Duration;
@@ -263,6 +276,7 @@ impl PyProcessMonitor {
 
         // Set include_children flag
         inner.set_include_children(include_children);
+        maybe_enable_gpu(&mut inner, enable_gpu);
         maybe_enable_ebpf(&mut inner, enable_ebpf);
 
         let monitor = PyProcessMonitor {

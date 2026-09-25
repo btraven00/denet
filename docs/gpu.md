@@ -2,6 +2,11 @@
 
 Denet provides comprehensive GPU monitoring for NVIDIA GPUs using the NVIDIA Management Library (NVML).
 
+**GPU monitoring is opt-in**: pass `--gpu` (CLI) or `enable_gpu=True` (Python).
+Loading the NVIDIA driver library maps tens of MB of driver state into denet
+(about 19 MB extra peak memory on a laptop RTX 2000), so denet doesn't load it
+unless asked. All data comes from NVML directly; denet never runs `nvidia-smi`.
+
 ## Features
 
 - **GPU Utilization**: Real-time GPU compute utilization percentage
@@ -10,21 +15,18 @@ Denet provides comprehensive GPU monitoring for NVIDIA GPUs using the NVIDIA Man
 - **Power Consumption**: GPU power usage in watts
 - **Multi-GPU Support**: Monitor all NVIDIA GPUs in the system
 - **Process-Specific**: Track GPU memory usage per monitored process
-- **Graceful Fallback**: Continues working without GPU support if NVML is unavailable
+- **Graceful Fallback**: With `--gpu` but no usable GPU/NVML, denet warns and carries on
 
 ## Requirements
 
 - NVIDIA GPU with driver support
 - NVIDIA CUDA toolkit or driver with NVML support
-- Rust compilation with `--features gpu` (Python wheels on PyPI include GPU support by default)
+- A build with the `gpu` feature: the conda package's CLI and `cargo install denet --features gpu`. The PyPI wheels are built without it.
 
 ## Installation
 
 ```bash
-# Python package (GPU support included in published wheels)
-pip install denet
-
-# Rust binary with GPU support
+# CLI with GPU support (the conda package on prefix.dev, or from source)
 cargo install denet --features gpu
 ```
 
@@ -34,12 +36,13 @@ cargo install denet --features gpu
 import denet
 import json
 
-# Create monitor with GPU support
+# Create monitor with GPU monitoring turned on (off by default)
 monitor = denet.ProcessMonitor(
     cmd=["python", "gpu_workload.py"],
     base_interval_ms=100,
     max_interval_ms=1000,
-    store_in_memory=True
+    store_in_memory=True,
+    enable_gpu=True,
 )
 
 # Check GPU availability
@@ -69,11 +72,10 @@ else:
 
 ## Command Line GPU Output
 
-When GPU monitoring is enabled, the command line interface automatically includes GPU information:
+With `--gpu`, the command line interface includes GPU information:
 
 ```bash
-# Example output with GPU monitoring
-denet run python train_model.py
+denet --gpu run python train_model.py
 CPU: 45.2% | Memory: 2.1 GB | Threads: 8 | GPU: 85%, 3.2GB | Disk: 1.2MB rd, 856KB wr
 ```
 
@@ -125,7 +127,7 @@ When the GPU exposes NVML's cumulative energy counter (`total_energy_consumption
 
 **Caveat — whole-card vs per-process.** NVML has *no* per-process energy counter;
 the counter is always the entire board. So `process_joules` is an estimate, and a
-coarser one than the CPU/RAPL equivalent: nvidia-smi per-process "SM utilization"
+coarser one than the CPU/RAPL equivalent: NVML's per-process "SM utilization"
 is the fraction of *time* a kernel was resident, not how many SMs or how much
 power it drew, and under MPS/concurrent contexts the per-process utilizations may
 not cleanly partition. Trust `package_joules`; treat `process_joules` as a guide.
@@ -135,8 +137,8 @@ needed (NVML runs as the invoking user).
 **Shared GPU.** `package_joules` is the whole board, so on a multi-tenant GPU it
 *includes* other users' and the display's draw — it is not scoped to you. But
 `process_joules` **is** scoped: it multiplies the board total by the summed GPU
-utilization of *your monitored pids only* (nvidia-smi reports SM utilization
-per-pid). So a neighbor's kernels are never charged to you — they raise the board
+utilization of *your monitored pids only* (NVML reports SM utilization
+per-pid, the same data `nvidia-smi pmon` shows). So a neighbor's kernels are never charged to you — they raise the board
 total while your util share stays what your kernels actually used, i.e. you're
 attributed your fraction of a larger pie, not their energy. Accuracy still hinges
 on the per-pid util proxy, which is coarse under MPS/MIG.
@@ -150,6 +152,7 @@ treat laptop readings as indicative, not billable.
 
 - GPU monitoring requires NVIDIA GPUs and drivers
 - NVML (NVIDIA Management Library) must be available on the system
-- If GPU support is compiled in but no GPUs are detected, denet continues working normally
-- GPU metrics are automatically included when available, no configuration needed
+- If `--gpu` is given but no GPU is detected, denet warns and continues working normally
+- Without `--gpu`, the NVIDIA library is never loaded and no GPU fields are written
+- Per-process GPU utilization needs a Maxwell or newer GPU
 - Process-specific GPU memory tracking may not be available on all driver versions

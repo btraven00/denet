@@ -1,22 +1,24 @@
 //! GPU monitoring module with per-process utilization support
 //!
-//! This module provides GPU metrics collection for NVIDIA GPUs using NVML and nvidia-smi.
-//! It separates system-wide metrics from process-specific metrics to provide accurate
-//! monitoring for individual processes.
+//! This module provides GPU metrics collection for NVIDIA GPUs through NVML, the
+//! driver's monitoring library. It separates system-wide metrics from
+//! process-specific metrics to provide accurate monitoring for individual processes.
 //!
-//! # Architecture
+//! # Opt-in
 //!
-//! - Uses NVML for system-wide GPU metrics (temperature, memory, etc.)
-//! - Falls back to nvidia-smi for per-process GPU utilization when NVML doesn't support it
-//! - Provides graceful fallback when GPU monitoring is unavailable
+//! GPU monitoring is off unless asked for (`--gpu`, `enable_gpu=True`):
+//! [`GpuMonitor::disabled`] touches nothing, and only [`GpuMonitor::new`] loads
+//! `libnvidia-ml.so`, which maps tens of MB of driver state into the process.
+//! Nothing here ever spawns `nvidia-smi`.
 //!
 //! # Per-Process vs System-Wide
 //!
 //! - System-wide: Overall GPU utilization, total memory usage, temperature
 //! - Process-specific: GPU utilization by specific PID, process GPU memory usage
 //!
-//! The key insight is that NVML's device.utilization_rates() returns system-wide
-//! utilization, not per-process. For true per-process monitoring, we need nvidia-smi.
+//! NVML's `utilization_rates()` is system-wide. Per-process SM/memory
+//! utilization comes from `nvmlDeviceGetProcessUtilization` (the data behind
+//! `nvidia-smi pmon`), read incrementally from the last timestamp seen.
 //!
 //! # Energy
 //!
@@ -33,7 +35,6 @@ use nvml_wrapper::enums::device::UsedGpuMemory;
 use nvml_wrapper::Nvml;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::process::Command;
 
 /// Per-process GPU utilization data
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -88,7 +89,7 @@ pub struct GpuEnergy {
 /// Split whole-board energy (joules over the interval) into total and the slice
 /// attributed to the monitored process(es) by summed GPU-util share (clamped).
 /// `package_joules` covers every process on the board; only `process_joules` is
-/// scoped to our pids — via `proc_utils`, which nvidia-smi reports per-pid, so
+/// scoped to our pids — via `proc_utils`, which NVML reports per-pid, so
 /// other users' load lowers our util share rather than being charged to us.
 #[cfg(any(feature = "gpu", test))]
 pub(crate) fn attribute_gpu_energy(package_joules: f64, proc_utils: &[u32]) -> GpuEnergy {
@@ -162,7 +163,11 @@ pub struct GpuMonitor {
     #[cfg(feature = "gpu")]
     device_count: u32,
     enabled: bool,
-    nvidia_smi_available: bool,
+    /// Last per-process utilization timestamp seen per device (NVML µs), so each
+    /// sample only reads samples newer than the previous one. Same `RefCell`
+    /// rationale as `prev_energy_mj`.
+    #[cfg(feature = "gpu")]
+    last_util_ts: std::cell::RefCell<HashMap<u32, u64>>,
     /// Previous cumulative energy per device (millijoules) for delta computation.
     /// `RefCell` because `sample_metrics` takes `&self`; single-threaded sampling
     /// so no contention. ponytail: RefCell over threading the state through every
@@ -173,63 +178,44 @@ pub struct GpuMonitor {
 
 impl Default for GpuMonitor {
     fn default() -> Self {
-        Self::new()
+        Self::disabled()
     }
 }
 
 impl GpuMonitor {
-    /// Create a new GPU monitor with automatic initialization
+    /// A monitor that collects nothing and loads no NVIDIA library.
+    pub fn disabled() -> Self {
+        Self {
+            #[cfg(feature = "gpu")]
+            nvml: None,
+            #[cfg(feature = "gpu")]
+            device_count: 0,
+            enabled: false,
+            #[cfg(feature = "gpu")]
+            last_util_ts: Default::default(),
+            #[cfg(feature = "gpu")]
+            prev_energy_mj: Default::default(),
+        }
+    }
+
+    /// Load NVML and enable monitoring if an NVIDIA GPU is present. Falls back
+    /// to [`Self::disabled`] (logged) when the build lacks the `gpu` feature,
+    /// the driver library is missing, or no device is found.
     pub fn new() -> Self {
         #[cfg(feature = "gpu")]
-        {
-            let nvidia_smi_available = Self::check_nvidia_smi_available();
-
-            match Self::initialize_nvml() {
-                Ok((nvml, device_count)) => {
-                    log::info!(
-                        "GPU monitoring enabled: {} device(s), nvidia-smi: {}",
-                        device_count,
-                        nvidia_smi_available
-                    );
-                    Self {
-                        nvml: Some(nvml),
-                        device_count,
-                        enabled: true,
-                        nvidia_smi_available,
-                        prev_energy_mj: Default::default(),
-                    }
-                }
-                Err(e) => {
-                    if nvidia_smi_available {
-                        log::info!("NVML failed but nvidia-smi available: {}", e);
-                        Self {
-                            nvml: None,
-                            device_count: Self::get_device_count_nvidia_smi(),
-                            enabled: true,
-                            nvidia_smi_available: true,
-                            prev_energy_mj: Default::default(),
-                        }
-                    } else {
-                        log::info!("GPU monitoring disabled: {}", e);
-                        Self {
-                            nvml: None,
-                            device_count: 0,
-                            enabled: false,
-                            nvidia_smi_available: false,
-                            prev_energy_mj: Default::default(),
-                        }
-                    }
-                }
+        match Self::initialize_nvml() {
+            Ok((nvml, device_count)) => {
+                log::info!("GPU monitoring enabled: {} device(s)", device_count);
+                return Self {
+                    nvml: Some(nvml),
+                    device_count,
+                    enabled: true,
+                    ..Self::disabled()
+                };
             }
+            Err(e) => log::info!("GPU monitoring disabled: {}", e),
         }
-
-        #[cfg(not(feature = "gpu"))]
-        {
-            Self {
-                enabled: false,
-                nvidia_smi_available: false,
-            }
-        }
+        Self::disabled()
     }
 
     /// Initialize NVML and get device count
@@ -246,33 +232,6 @@ impl GpuMonitor {
         }
 
         Ok((nvml, device_count))
-    }
-
-    /// Check if nvidia-smi is available
-    #[cfg(feature = "gpu")]
-    fn check_nvidia_smi_available() -> bool {
-        Command::new("nvidia-smi")
-            .arg("--version")
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
-    }
-
-    /// Get device count using nvidia-smi
-    #[cfg(feature = "gpu")]
-    fn get_device_count_nvidia_smi() -> u32 {
-        let output = Command::new("nvidia-smi").args(["-L"]).output();
-
-        if let Ok(output) = output {
-            if output.status.success() {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                return output_str
-                    .lines()
-                    .filter(|line| line.contains("GPU "))
-                    .count() as u32;
-            }
-        }
-        0
     }
 
     /// Check if GPU monitoring is enabled
@@ -368,47 +327,27 @@ impl GpuMonitor {
                 }
             }
 
-            // Collect per-process data using nvidia-smi if available
-            if self.nvidia_smi_available && !process_pids.is_empty() {
-                let process_utils = self.get_process_utilizations_nvidia_smi(process_pids);
+            if !process_pids.is_empty() {
+                let process_utils = self.get_process_utilizations(process_pids);
                 let process_memory = self.get_process_memory_usage(process_pids);
-
                 for &pid in process_pids {
-                    let (gpu_utilization, memory_utilization_pct) = process_utils
-                        .get(&pid)
-                        .map(|&(sm, mem)| (Some(sm), mem))
-                        .unwrap_or((None, None));
+                    let util = process_utils.get(&pid).copied();
                     let memory_usage = process_memory.get(&pid).copied();
-
-                    if gpu_utilization.is_some() || memory_usage.is_some() {
-                        has_process_data = true;
-                        collection_method = "nvidia-smi".to_string();
-
-                        process_data.push(ProcessGpuData {
-                            pid,
-                            gpu_utilization,
-                            memory_usage,
-                            memory_utilization_pct,
-                        });
+                    if util.is_none() && memory_usage.is_none() {
+                        continue;
                     }
-                }
-            }
-
-            // Fallback: get process memory from NVML if nvidia-smi failed
-            if !has_process_data && self.nvml.is_some() {
-                let process_memory = self.get_process_memory_usage(process_pids);
-                for &pid in process_pids {
-                    if let Some(memory_usage) = process_memory.get(&pid).copied() {
-                        has_process_data = true;
+                    has_process_data = true;
+                    if util.is_some() {
+                        collection_method = "nvml".to_string();
+                    } else if collection_method == "none" {
                         collection_method = "nvml-memory-only".to_string();
-
-                        process_data.push(ProcessGpuData {
-                            pid,
-                            gpu_utilization: None,
-                            memory_usage: Some(memory_usage),
-                            memory_utilization_pct: None,
-                        });
                     }
+                    process_data.push(ProcessGpuData {
+                        pid,
+                        gpu_utilization: util.map(|(sm, _)| sm),
+                        memory_usage,
+                        memory_utilization_pct: util.map(|(_, mem)| mem),
+                    });
                 }
             }
 
@@ -431,54 +370,45 @@ impl GpuMonitor {
         }
     }
 
-    /// Get per-process GPU utilization using nvidia-smi
-    /// Returns a map of pid -> (sm_utilization, mem_utilization)
+    /// Per-process SM and memory utilization (%) from NVML, newest sample per
+    /// pid since the previous call: pid -> (sm, mem). Pids with no new sample
+    /// (idle on the GPU since last time) are absent. Needs Maxwell or newer;
+    /// older devices simply return nothing.
     #[cfg(feature = "gpu")]
-    fn get_process_utilizations_nvidia_smi(
-        &self,
-        process_pids: &[u32],
-    ) -> HashMap<u32, (u32, Option<u32>)> {
-        let mut result = HashMap::new();
-
-        // Use nvidia-smi pmon to get per-process utilization
-        // Format: gpu pid type sm mem enc dec command
-        let output = Command::new("nvidia-smi")
-            .args(["pmon", "-c", "1", "-s", "u"])
-            .output();
-
-        if let Ok(output) = output {
-            if output.status.success() {
-                if let Ok(output_str) = String::from_utf8(output.stdout) {
-                    for line in output_str.lines() {
-                        let line = line.trim();
-
-                        // Skip headers and comments
-                        if line.starts_with('#') || line.is_empty() {
-                            continue;
-                        }
-
-                        let fields: Vec<&str> = line.split_whitespace().collect();
-                        if fields.len() >= 5 {
-                            // Format: gpu pid type sm_util mem_util enc_util dec_util command
-                            if let Ok(pid) = fields[1].parse::<u32>() {
-                                if process_pids.contains(&pid) {
-                                    let sm_util = fields[3].parse::<u32>().ok();
-                                    let mem_util = fields[4].parse::<u32>().ok();
-                                    if let Some(sm) = sm_util {
-                                        result.insert(pid, (sm, mem_util));
-                                    }
-                                }
-                            }
-                        }
-                    }
+    fn get_process_utilizations(&self, process_pids: &[u32]) -> HashMap<u32, (u32, u32)> {
+        let mut newest: HashMap<u32, (u64, u32, u32)> = HashMap::new();
+        let Some(ref nvml) = self.nvml else {
+            return HashMap::new();
+        };
+        let mut last_ts = self.last_util_ts.borrow_mut();
+        for device_index in 0..self.device_count {
+            let Ok(device) = nvml.device_by_index(device_index) else {
+                continue;
+            };
+            let since = last_ts.get(&device_index).copied();
+            // NotFound just means no new samples since `since`.
+            let Ok(samples) = device.process_utilization_stats(since) else {
+                continue;
+            };
+            for s in samples {
+                last_ts
+                    .entry(device_index)
+                    .and_modify(|t| *t = (*t).max(s.timestamp))
+                    .or_insert(s.timestamp);
+                if process_pids.contains(&s.pid)
+                    && newest.get(&s.pid).is_none_or(|&(t, _, _)| s.timestamp > t)
+                {
+                    newest.insert(s.pid, (s.timestamp, s.sm_util, s.mem_util));
                 }
             }
         }
-
-        result
+        newest
+            .into_iter()
+            .map(|(pid, (_, sm, mem))| (pid, (sm, mem)))
+            .collect()
     }
 
-    /// Get process GPU memory usage (works with both NVML and nvidia-smi)
+    /// Get process GPU memory usage from NVML (compute + graphics contexts)
     #[cfg(feature = "gpu")]
     fn get_process_memory_usage(&self, process_pids: &[u32]) -> HashMap<u32, u64> {
         let mut result = HashMap::new();
@@ -683,6 +613,20 @@ mod tests {
         // Should not panic regardless of GPU availability
         let _device_count = monitor.device_count();
         let _enabled = monitor.is_enabled();
+    }
+
+    /// GPU monitoring is opt-in: the default monitor must not load NVML or
+    /// collect anything (it costs tens of MB of memory per run).
+    #[test]
+    fn test_default_monitor_is_disabled_and_inert() {
+        for monitor in [GpuMonitor::default(), GpuMonitor::disabled()] {
+            assert!(!monitor.is_enabled());
+            assert_eq!(monitor.device_count(), 0);
+            let m = monitor.sample_metrics(&[std::process::id()]);
+            assert!(m.system_metrics.is_empty() && m.process_data.is_empty());
+            assert!(monitor.board_energy_delta_joules().is_none());
+            assert!(!monitor.get_summary(&[m]).enabled);
+        }
     }
 
     #[test]
