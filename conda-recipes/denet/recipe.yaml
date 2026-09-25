@@ -18,8 +18,14 @@ build:
 requirements:
   build:
     - ${{ compiler('rust') }}
+    # Link through conda's GCC against the sysroot glibc pinned in variants.yaml,
+    # not the build runner's system glibc (2.39 on ubuntu-latest), which made the
+    # binary unusable on anything older than Ubuntu 24.04 (most HPC clusters).
     - if: linux
-      then: pkg-config
+      then:
+        - ${{ compiler('c') }}
+        - ${{ stdlib('c') }}
+        - pkg-config
 
 tests:
   - if: not win
