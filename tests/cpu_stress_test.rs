@@ -49,7 +49,9 @@ if __name__ == "__main__":
     # Create workers equal to core count
     workers = []
     for _ in range({}):
-        p = multiprocessing.Process(target=cpu_stress)
+        # fork explicitly: Python 3.14 defaults to forkserver, whose workers
+        # cannot import a function defined in `python3 -c`
+        p = multiprocessing.get_context("fork").Process(target=cpu_stress)
         p.start()
         workers.append(p)
 
