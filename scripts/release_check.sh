@@ -23,11 +23,12 @@ pass() { echo "PASS  $1"; }
 fail() { echo "FAIL  $1"; FAILED=1; }
 
 # One process sends and receives ~2 MB over loopback, so its own pid (the
-# one denet seeds the BPF filter with) must see both rx and tx.
+# one denet seeds the BPF filter with) must see both rx and tx. Traffic starts
+# immediately on purpose: bytes sent before the probes attach are lost, and a
+# short job must still be counted.
 TRAFFIC='import http.server,threading,urllib.request,time
 s=http.server.HTTPServer(("127.0.0.1",0),type("H",(http.server.BaseHTTPRequestHandler,),{"do_GET":lambda h:(h.send_response(200),h.end_headers(),h.wfile.write(b"x"*(1<<20))),"log_message":lambda *a:None}))
 threading.Thread(target=s.serve_forever,daemon=True).start()
-time.sleep(0.5)
 [urllib.request.urlopen("http://127.0.0.1:%d/"%s.server_port).read() for _ in range(2)]
 time.sleep(1)'
 
@@ -109,7 +110,10 @@ else
     for k in $KERNELS; do
         echo "-- $k"
         # ponytail: one guest boot per kernel, sequential; parallelise if the list grows
-        vng --user root -r "$k" -- "$PWD/scripts/release_check.sh" --as-root "$(basename "$k")" 0 0 "$NET_BIN" || FAILED=1
+        # distro kernels in /boot are root-only (0600); vng runs as us
+        img="$OUT_DIR/$(basename "$k")"
+        sudo install -m 0644 "$k" "$img" || { fail "$k: copy"; continue; }
+        vng --user root -r "$img" -- "$PWD/scripts/release_check.sh" --as-root "$(basename "$k")" 0 0 "$NET_BIN" || FAILED=1
     done
 fi
 
