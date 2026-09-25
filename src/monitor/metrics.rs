@@ -177,6 +177,20 @@ pub struct ChildProcessMetrics {
     pub metrics: Metrics,
 }
 
+/// A child's identity, written once when it first appears in the tree and
+/// again when its argv changes (exec). `cmd` has the same shape as the
+/// metadata record's `cmd`; it falls back to `[name]` when unreadable.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ChildRecord {
+    pub ts_ms: u64,
+    pub pid: usize,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ppid: Option<usize>,
+    pub cmd: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub exe: Option<String>,
+}
+
 /// Aggregated metrics across multiple processes
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AggregatedMetrics {

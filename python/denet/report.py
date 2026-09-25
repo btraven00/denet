@@ -94,6 +94,7 @@ def _load_records(path: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """
     meta: dict[str, Any] = {}
     rows: list[dict[str, Any]] = []
+    children: dict[int, list[str]] = {}
     ebpf_seen = False
 
     with open(path) as f:
@@ -129,8 +130,12 @@ def _load_records(path: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             elif kind == "sample":
                 ebpf_seen = ebpf_seen or "ebpf" in rec
                 rows.append(rec)
+            elif kind == "child":
+                # ponytail: last argv per pid wins (post-exec, or the latest reuse of a pid)
+                children[rec["pid"]] = rec.get("cmd") or []
 
     meta["_ebpf_seen"] = ebpf_seen
+    meta["_children"] = children
     return meta, rows
 
 
@@ -174,10 +179,19 @@ def _to_frame(rows: list[dict[str, Any]]):
     return df, per_process
 
 
-def _per_child_net_frame(rows: list[dict[str, Any]]):
+def _short_cmd(cmd: list[str], width: int = 40) -> str:
+    """``/usr/bin/samtools sort -n -@ 2 in.bam`` -> ``samtools sort -n -@ 2 in.bam``, cut to ``width``."""
+    if not cmd:
+        return ""
+    s = " ".join([cmd[0].rsplit("/", 1)[-1], *cmd[1:]])
+    return s if len(s) <= width else s[: width - 1] + "…"
+
+
+def _per_child_net_frame(rows: list[dict[str, Any]], children: dict[int, list[str]] | None = None):
     """Per-PID network rates from ``ebpf.network.per_pid``.
 
-    Returns a long DataFrame ``[t, pid, dir, rate]`` (bytes/s) covering only the
+    Returns a long DataFrame ``[t, pid, proc, dir, rate]`` (bytes/s), ``proc``
+    being the PID plus its shortened argv from ``child`` records, covering only the
     PIDs that actually moved bytes, or None when the breakdown is absent or just
     one PID was active — a single active PID is already the main network panel,
     so splitting it out adds nothing. Retired children drop out of per_pid; a
@@ -207,6 +221,8 @@ def _per_child_net_frame(rows: list[dict[str, Any]]):
     df = df[df["pid"].isin(active)]
     long = df.melt(id_vars=["t", "pid"], value_vars=["rx_rate", "tx_rate"], var_name="dir", value_name="rate")
     long["dir"] = long["dir"].str.removesuffix("_rate")
+    children = children or {}
+    long["proc"] = long["pid"].map(lambda p: f"{p} {_short_cmd(children.get(p, []))}".strip())
     return long
 
 
@@ -223,7 +239,7 @@ def _per_child_net_chart(alt, long, width: int):
             color=alt.Color("dir:N", title=None),
         )
         .properties(width=width, height=80)
-        .facet(row=alt.Row("pid:N", title="per-PID network (eBPF)"))
+        .facet(row=alt.Row("proc:N", title="per-PID network (eBPF)"))
     )
 
 
@@ -535,7 +551,7 @@ def generate_report(input_path: str, output_path: str | None = None, fmt: str | 
             charts.append(line(net, "rate:Q", "network (bytes/s)", alt.Color("dir:N", title=None)))
             # eBPF-only: split network by PID when >1 child moved bytes (bands omitted —
             # this is a drill-down under the aggregate net panel, not a main timeline)
-            child_net = _per_child_net_chart(alt, _per_child_net_frame(rows), width)
+            child_net = _per_child_net_chart(alt, _per_child_net_frame(rows, meta["_children"]), width)
             if child_net is not None:
                 charts.append(child_net)
         elif panel == "psi":

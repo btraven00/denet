@@ -127,6 +127,8 @@ def test_per_child_net_breakdown(tmp_path):
 
     # two children each growing their own cumulative counters
     records = [{"kind": "metadata", "pid": 1, "cmd": ["x"], "executable": "x", "t0_ms": 0}]
+    records += [{"kind": "child", "ts_ms": 0, "pid": 111, "ppid": 1, "cmd": ["/usr/bin/curl", "-s", "a b"]}]
+    records += [{"kind": "env", "host": "h"}]  # tagged kind the loader ignores
     records += [
         _tree_with_per_pid(
             i * 100,
@@ -139,10 +141,12 @@ def test_per_child_net_breakdown(tmp_path):
     ]
     src = tmp_path / "children.jsonl"
     _write_jsonl(src, records)
-    _, rows = _load_records(str(src))
+    meta, rows = _load_records(str(src))
 
-    long = _per_child_net_frame(rows)
+    long = _per_child_net_frame(rows, meta["_children"])
     assert set(long["pid"].unique()) == {111, 222}
+    # labelled with the shortened argv from the child record; bare pid without one
+    assert set(long["proc"].unique()) == {"111 curl -s a b", "222"}
     # pid 222 rx: 2000 bytes per 0.1 s step -> 20000 bytes/s
     p222_rx = long[(long["pid"] == 222) & (long["dir"] == "rx")]["rate"]
     assert p222_rx.iloc[-1] == pytest.approx(20000)

@@ -8,7 +8,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::env::EnvRecord;
-use super::metrics::{AggregatedMetrics, Metrics, ProcessMetadata, ProcessTreeMetrics};
+use super::metrics::{
+    AggregatedMetrics, ChildRecord, Metrics, ProcessMetadata, ProcessTreeMetrics,
+};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -18,6 +20,7 @@ pub enum Record {
     Sample(Metrics),
     Tree(Box<ProcessTreeMetrics>),
     Aggregated(Box<AggregatedMetrics>),
+    Child(ChildRecord),
 }
 
 /// Wrapper used to inject `"kind"` into a struct without owning it.

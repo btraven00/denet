@@ -189,6 +189,25 @@ class TestProcessMonitorFileOutput:
         for line in lines:
             json.loads(line)
 
+    def test_child_records(self, tmp_path):
+        """Each child's full argv is written once as a `child` record, not per sample."""
+        out = tmp_path / "children.jsonl"
+        monitor = denet.ProcessMonitor(
+            cmd=["sh", "-c", "sleep 0.5 | cat"], base_interval_ms=50, max_interval_ms=50, output_file=str(out)
+        )
+        while monitor.sample_once() is not None:
+            time.sleep(0.05)
+
+        children = [json.loads(c) for c in monitor.get_children()]
+        assert all(c["kind"] == "child" and c["cmd"] for c in children)
+        sleeps = [c for c in children if c["cmd"] == ["sleep", "0.5"]]
+        assert len(sleeps) == 1, children
+        assert sleeps[0]["ppid"] == monitor.get_pid()
+        # the same records, in the file alongside the trees
+        in_file = [line for line in out.read_text().splitlines() if '"kind":"child"' in line]
+        assert [json.loads(line) for line in in_file] == children
+        assert all(json.loads(s)["kind"] == "tree" for s in monitor.get_samples())  # samples hold trees only
+
     def test_save_samples_jsonl(self, tmp_path):
         """Test saving samples in JSONL format."""
         monitor = denet.ProcessMonitor(

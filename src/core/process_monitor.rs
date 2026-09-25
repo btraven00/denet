@@ -3,7 +3,7 @@
 use crate::core::constants::delays;
 use crate::core::constants::system;
 use crate::monitor::{
-    AggregatedMetrics, Capabilities, ChildProcessMetrics, Metrics, ProcessMetadata,
+    AggregatedMetrics, Capabilities, ChildProcessMetrics, ChildRecord, Metrics, ProcessMetadata,
     ProcessTreeMetrics, Summary,
 };
 use std::fs::File;
@@ -11,7 +11,9 @@ use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use sysinfo::{self, Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System};
+use sysinfo::{
+    self, Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System, UpdateKind,
+};
 
 /// Default process refresh flags.
 ///
@@ -261,6 +263,10 @@ pub struct ProcessMonitor {
     t0_ms: u64,
     io_baseline: Option<IoBaseline>,
     child_io_baselines: std::collections::HashMap<usize, ChildIoBaseline>,
+    /// Last argv seen per child, keyed by pid, with its start time to spot PID reuse.
+    child_cmds: std::collections::HashMap<usize, (u64, Vec<String>)>,
+    /// Child records not yet taken by the writer (see `take_child_records`).
+    pending_child_records: Vec<ChildRecord>,
     since_process_start: bool,
     include_children: bool,
     enable_ebpf: bool,
@@ -416,6 +422,8 @@ impl ProcessMonitor {
             debug_mode: false,
             io_baseline: None,
             child_io_baselines: std::collections::HashMap::new(),
+            child_cmds: std::collections::HashMap::new(),
+            pending_child_records: Vec::new(),
             since_process_start,
             enable_ebpf: false,
             #[cfg(feature = "ebpf")]
@@ -538,6 +546,8 @@ impl ProcessMonitor {
             debug_mode: false,
             io_baseline: None,
             child_io_baselines: std::collections::HashMap::new(),
+            child_cmds: std::collections::HashMap::new(),
+            pending_child_records: Vec::new(),
             since_process_start,
             enable_ebpf: false,
             #[cfg(feature = "ebpf")]
@@ -1075,6 +1085,12 @@ impl ProcessMonitor {
         }
     }
 
+    /// Child records produced by `sample_tree_metrics` since the last call.
+    /// Write them before the tree record of the same sample.
+    pub fn take_child_records(&mut self) -> Vec<ChildRecord> {
+        std::mem::take(&mut self.pending_child_records)
+    }
+
     // Get all child processes recursively
     pub fn get_child_pids(&mut self) -> Vec<usize> {
         self.sys
@@ -1118,14 +1134,46 @@ impl ProcessMonitor {
             // We no longer need delays between child measurements for Linux with our new CPU sampler
             // But we still need to refresh process info for other metrics
             let pid = Pid::from_u32(*child_pid as u32);
+            // cmd/exe default to OnlyIfNotSet, which would keep the pre-exec argv
+            // forever; re-read them so exec shows up. One cmdline read + readlink per child.
             self.sys.refresh_processes_specifics(
                 ProcessesToUpdate::Some(&[pid]),
                 false,
-                process_refresh_kind(),
+                process_refresh_kind()
+                    .with_cmd(UpdateKind::Always)
+                    .with_exe(UpdateKind::Always),
             );
 
             if let Some(proc) = self.sys.process(pid) {
                 let command = proc.name().to_string_lossy().to_string();
+
+                let mut cmd: Vec<String> = proc
+                    .cmd()
+                    .iter()
+                    .map(|a| a.to_string_lossy().to_string())
+                    .collect();
+                let start = proc.start_time();
+                // Same start time = same process; a different one means the PID was reused.
+                let prev = self
+                    .child_cmds
+                    .get(child_pid)
+                    .filter(|(s, _)| *s == start)
+                    .map(|(_, c)| c);
+                if cmd.is_empty() && prev.is_none() {
+                    // Zombie, or another user's process: nothing better than the name.
+                    cmd = vec![command.clone()];
+                }
+                // Empty cmd on a known child (it became a zombie): keep what we had.
+                if !cmd.is_empty() && prev != Some(&cmd) {
+                    self.pending_child_records.push(ChildRecord {
+                        ts_ms: tree_ts_ms,
+                        pid: *child_pid,
+                        ppid: proc.parent().map(|p| p.as_u32() as usize),
+                        cmd: cmd.clone(),
+                        exe: proc.exe().map(|p| p.to_string_lossy().to_string()),
+                    });
+                    self.child_cmds.insert(*child_pid, (start, cmd));
+                }
 
                 // Get I/O stats for child
                 let current_disk_read = proc.disk_usage().total_read_bytes;
@@ -1242,6 +1290,10 @@ impl ProcessMonitor {
                 });
             }
         }
+
+        // Forget exited children so the map stays bounded on long runs.
+        let live: std::collections::HashSet<usize> = child_pids.iter().copied().collect();
+        self.child_cmds.retain(|pid, _| live.contains(pid));
 
         // Cleanup stale entries in the CPU sampler
         #[cfg(target_os = "linux")]
@@ -3372,5 +3424,78 @@ mod hold_tests {
         let meta = m.get_metadata().expect("metadata");
         assert_eq!(meta.cmd, ["sleep", "0.2"]);
         assert!(meta.executable.ends_with("sleep"), "{}", meta.executable);
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod child_record_tests {
+    use super::*;
+
+    /// Sample `sh -c script` to completion, returning every child record.
+    fn child_records(script: &str) -> (usize, Vec<ChildRecord>) {
+        let ms = Duration::from_millis(50);
+        let cmd = vec!["sh".into(), "-c".into(), script.into()];
+        let mut m = ProcessMonitor::new(cmd, ms, ms).unwrap();
+        let mut recs = Vec::new();
+        while m.is_running() {
+            m.sample_tree_metrics();
+            recs.extend(m.take_child_records());
+            std::thread::sleep(ms);
+        }
+        (m.get_pid(), recs)
+    }
+
+    #[test]
+    fn pipeline_children_get_full_argv_and_ppid() {
+        let (sh, recs) = child_records("sleep 1 | sort -n | cat");
+        for want in [&["sort", "-n"][..], &["cat"], &["sleep", "1"]] {
+            let r = recs.iter().find(|r| r.cmd == want);
+            let r = r.unwrap_or_else(|| panic!("no record for {want:?}: {recs:?}"));
+            assert_eq!(r.ppid, Some(sh));
+        }
+        assert!(recs
+            .iter()
+            .all(|r| !r.cmd.is_empty() && !r.cmd[0].is_empty()));
+    }
+
+    #[test]
+    fn exec_emits_second_record_once() {
+        let (_, recs) = child_records(r#"bash -c "sleep 0.4; exec sleep 1" "a b"; true"#);
+        let bash: Vec<_> = recs.iter().filter(|r| r.cmd[0] == "bash").collect();
+        assert_eq!(bash.len(), 1, "{recs:?}");
+        // an argument with a space stays one element
+        assert_eq!(bash[0].cmd.last().unwrap(), "a b");
+        // (a sample may also catch the fork before bash's exec, still running sh)
+        let after: Vec<_> = recs
+            .iter()
+            .filter(|r| r.pid == bash[0].pid)
+            .skip_while(|r| r.cmd[0] != "bash")
+            .collect();
+        assert_eq!(
+            after.len(),
+            2,
+            "one record before exec, one after: {recs:?}"
+        );
+        assert_eq!(after[1].cmd, ["sleep", "1"]);
+    }
+
+    #[test]
+    fn child_record_roundtrips_as_tagged_line() {
+        let r = ChildRecord {
+            ts_ms: 1,
+            pid: 2,
+            ppid: Some(1),
+            cmd: vec!["echo".into(), "a b".into()],
+            exe: None,
+        };
+        let line = crate::monitor::tagged_json("child", &r).unwrap();
+        assert_eq!(
+            line,
+            r#"{"kind":"child","ts_ms":1,"pid":2,"ppid":1,"cmd":["echo","a b"]}"#
+        );
+        match crate::monitor::record::parse_record(&line) {
+            Some(crate::monitor::Record::Child(back)) => assert_eq!(back, r),
+            other => panic!("{other:?}"),
+        }
     }
 }

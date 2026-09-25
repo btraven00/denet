@@ -113,6 +113,9 @@ exit_code, monitor = denet.execute_with_monitoring(
 
 # The env record (host/NUMA/affinity) is available on demand from any monitor:
 env_line = monitor.get_env()  # tagged JSON: {"kind":"env","host":...,"numa":{...},"affinity_inherited":"0-127",...}
+# Each child's full command line, ppid and exe, as tagged `child` records (JSON strings),
+# recorded once per child (and again after an exec). Also written to output_file.
+children = [json.loads(c) for c in monitor.get_children()]  # [{"kind":"child","pid":...,"cmd":["sort","-n"],...}]
 # To have it written automatically as the first line of the output file, use
 # ProcessMonitor(..., write_env=True) directly — execute_with_monitoring does
 # not currently expose this kwarg.
