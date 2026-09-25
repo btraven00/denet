@@ -49,12 +49,40 @@ pixi run test-all
 
 ### Pre-release hardware check
 
-CI can't exercise GPU, RAPL or eBPF end to end. Before tagging, run this on a Linux machine with a GPU:
+CI has no GPU and doesn't run the root-only eBPF tests, so the features that
+matter most on real machines (GPU, RAPL energy, per-process network bytes via
+eBPF) aren't covered by CI. Before tagging a release, run
+`scripts/release_check.sh` on a Linux machine, ideally one with an NVIDIA GPU.
+
+**Requirements:** `sudo`, `jq`, `python3`, and for the kernel matrix
+[virtme-ng](https://github.com/arighi/virtme-ng) (`pipx install virtme-ng`,
+which uses QEMU). Without `vng` the kernel step is skipped.
 
 ```bash
-./scripts/release_check.sh              # uses sudo; kernel matrix needs virtme-ng
-./scripts/release_check.sh '/boot/vmlinuz-6.8*'   # limit the kernel matrix
+./scripts/release_check.sh                       # host + every kernel in /boot
+./scripts/release_check.sh /boot/vmlinuz-6.8*    # host + selected installed kernels
+./scripts/release_check.sh v5.15 v6.1 v6.6       # host + upstream kernels (downloaded)
+./scripts/release_check.sh --help
 ```
+
+What each step checks:
+
+| Step | Runs | Fails when |
+|---|---|---|
+| 1. `cargo test` | Full Rust suite, unprivileged | Any test fails |
+| 2. eBPF permissions | `scripts/test_ebpf_caps.sh --with-root` on the host kernel: no capabilities (A), `setcap` (B), root (C). B and C include the root-only tests | eBPF doesn't degrade cleanly without permissions, or doesn't count bytes with them |
+| 3. End to end | `denet run --enable-ebpf` as root on a job that moves 2 MB over loopback from its first instant | eBPF network bytes are missing. Also a missing GPU if `nvidia-smi` works, and missing RAPL energy if `/sys/class/powercap/intel-rapl:0` exists |
+| 4. Kernels | Step 2's root-only network tests and step 3's eBPF check, in a VM per kernel | As steps 2 and 3, minus GPU/RAPL (VMs have neither) |
+
+Kernel arguments can be image files (distro kernels from `/boot` are copied
+to a readable temp file, since they're root-only) or upstream versions such
+as `v6.6.17`. `vng` downloads versions once from the
+[Ubuntu mainline builds](https://kernel.ubuntu.com/mainline/). Use them for
+kernels you don't have installed, e.g. the LTS series HPC clusters run.
+
+Each check prints `PASS` or `FAIL` with the reason. When the end-to-end run
+fails, the last lines of denet's stderr are shown under it. The script exits
+non-zero if anything failed.
 
 ### Linting and Formatting
 
