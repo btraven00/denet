@@ -197,9 +197,14 @@ Releases are driven by [release-please](https://github.com/googleapis/release-pl
    cargo update -p denet   # refresh Cargo.lock
    ```
 
-3. Merge the release PR. release-please tags `vX.Y.Z` and creates the GitHub release.
+3. On a Linux machine with a GPU, run the [pre-release hardware check](#pre-release-hardware-check) against the release PR's code. CI can't cover GPU, RAPL or eBPF, so don't merge until it prints `ALL CHECKS PASSED`:
+   ```bash
+   ./scripts/release_check.sh /boot/vmlinuz-$(uname -r) v5.15 v6.6
+   ```
 
-4. The release triggers `publish.yml` (PyPI) and the tag triggers `conda-release.yml` (prefix.dev).
+4. Merge the release PR. release-please tags `vX.Y.Z` and creates the GitHub release.
+
+5. The release triggers `publish.yml` (PyPI) and the tag triggers `conda-release.yml` (prefix.dev).
 
 To rebuild a release by hand, run `gh workflow run publish.yml --ref main`.
 
