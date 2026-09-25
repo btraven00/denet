@@ -69,6 +69,21 @@ jobs:
         env:
           PKG_VERSION: ${{ env.PKG_VERSION }}
 
+      # The recipe's own test would pass on the runner (glibc 2.39) even for a
+      # binary that needs 2.39. Install into an old-glibc distro (RHEL/Rocky 8,
+      # typical of HPC) before uploading, so that cannot ship again.
+      - name: Smoke-test on glibc 2.28 (linux)
+        if: matrix.target.platform == 'linux-64'
+        run: |
+          docker run --rm -v "$PWD/output:/ch:ro" rockylinux:8 bash -c '
+            set -e
+            dnf -q -y install bzip2 >/dev/null
+            curl -fsSL https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C /tmp bin/micromamba
+            /tmp/bin/micromamba create -q -y -p /tmp/env -c file:///ch -c conda-forge denet
+            /tmp/env/bin/denet --version
+            /tmp/env/bin/denet -o /tmp/t.jsonl -q run sh -c "sleep 0.3"
+            grep -q "\"kind\":\"metadata\"" /tmp/t.jsonl'
+
       - name: Upload to prefix.dev (unix)
         if: runner.os != 'Windows'
         run: |
