@@ -315,55 +315,12 @@ impl PyProcessMonitor {
         Ok((exit_code, monitor))
     }
 
-    fn run(&mut self) -> PyResult<()> {
-        use std::fs::OpenOptions;
-        use std::io::Write;
-        use std::thread::sleep;
-
-        // Open file if output_file is specified
-        let mut file_handle = if let Some(path) = &self.output_config.output_file {
-            let file = OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(path)
-                .map_err(map_io_error)?;
-            Some(file)
-        } else {
-            None
-        };
-
-        while self.inner.is_running() {
-            let json = if self.inner.get_include_children() {
-                let tree_metrics = self.inner.sample_tree_metrics();
-                tagged_json("tree", &tree_metrics)
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
-            } else {
-                match self.inner.sample_metrics() {
-                    Some(metrics) => tagged_json("sample", &metrics)
-                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?,
-                    None => {
-                        sleep(self.inner.adaptive_interval());
-                        continue;
-                    }
-                }
-            };
-
-            if self.output_config.store_in_memory {
-                self.samples.push(json.clone());
-            }
-
-            if let Some(file) = &mut file_handle {
-                writeln!(file, "{json}").map_err(map_io_error)?;
-            } else if !self.output_config.quiet {
-                println!("{json}");
-            }
-
-            sleep(self.inner.adaptive_interval());
-        }
-        Ok(())
+    fn run(&mut self, py: Python<'_>) -> PyResult<()> {
+        // The loop sleeps between samples for the whole life of the process;
+        // holding the GIL here would freeze every other Python thread (and a
+        // caller that must reap the child could never do so).
+        py.detach(|| self.run_loop())
     }
-
     fn sample_once(&mut self) -> PyResult<Option<String>> {
         use std::fs::OpenOptions;
         use std::io::Write;
@@ -618,4 +575,55 @@ pub fn register_python_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Python profile decorator implementation is now moved to Python layer
 
     Ok(())
+}
+
+impl PyProcessMonitor {
+    fn run_loop(&mut self) -> PyResult<()> {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::thread::sleep;
+
+        // Open file if output_file is specified
+        let mut file_handle = if let Some(path) = &self.output_config.output_file {
+            let file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(path)
+                .map_err(map_io_error)?;
+            Some(file)
+        } else {
+            None
+        };
+
+        while self.inner.is_running() {
+            let json = if self.inner.get_include_children() {
+                let tree_metrics = self.inner.sample_tree_metrics();
+                tagged_json("tree", &tree_metrics)
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
+            } else {
+                match self.inner.sample_metrics() {
+                    Some(metrics) => tagged_json("sample", &metrics)
+                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?,
+                    None => {
+                        sleep(self.inner.adaptive_interval());
+                        continue;
+                    }
+                }
+            };
+
+            if self.output_config.store_in_memory {
+                self.samples.push(json.clone());
+            }
+
+            if let Some(file) = &mut file_handle {
+                writeln!(file, "{json}").map_err(map_io_error)?;
+            } else if !self.output_config.quiet {
+                println!("{json}");
+            }
+
+            sleep(self.inner.adaptive_interval());
+        }
+        Ok(())
+    }
 }
