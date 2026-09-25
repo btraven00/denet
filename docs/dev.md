@@ -2,9 +2,11 @@
 
 This document contains information for developers working on the denet project, including development setup, workflows, and release processes.
 
+> **New here?** Start with [docs/architecture.md](architecture.md) for the data-flow diagram and a walkthrough of how a sample travels from the monitored process tree through the collectors and the adaptive sampling loop to the JSONL stream and the three interfaces. This document covers how to build and release the code; that one covers how it fits together.
+
 ## Requirements
 
-- Python 3.6+
+- Python 3.9+
 - Rust (for development)
 - [pixi](https://prefix.dev/docs/pixi/overview) (for development only)
 - **eBPF features**: Linux kernel 5.5+, `clang` at build time, `CAP_BPF` + `CAP_PERFMON` or root at runtime
@@ -70,7 +72,9 @@ pixi run fmt
 The project uses GitHub Actions for CI/CD. The workflows are defined in `.github/workflows/`:
 
 - **test.yml:** Runs tests on multiple platforms and Python versions
-- **publish.yml:** Publishes packages to PyPI on release
+- **release-please.yml:** Opens the release PR (CHANGELOG only) and tags the release when it merges
+- **publish.yml:** Builds wheels (Linux manylinux_2_28 with eBPF, macOS) and the sdist, then publishes to PyPI when a release is created
+- **conda-release.yml:** Publishes the conda package to prefix.dev on `v*` tags
 
 ### Testing GitHub Actions Locally
 
@@ -101,9 +105,6 @@ The project includes scripts to help with development:
 # Update version numbers across the project
 ./scripts/update_version.sh 0.1.2
 
-# Run tests in CI environment
-./ci/run_tests.sh
-
 # Check code style and lint
 pixi run lint
 
@@ -116,62 +117,52 @@ pixi run fmt
 
 ## Project Structure
 
+For what these components *do* and how they relate at runtime, see
+[docs/architecture.md](architecture.md); the tree below is a build-level
+orientation only.
+
 ```
 denet/
 ├── src/              # Rust source code (primary development focus)
-│   ├── lib.rs        # Core library and Python binding interface (PyO3)
-│   ├── bin/          # CLI executables
-│   │   └── denet.rs  # Command-line interface implementation
-│   └── process_monitor.rs  # Core implementation with Rust tests
-├── python/           # Python package
-│   └── denet/        # Python module
-│       ├── __init__.py    # Python API (decorator and context manager)
-│       └── analysis.py    # Analysis utilities
-├── tests/            # Tests
+│   ├── lib.rs        # Library root
+│   ├── python.rs     # PyO3 bindings
+│   ├── bin/          # CLI (denet.rs) and diagnostic binaries
+│   ├── core/         # Process tree discovery and per-process sampling
+│   ├── monitor/      # Metrics, Summary, JSONL records, env capture
+│   ├── cpu_sampler.rs, perf/, psi/, rapl/   # Linux collectors
+│   ├── gpu/          # NVML collector (feature: gpu)
+│   ├── ebpf/         # eBPF collectors and BPF programs (feature: ebpf)
+│   └── symbolication/  # Stack symbolication for off-CPU profiling
+├── python/denet/     # Python package
+│   ├── __init__.py   # Python API (ProcessMonitor, execute_with_monitoring)
+│   ├── analysis.py   # Analysis utilities
+│   └── report.py     # denet-report (HTML/PNG/SVG)
+├── tests/            # Rust integration tests (*.rs)
 │   ├── python/       # Python binding tests
-│   │   ├── test_convenience.py  # Tests for decorator and context manager
-│   │   └── test_process_monitor.py  # Tests for ProcessMonitor class
 │   └── cli/          # Command-line interface tests
-├── .github/          # GitHub configuration
-│   └── workflows/    # GitHub Actions workflows for CI/CD
-├── ci/               # Continuous Integration scripts
+├── .github/workflows/  # CI, release and publish workflows
 ├── scripts/          # Helper scripts for development
 ├── Cargo.toml        # Rust dependencies and configuration
-└── pyproject.toml    # Python build configuration (maturin settings)
+└── pyproject.toml    # Python build configuration (maturin) and pixi tasks
 ```
 
 ## Release Process
 
-1. Update version numbers:
+Releases are driven by [release-please](https://github.com/googleapis/release-please) from conventional commits on `main`.
+
+1. release-please keeps a release PR open that updates `CHANGELOG.md`. It does **not** bump package versions (`release-type: simple`).
+
+2. Before merging it, bump the version everywhere in a separate PR to `main`. Don't push to the release-please branch, because it gets regenerated and your commit is lost:
    ```bash
    ./scripts/update_version.sh X.Y.Z
+   cargo update -p denet   # refresh Cargo.lock
    ```
 
-2. Update CHANGELOG.md with the changes in the new version
+3. Merge the release PR. release-please tags `vX.Y.Z` and creates the GitHub release.
 
-3. Commit the changes:
-   ```bash
-   git commit -am "Bump version to X.Y.Z"
-   ```
+4. The release triggers `publish.yml` (PyPI) and the tag triggers `conda-release.yml` (prefix.dev).
 
-4. Create a tag:
-   ```bash
-   git tag -a vX.Y.Z -m "Version X.Y.Z"
-   ```
-
-5. Push changes and tags:
-   ```bash
-   git push && git push --tags
-   ```
-
-6. Create a GitHub release
-   - Go to Releases on the GitHub repository
-   - Draft a new release
-   - Choose the tag you just created
-   - Add release notes
-   - Publish release
-
-7. The GitHub Actions workflow will automatically build and publish to PyPI
+To rebuild a release by hand, run `gh workflow run publish.yml --ref main`.
 
 ## Stack Traces and Symbolication
 
@@ -189,7 +180,7 @@ See `docs/offcpu.md` for the full off-CPU architecture and known limitations.
 
 ### Rust
 
-- Follow the [Rust Style Guide](https://doc.rust-lang.org/1.0.0/style/README.html)
+- Follow the [Rust Style Guide](https://doc.rust-lang.org/style-guide/)
 - Use `cargo fmt` to format code
 - Use `cargo clippy` to catch common mistakes
 
