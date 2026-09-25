@@ -111,7 +111,7 @@ pixi run fmt
 The project uses GitHub Actions for CI/CD. The workflows are defined in `.github/workflows/`:
 
 - **test.yml:** Runs tests on multiple platforms and Python versions
-- **release-please.yml:** Opens the release PR (CHANGELOG only) and tags the release when it merges
+- **release-please.yml:** Opens the release PR (CHANGELOG and version bumps) and tags the release when it merges
 - **publish.yml:** Builds wheels (Linux manylinux_2_28 with eBPF, macOS) and the sdist, then publishes to PyPI when a release is created
 - **conda-release.yml:** Publishes the conda package to prefix.dev on `v*` tags
 
@@ -140,9 +140,6 @@ The project includes scripts to help with development:
 ```bash
 # Build and install the extension in the current Python environment
 ./scripts/build_and_install.sh
-
-# Update version numbers across the project
-./scripts/update_version.sh 0.1.2
 
 # Check code style and lint
 pixi run lint
@@ -189,22 +186,16 @@ denet/
 
 Releases are driven by [release-please](https://github.com/googleapis/release-please) from conventional commits on `main`.
 
-1. release-please keeps a release PR open that updates `CHANGELOG.md`. It does **not** bump package versions (`release-type: simple`).
+1. release-please keeps a release PR open that updates `CHANGELOG.md` and bumps the version in `Cargo.toml`, `Cargo.lock`, `pyproject.toml` (`[project]` and `[tool.pixi.workspace]`), `CITATION.cff` and `flake.nix`. The files and fields are listed in `release-please-config.json`; the last released version is in `.release-please-manifest.json`. Don't push to the release-please branch: it gets regenerated and your commit is lost.
 
-2. Before merging it, bump the version everywhere in a separate PR to `main`. Don't push to the release-please branch, because it gets regenerated and your commit is lost:
-   ```bash
-   ./scripts/update_version.sh X.Y.Z
-   cargo update -p denet   # refresh Cargo.lock
-   ```
-
-3. On a Linux machine with a GPU, run the [pre-release hardware check](#pre-release-hardware-check) against the release PR's code. CI can't cover GPU, RAPL or eBPF, so don't merge until it prints `ALL CHECKS PASSED`:
+2. On a Linux machine with a GPU, run the [pre-release hardware check](#pre-release-hardware-check) against the release PR's code. CI can't cover GPU, RAPL or eBPF, so don't merge until it prints `ALL CHECKS PASSED`:
    ```bash
    ./scripts/release_check.sh /boot/vmlinuz-$(uname -r) v5.15 v6.6
    ```
 
-4. Merge the release PR. release-please tags `vX.Y.Z` and creates the GitHub release.
+3. Merge the release PR. release-please tags `vX.Y.Z` and creates the GitHub release.
 
-5. The release triggers `publish.yml` (PyPI) and the tag triggers `conda-release.yml` (prefix.dev).
+4. The release triggers `publish.yml` (PyPI) and the tag triggers `conda-release.yml` (prefix.dev).
 
 To rebuild a release by hand, run `gh workflow run publish.yml --ref main`.
 

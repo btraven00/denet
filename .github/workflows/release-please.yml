@@ -19,6 +19,5 @@ jobs:
           # (PAT) and configured it as a GitHub action secret named
           # `MY_RELEASE_PLEASE_TOKEN` (this secret name is not important).
           token: ${{ secrets.MY_RELEASE_PLEASE_TOKEN }}
-          # this is a built-in strategy in release-please, see "Action Inputs"
-          # for more options
-          release-type: simple
+          # versions are bumped per release-please-config.json (Cargo.toml,
+          # Cargo.lock, pyproject.toml, CITATION.cff, flake.nix)
