@@ -133,6 +133,10 @@ pub struct GpuSummary {
     pub max_process_gpu_utilization: Option<u32>,
     /// Total process GPU memory usage (GB)
     pub process_memory_usage_gb: f64,
+    /// Maximum GPU temperature observed across all devices (degrees Celsius).
+    /// `None` when the driver did not report temperature for any sample.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_temperature_c: Option<u32>,
 }
 
 impl Default for GpuSummary {
@@ -145,6 +149,7 @@ impl Default for GpuSummary {
             max_system_gpu_utilization: 0,
             max_process_gpu_utilization: None,
             process_memory_usage_gb: 0.0,
+            max_temperature_c: None,
         }
     }
 }
@@ -517,14 +522,35 @@ impl GpuMonitor {
         if !self.enabled || metrics_history.is_empty() {
             return GpuSummary::default();
         }
+        let mut summary = summarize_samples(metrics_history);
+        // Live path: trust the driver's device count over what the samples show.
+        summary.device_count = self.device_count();
+        summary
+    }
+}
 
+/// Summarise already-collected GPU samples without consulting NVML.
+///
+/// `GpuMonitor::get_summary` requires a live, initialised NVML handle, which is
+/// wrong when rebuilding a summary from a stored JSONL run: `denet stats` is
+/// routinely executed on a login node or laptop that has no GPU, and gating on
+/// live NVML silently discarded GPU data that was present in the file. This
+/// function derives everything, including the device count, from the samples.
+pub fn summarize_samples(metrics_history: &[GpuMetrics]) -> GpuSummary {
+    if metrics_history.is_empty() {
+        return GpuSummary::default();
+    }
+    {
         let mut max_system_gpu_utilization = 0;
         let mut max_process_gpu_utilization = None;
         let mut total_memory_gb = 0.0;
         let mut peak_used_memory_gb = 0.0;
         let mut max_process_memory = 0;
+        let mut max_temperature_c: Option<u32> = None;
+        let mut device_count = 0u32;
 
         for metrics in metrics_history {
+            device_count = device_count.max(metrics.system_metrics.len() as u32);
             // Track maximum system utilization
             for system_metric in &metrics.system_metrics {
                 if let Some(util) = system_metric.system_utilization_gpu {
@@ -538,6 +564,9 @@ impl GpuMonitor {
                     if used_gb > peak_used_memory_gb {
                         peak_used_memory_gb = used_gb;
                     }
+                }
+                if let Some(temp) = system_metric.temperature {
+                    max_temperature_c = Some(max_temperature_c.unwrap_or(0).max(temp));
                 }
             }
 
@@ -555,12 +584,13 @@ impl GpuMonitor {
 
         GpuSummary {
             enabled: true,
-            device_count: self.device_count(),
+            device_count,
             total_memory_gb,
             peak_used_memory_gb,
             max_system_gpu_utilization,
             max_process_gpu_utilization,
             process_memory_usage_gb: (max_process_memory as f64) / (1024.0 * 1024.0 * 1024.0),
+            max_temperature_c,
         }
     }
 }
@@ -601,6 +631,51 @@ impl GpuMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression test: rebuilding a summary from stored samples must not
+    /// depend on a live NVML handle. `denet stats run.jsonl` is routinely run
+    /// on a machine with no GPU, and the summary previously came back empty,
+    /// silently discarding GPU data that was present in the file.
+    #[test]
+    fn test_summarize_samples_without_live_nvml() {
+        let sample = GpuMetrics {
+            system_metrics: vec![SystemGpuMetrics {
+                device_index: 0,
+                name: "test-device".to_string(),
+                system_utilization_gpu: Some(73),
+                system_utilization_memory: Some(40),
+                memory_total: Some(8 * 1024 * 1024 * 1024),
+                memory_used: Some(2 * 1024 * 1024 * 1024),
+                memory_free: Some(6 * 1024 * 1024 * 1024),
+                temperature: Some(61),
+                power_usage: Some(120),
+            }],
+            process_data: vec![],
+            has_process_data: false,
+            collection_method: "test".to_string(),
+            gpu_energy: None,
+        };
+
+        let summary = summarize_samples(std::slice::from_ref(&sample));
+
+        assert!(
+            summary.enabled,
+            "summary must be enabled from samples alone"
+        );
+        assert_eq!(
+            summary.device_count, 1,
+            "device count comes from the samples"
+        );
+        assert_eq!(summary.max_system_gpu_utilization, 73);
+        assert_eq!(summary.max_temperature_c, Some(61));
+        assert!((summary.peak_used_memory_gb - 2.0).abs() < 1e-6);
+        assert!((summary.total_memory_gb - 8.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_summarize_samples_empty_is_disabled() {
+        assert!(!summarize_samples(&[]).enabled);
+    }
 
     #[test]
     fn test_gpu_monitor_creation() {

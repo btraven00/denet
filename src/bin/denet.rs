@@ -823,6 +823,9 @@ fn summary_rows(summary: &Summary) -> Vec<(&'static str, String)> {
             if let Some(proc_util) = gpu.max_process_gpu_utilization {
                 rows.push(("Peak Process GPU", format!("{}%", proc_util)));
             }
+            if let Some(temp) = gpu.max_temperature_c {
+                rows.push(("Peak GPU Temperature", format!("{temp} C")));
+            }
             if gpu.process_memory_usage_gb > 0.0 {
                 rows.push((
                     "Process GPU Memory",
