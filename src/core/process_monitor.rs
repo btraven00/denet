@@ -966,6 +966,17 @@ impl ProcessMonitor {
         })
     }
 
+    /// Exit code of a spawned child once it has exited; shell convention
+    /// 128+signal for signal deaths. None while running or when attached.
+    pub fn exit_code(&mut self) -> Option<i32> {
+        let status = self.child.as_mut()?.try_wait().ok()??;
+        #[cfg(unix)]
+        if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&status) {
+            return Some(128 + sig);
+        }
+        status.code()
+    }
+
     pub fn is_running(&mut self) -> bool {
         self.release_hold();
         // If we have a child process, use try_wait to check its status
@@ -3431,6 +3442,8 @@ mod hold_tests {
 mod child_record_tests {
     use super::*;
 
+    const MS: Duration = Duration::from_millis(50);
+
     /// Sample `sh -c script` to completion, returning every child record.
     fn child_records(script: &str) -> (usize, Vec<ChildRecord>) {
         let ms = Duration::from_millis(50);
@@ -3477,6 +3490,26 @@ mod child_record_tests {
             "one record before exec, one after: {recs:?}"
         );
         assert_eq!(after[1].cmd, ["sleep", "1"]);
+    }
+
+    #[test]
+    fn exit_code_follows_shell_convention() {
+        let code = |script: &str| {
+            let cmd = vec!["sh".into(), "-c".into(), script.into()];
+            let mut m = ProcessMonitor::new(cmd, MS, MS).unwrap();
+            while m.is_running() {
+                std::thread::sleep(MS);
+            }
+            m.exit_code()
+        };
+        assert_eq!(code("exit 3"), Some(3));
+        assert_eq!(code("kill -9 $$"), Some(137));
+        // attached: no child handle to wait on
+        let pid = std::process::id() as usize;
+        assert_eq!(
+            ProcessMonitor::from_pid(pid, MS, MS).unwrap().exit_code(),
+            None
+        );
     }
 
     #[test]
