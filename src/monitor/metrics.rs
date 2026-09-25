@@ -655,8 +655,7 @@ impl Summary {
             if gpu_samples.is_empty() {
                 None
             } else {
-                let monitor = crate::gpu::GpuMonitor::new();
-                let summary = monitor.get_summary(&gpu_samples);
+                let summary = crate::gpu::summarize_samples(&gpu_samples);
                 if summary.enabled {
                     Some(summary)
                 } else {
@@ -718,8 +717,7 @@ impl Summary {
             if gpu_samples.is_empty() {
                 None
             } else {
-                let monitor = crate::gpu::GpuMonitor::new();
-                let summary = monitor.get_summary(&gpu_samples);
+                let summary = crate::gpu::summarize_samples(&gpu_samples);
                 if summary.enabled {
                     Some(summary)
                 } else {
