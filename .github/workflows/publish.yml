@@ -11,68 +11,140 @@ on:
         default: ""
 
 jobs:
-  build_and_publish:
-    name: Build and publish to PyPI
+  # Linux wheels are built INSIDE a manylinux_2_28 container, not on the runner.
+  # Building bare on ubuntu-latest links against the runner's glibc (2.39 on
+  # 24.04), and maturin then tags the wheel manylinux_2_39. Any system older
+  # than Ubuntu 24.04 — which is most HPC clusters, typically RHEL/Rocky 8 at
+  # glibc 2.28 — finds no compatible wheel and falls back to the sdist, which
+  # needs a Rust toolchain to build. That is what made `pip install denet` fail
+  # for the reviewer. The tag cannot simply be lowered: the binary really does
+  # link 2.39 symbols, so auditwheel rejects it. It has to be built older.
+  build_linux:
+    name: Build Linux wheel (manylinux_2_28)
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write # IMPORTANT: this permission is mandatory for trusted publishing
-
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install dependencies
+      - name: Update version if provided
+        if: github.event.inputs.version != ''
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install maturin twine
+          sed -i "s/^version = \".*\"/version = \"${{ github.event.inputs.version }}\"/" pyproject.toml
 
-      - name: Install eBPF build deps
-        # clang compiles the BPF programs baked into the Linux wheel (libbpf
-        # headers are vendored, so no -dev package needed). Runtime needs no
-        # clang — only CAP_BPF to actually attach.
-        run: sudo apt-get update && sudo apt-get install -y clang llvm
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
+        with:
+          target: x86_64
+          manylinux: "2_28"
+          args: --release --features python,ebpf
+          # manylinux_2_28 is AlmaLinux 8; clang compiles the BPF programs baked
+          # into the Linux wheel (libbpf headers are vendored). Runtime needs no
+          # clang — only CAP_BPF to actually attach.
+          before-script-linux: dnf install -y clang llvm
+
+      - name: Verify the wheel is not tagged against a newer glibc
+        # Guard rail: fail loudly rather than silently shipping an unusable tag.
+        run: |
+          ls -la target/wheels/
+          if ls target/wheels/*.whl | grep -qE "manylinux_2_(3[0-9]|[4-9][0-9])"; then
+            echo "::error::wheel tagged against glibc newer than 2.28"
+            exit 1
+          fi
+          ls target/wheels/*manylinux_2_28*.whl > /dev/null
+
+      - name: Test install on glibc 2.28
+        # Installing on the runner only proves it works on glibc 2.39, which was
+        # never in question. Test where it actually failed.
+        run: |
+          docker run --rm -v "$PWD/target/wheels:/w" \
+            quay.io/pypa/manylinux_2_28_x86_64 \
+            /bin/bash -c '/opt/python/cp313-cp313/bin/python -m pip install /w/*.whl \
+              && /opt/python/cp313-cp313/bin/python -c "import denet; print(denet.__version__)"'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-x86_64
+          path: target/wheels/*.whl
+
+  build_macos:
+    name: Build macOS wheel (${{ matrix.target }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Update version if provided
+        if: github.event.inputs.version != ''
+        run: |
+          sed -i '' "s/^version = \".*\"/version = \"${{ github.event.inputs.version }}\"/" pyproject.toml
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
+        with:
+          target: ${{ matrix.target }}
+          # No eBPF on macOS: the backend is Linux-only.
+          args: --release --features python
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-${{ matrix.target }}
+          path: target/wheels/*.whl
+
+  build_sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Update version if provided
         if: github.event.inputs.version != ''
         run: |
           sed -i "s/^version = \".*\"/version = \"${{ github.event.inputs.version }}\"/" pyproject.toml
-          echo "Publishing version ${{ github.event.inputs.version }}"
 
-      - name: Build package
-        env:
-          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
-        run: |
-          # Linux abi3 wheel (one wheel for py3.9+) WITH eBPF, so Linux pip
-          # users get per-process metrics without a source build. aya is pure
-          # Rust — no new shared-lib deps, manylinux compat unchanged.
-          maturin build --release --features python,ebpf
-          # sdist stays eBPF-free: it's the fallback macOS/other platforms build
-          # from, where the BPF toolchain isn't assumed. Its features come from
-          # pyproject ([tool.maturin] features = ["python"]) at build time.
-          maturin sdist
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          # sdist stays eBPF-free: it's the fallback other platforms build from,
+          # where the BPF toolchain isn't assumed. Features come from pyproject
+          # ([tool.maturin] features = ["python"]) at build time.
+          args: --out dist
 
-      - name: List built packages
-        run: |
-          ls -la target/wheels/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
 
-      - name: Test package
-        run: |
-          WHEEL_PATH=$(ls -t target/wheels/*.whl | head -1)
-          python -m pip install $WHEEL_PATH
-          python -c "import denet; print(f'Successfully imported denet version: {denet.__version__}')"
+  publish:
+    name: Publish to PyPI
+    needs: [build_linux, build_macos, build_sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # IMPORTANT: this permission is mandatory for trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List distributions
+        run: ls -la dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: target/wheels/
+          packages-dir: dist/
           skip-existing: true
           verbose: true
