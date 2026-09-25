@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/btraven00/denet/compare/v0.8.0...v0.9.0) (2026-09-25)
+
+
+### Features
+
+* **report:** optional panels; hide empty ones; phases only from shown per-process signals ([0d09a5d](https://github.com/btraven00/denet/commit/0d09a5d9c7150321c342cf1ac58180b774b817f1))
+
+
+### Bug Fixes
+
+* **ebpf:** hold the command until probes attach so startup activity is counted ([c798ae7](https://github.com/btraven00/denet/commit/c798ae70974da6b701fb2349a4d11e02992c7fc9))
+* **gpu:** make GPU monitoring opt-in (--gpu) and drop nvidia-smi ([4df8be7](https://github.com/btraven00/denet/commit/4df8be71e6cd533ee7bea01e6837cd2b77889145))
+* **stats:** summarise GPU samples from JSONL without live NVML ([68c61a3](https://github.com/btraven00/denet/commit/68c61a3799ca132d3c9416632c51186c8869d67d))
+
 ## [0.8.0](https://github.com/btraven00/denet/compare/v0.7.2...v0.8.0) (2026-07-16)
 
 
