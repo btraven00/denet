@@ -369,7 +369,7 @@ impl ProcessMonitor {
             let mut command = Command::new("/bin/sh");
             command.arg("-c").arg(HOLD_STUB).arg("denet").args(&cmd);
             // SAFETY: only async-signal-safe calls (dup2/fcntl) between fork and exec.
-            unsafe { command.pre_exec(move || gate_to_fd3(fd)) };
+            unsafe { command.pre_exec(move || inherit_as(fd, 3)) };
             let child = command
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -1608,16 +1608,17 @@ fn resolve_executable(prog: &str) -> io::Result<String> {
         .into_owned())
 }
 
-/// Child side of the hold: expose the gate pipe as fd 3 for [`HOLD_STUB`].
-/// `dup2` clears close-on-exec on the copy; if the pipe already is fd 3,
-/// clear the flag directly, or it would vanish at exec and nothing would hold.
+/// Child side of the hold: expose `fd` as `target` (3 for [`HOLD_STUB`]),
+/// surviving `exec`. `dup2` clears close-on-exec on the copy; if `fd` already
+/// is `target`, clear the flag directly, or it would vanish at exec and
+/// nothing would hold. Async-signal-safe (runs between fork and exec).
 #[cfg(target_os = "linux")]
-fn gate_to_fd3(fd: std::os::fd::RawFd) -> io::Result<()> {
+fn inherit_as(fd: std::os::fd::RawFd, target: std::os::fd::RawFd) -> io::Result<()> {
     let rc = unsafe {
-        if fd == 3 {
-            libc::fcntl(3, libc::F_SETFD, 0)
+        if fd == target {
+            libc::fcntl(target, libc::F_SETFD, 0)
         } else {
-            libc::dup2(fd, 3)
+            libc::dup2(fd, target)
         }
     };
     if rc < 0 {
@@ -3266,6 +3267,41 @@ mod hold_tests {
         assert!(eventually(|| !m.is_running()), "command did not finish");
         let got = std::fs::read_to_string(&out).unwrap();
         assert_eq!(got.lines().collect::<Vec<_>>(), args);
+    }
+
+    #[test]
+    fn held_command_given_as_path() {
+        let mut m = held(&["/bin/sh", "-c", "exit 0"]);
+        assert!(eventually(|| !m.is_running()), "command did not finish");
+        let missing = vec!["/nonexistent/denet-cmd".to_string()];
+        let err = ProcessMonitor::new_held(missing, MS, MS, false).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::ENOENT));
+    }
+
+    /// `inherit_as` runs in the forked child, invisible to coverage and hard
+    /// to observe; exercise it here on fds this test owns (never on 3, which
+    /// may belong to the test harness).
+    #[test]
+    fn inherit_as_leaves_fd_open_across_exec() {
+        use std::os::fd::AsRawFd;
+        let cloexec = |fd| unsafe { libc::fcntl(fd, libc::F_GETFD) } & libc::FD_CLOEXEC;
+        let (reader, _writer) = std::io::pipe().unwrap();
+        // An fd slot this test owns; dup2 replaces it.
+        let target = File::open("/dev/null").unwrap();
+
+        // std pipes start close-on-exec
+        assert_ne!(cloexec(reader.as_raw_fd()), 0);
+
+        inherit_as(reader.as_raw_fd(), target.as_raw_fd()).unwrap();
+        // the dup2 copy must survive exec
+        assert_eq!(cloexec(target.as_raw_fd()), 0);
+
+        inherit_as(reader.as_raw_fd(), reader.as_raw_fd()).unwrap();
+        // same fd: the flag must be cleared in place
+        assert_eq!(cloexec(reader.as_raw_fd()), 0);
+
+        let err = inherit_as(-1, target.as_raw_fd()).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EBADF));
     }
 
     #[test]
