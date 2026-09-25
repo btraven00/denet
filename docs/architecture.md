@@ -36,7 +36,7 @@ flowchart LR
     subgraph CORE["Sampling loop and aggregation"]
         LOOP["monitor<br/>adaptive sampling loop"]
         MET["monitor::metrics<br/>Metrics per process<br/>AggregatedMetrics per tree"]
-        SUM["monitor::summary<br/>Summary"]
+        SUM["Summary (monitor::metrics)<br/>rebuilt from JSONL by<br/>monitor::summary::SummaryGenerator"]
     end
 
     subgraph OUT["Output"]
@@ -95,7 +95,7 @@ flowchart LR
 
 **Output.** One JSONL stream: an optional `env` record (host, NUMA, affinity) with `--write-env`, then a metadata line, then one line per sample. Because records are emitted as they are taken, the stream is readable while the run is in progress.
 
-**Interfaces.** The CLI wraps or attaches, and `denet stats` rebuilds a `Summary` from a stored JSONL file — that reconstruction is derived purely from the recorded samples, so it produces identical output on a machine that has no GPU. The PyO3 bindings expose the same monitor to Python, and `denet-report` renders a stored run to HTML, PNG or SVG.
+**Interfaces.** The CLI wraps or attaches, and `denet stats` rebuilds a `Summary` from a stored JSONL file via `monitor::summary::SummaryGenerator` — that reconstruction is derived purely from the recorded samples, so it produces identical output on a machine that has no GPU. The PyO3 bindings expose the same monitor to Python, and `denet-report` renders a stored run to HTML, PNG or SVG.
 
 ## Rendering this diagram
 
