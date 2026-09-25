@@ -24,6 +24,19 @@ class TestProcessMonitorCreation:
         monitor = denet.ProcessMonitor(cmd=["echo", "hello"], base_interval_ms=100, max_interval_ms=1000)
         assert monitor is not None
 
+    def test_enable_ebpf_command_still_runs(self, tmp_path):
+        """With enable_ebpf the command is held until the probes attach; it
+        must still run when eBPF is unavailable (unprivileged, non-eBPF build)."""
+        marker = tmp_path / "ran"
+        monitor = denet.ProcessMonitor(
+            cmd=["sh", "-c", f"echo ran > '{marker}'"],
+            base_interval_ms=100,
+            max_interval_ms=1000,
+            enable_ebpf=True,
+        )
+        monitor.run()
+        assert marker.read_text() == "ran\n"
+
     def test_create_from_pid(self):
         """Test creating ProcessMonitor from existing PID."""
         current_pid = os.getpid()

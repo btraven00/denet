@@ -154,7 +154,14 @@ fn create_monitor_for_command(command: &[String], args: &Args) -> Result<Process
         exit(1);
     }
 
-    match ProcessMonitor::new_with_options(
+    // With eBPF, hold the command until the probes are attached so its first
+    // bytes/syscalls are not lost while they load.
+    let spawn = if args.enable_ebpf {
+        ProcessMonitor::new_held
+    } else {
+        ProcessMonitor::new_with_options
+    };
+    match spawn(
         command.to_vec(),
         Duration::from_millis(args.interval),
         Duration::from_millis(args.max_interval),

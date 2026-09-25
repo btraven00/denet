@@ -289,7 +289,20 @@ pub struct ProcessMonitor {
     /// Capability manifest, captured once at startup so `get_metadata()` can
     /// surface it in the JSONL header without re-detecting.
     capabilities: Capabilities,
+    /// Write end of the pipe a held command blocks on (see [`Self::new_held`]).
+    /// Dropping it lets the command `exec`.
+    #[cfg(target_os = "linux")]
+    hold_gate: Option<std::io::PipeWriter>,
+    /// Command line and resolved executable of a held command. Metadata
+    /// reports these instead of the `sh` stub that owns the PID until release.
+    held_cmd: Option<(Vec<String>, String)>,
 }
+
+/// Holds a command before `exec` until fd 3 reaches EOF, then execs it with fd
+/// 3 closed. `"$@"` passes arguments through literally (no re-parsing). The
+/// PID is unchanged by `exec`, so probes attached to the stub's PID follow it.
+#[cfg(target_os = "linux")]
+const HOLD_STUB: &str = r#"read gate <&3; exec 3<&- "$@""#;
 
 // We'll use a Result type directly instead of a custom ErrorType to avoid orphan rule issues
 pub type ProcessResult<T> = std::result::Result<T, std::io::Error>;
@@ -310,6 +323,33 @@ impl ProcessMonitor {
         max_interval: Duration,
         since_process_start: bool,
     ) -> ProcessResult<Self> {
+        Self::spawn(cmd, base_interval, max_interval, since_process_start, false)
+    }
+
+    /// Like [`Self::new_with_options`], but the command is held before `exec`
+    /// until [`Self::enable_ebpf`] returns, so eBPF probes see it from its
+    /// first instruction instead of missing everything it does while they
+    /// load. Sampling, `is_running` and dropping the monitor also release it,
+    /// so a failed or skipped setup never leaves the command stuck.
+    ///
+    /// On Linux the command runs under a `/bin/sh` stub until release; other
+    /// platforms have no eBPF and spawn it directly.
+    pub fn new_held(
+        cmd: Vec<String>,
+        base_interval: Duration,
+        max_interval: Duration,
+        since_process_start: bool,
+    ) -> ProcessResult<Self> {
+        Self::spawn(cmd, base_interval, max_interval, since_process_start, true)
+    }
+
+    fn spawn(
+        cmd: Vec<String>,
+        base_interval: Duration,
+        max_interval: Duration,
+        since_process_start: bool,
+        hold: bool,
+    ) -> ProcessResult<Self> {
         if cmd.is_empty() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -317,11 +357,32 @@ impl ProcessMonitor {
             ));
         }
 
-        let child = Command::new(&cmd[0])
-            .args(&cmd[1..])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
+        #[cfg(target_os = "linux")]
+        let (child, hold_gate, held_cmd) = if hold {
+            use std::os::fd::AsRawFd;
+            use std::os::unix::process::CommandExt;
+            // sh would only report a missing command after release (exit 127);
+            // resolve it now so a held spawn fails exactly like a direct one.
+            let exe = resolve_executable(&cmd[0])?;
+            let (reader, writer) = std::io::pipe()?;
+            let fd = reader.as_raw_fd();
+            let mut command = Command::new("/bin/sh");
+            command.arg("-c").arg(HOLD_STUB).arg("denet").args(&cmd);
+            // SAFETY: only async-signal-safe calls (dup2/fcntl) between fork and exec.
+            unsafe { command.pre_exec(move || gate_to_fd3(fd)) };
+            let child = command
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()?;
+            (child, Some(writer), Some((cmd.clone(), exe)))
+        } else {
+            (Self::spawn_direct(&cmd)?, None, None)
+        };
+        #[cfg(not(target_os = "linux"))]
+        let (child, held_cmd) = {
+            let _ = hold;
+            (Self::spawn_direct(&cmd)?, None)
+        };
         let pid = child.id();
 
         // Use minimal system initialization - avoid expensive system-wide scans
@@ -373,7 +434,32 @@ impl ProcessMonitor {
             rapl_sampler: crate::rapl::RaplSampler::new(),
             psi_per_process,
             capabilities,
+            #[cfg(target_os = "linux")]
+            hold_gate,
+            held_cmd,
         })
+    }
+
+    fn spawn_direct(cmd: &[String]) -> ProcessResult<Child> {
+        Command::new(&cmd[0])
+            .args(&cmd[1..])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+    }
+
+    /// Let a held command `exec` (no-op otherwise). The clock restarts so
+    /// timestamps and adaptive sampling count from when the command runs,
+    /// not from when setup began.
+    fn release_hold(&mut self) {
+        #[cfg(target_os = "linux")]
+        if self.hold_gate.take().is_some() {
+            self.start_time = Instant::now();
+            self.t0_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_millis() as u64;
+        }
     }
 
     // Create a process monitor for an existing process
@@ -470,6 +556,9 @@ impl ProcessMonitor {
             rapl_sampler: crate::rapl::RaplSampler::new(),
             psi_per_process,
             capabilities,
+            #[cfg(target_os = "linux")]
+            hold_gate: None,
+            held_cmd: None,
         })
     }
 
@@ -487,9 +576,16 @@ impl ProcessMonitor {
         }
     }
 
-    /// Enable eBPF profiling for this monitor
-    #[cfg(feature = "ebpf")]
+    /// Enable eBPF profiling for this monitor. Releases a held command
+    /// ([`Self::new_held`]) on every path, success or failure.
     pub fn enable_ebpf(&mut self) -> crate::error::Result<()> {
+        let result = self.attach_ebpf();
+        self.release_hold();
+        result
+    }
+
+    #[cfg(feature = "ebpf")]
+    fn attach_ebpf(&mut self) -> crate::error::Result<()> {
         if !self.enable_ebpf {
             log::info!("Attempting to enable eBPF profiling");
             if self.debug_mode {
@@ -619,9 +715,9 @@ impl ProcessMonitor {
         }
     }
 
-    /// Enable eBPF profiling for this monitor (no-op on non-eBPF builds)
+    /// No-op on non-eBPF builds
     #[cfg(not(feature = "ebpf"))]
-    pub fn enable_ebpf(&mut self) -> crate::error::Result<()> {
+    fn attach_ebpf(&mut self) -> crate::error::Result<()> {
         log::warn!("eBPF feature not enabled at compile time");
         if self.debug_mode {
             println!(
@@ -661,6 +757,7 @@ impl ProcessMonitor {
     }
 
     pub fn sample_metrics(&mut self) -> Option<Metrics> {
+        self.release_hold();
         let now = Instant::now();
         self.last_refresh_time = now;
 
@@ -860,6 +957,7 @@ impl ProcessMonitor {
     }
 
     pub fn is_running(&mut self) -> bool {
+        self.release_hold();
         // If we have a child process, use try_wait to check its status
         if let Some(child) = &mut self.child {
             match child.try_wait() {
@@ -941,6 +1039,7 @@ impl ProcessMonitor {
                 .map(|path| path.to_string_lossy().to_string())
                 .unwrap_or_default();
 
+            let (cmd, executable) = self.held_cmd.clone().unwrap_or((cmd, executable));
             Some(ProcessMetadata {
                 pid: self.pid,
                 cmd,
@@ -979,6 +1078,7 @@ impl ProcessMonitor {
 
     // Sample metrics including child processes
     pub fn sample_tree_metrics(&mut self) -> ProcessTreeMetrics {
+        self.release_hold();
         let tree_ts_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
@@ -1478,6 +1578,52 @@ fn build_offcpu_metrics(
         bottlenecks: vec![],
         stack_traces: vec![],
         stacks: None,
+    }
+}
+
+/// Resolve `prog` the way `execvp` would (PATH search unless it contains a
+/// `/`), returning the canonical path. Errors with ENOENT, the same error a
+/// direct spawn of a missing command gives.
+#[cfg(target_os = "linux")]
+fn resolve_executable(prog: &str) -> io::Result<String> {
+    use std::os::unix::fs::PermissionsExt;
+    let is_exec = |p: &Path| {
+        p.metadata()
+            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    };
+    let found = if prog.contains('/') {
+        Some(std::path::PathBuf::from(prog)).filter(|p| is_exec(p))
+    } else {
+        std::env::var_os("PATH").and_then(|path| {
+            std::env::split_paths(&path)
+                .map(|dir| dir.join(prog))
+                .find(|p| is_exec(p))
+        })
+    };
+    let path = found.ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))?;
+    Ok(std::fs::canonicalize(&path)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned())
+}
+
+/// Child side of the hold: expose the gate pipe as fd 3 for [`HOLD_STUB`].
+/// `dup2` clears close-on-exec on the copy; if the pipe already is fd 3,
+/// clear the flag directly, or it would vanish at exec and nothing would hold.
+#[cfg(target_os = "linux")]
+fn gate_to_fd3(fd: std::os::fd::RawFd) -> io::Result<()> {
+    let rc = unsafe {
+        if fd == 3 {
+            libc::fcntl(3, libc::F_SETFD, 0)
+        } else {
+            libc::dup2(fd, 3)
+        }
+    };
+    if rc < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
     }
 }
 
@@ -3054,5 +3200,88 @@ mod tests {
             !monitor.is_running(),
             "pid-based monitor must report process as not running after exit"
         );
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod hold_tests {
+    use super::*;
+
+    const MS: Duration = Duration::from_millis(100);
+
+    fn held(cmd: &[&str]) -> ProcessMonitor {
+        let cmd = cmd.iter().map(|s| s.to_string()).collect();
+        ProcessMonitor::new_held(cmd, MS, MS, false).expect("spawn held")
+    }
+
+    /// Poll until `f` holds or 5 s pass.
+    fn eventually(mut f: impl FnMut() -> bool) -> bool {
+        (0..50).any(|_| {
+            f() || {
+                std::thread::sleep(MS);
+                false
+            }
+        })
+    }
+
+    fn touch_cmd(path: &Path) -> Vec<String> {
+        let script = format!("echo ran > '{}'", path.display());
+        vec!["sh".into(), "-c".into(), script]
+    }
+
+    #[test]
+    fn held_command_waits_for_enable_ebpf() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("ran");
+        let mut m = ProcessMonitor::new_held(touch_cmd(&marker), MS, MS, false).unwrap();
+
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(!marker.exists(), "command ran before release");
+
+        // Unprivileged or non-eBPF builds fail here; the hold must lift anyway.
+        let _ = m.enable_ebpf();
+        assert!(eventually(|| marker.exists()), "command never ran");
+    }
+
+    #[test]
+    fn dropped_monitor_releases_command() {
+        // Stands in for denet dying mid-setup: the pipe closes, the command runs.
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("ran");
+        drop(ProcessMonitor::new_held(touch_cmd(&marker), MS, MS, false).unwrap());
+        assert!(eventually(|| marker.exists()), "command stuck after drop");
+    }
+
+    #[test]
+    fn held_arguments_pass_through_literally() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("args");
+        let args = ["a b", "*", "$HOME", "it's \"q\"", ""];
+        let mut cmd = vec!["sh", "-c", r#"printf '%s\n' "$@" > "$0""#];
+        let out_str = out.to_string_lossy().into_owned();
+        cmd.push(&out_str);
+        cmd.extend(args);
+
+        let mut m = held(&cmd);
+        assert!(eventually(|| !m.is_running()), "command did not finish");
+        let got = std::fs::read_to_string(&out).unwrap();
+        assert_eq!(got.lines().collect::<Vec<_>>(), args);
+    }
+
+    #[test]
+    fn missing_command_fails_like_direct_spawn() {
+        let cmd = vec!["denet-no-such-command".to_string()];
+        let direct = ProcessMonitor::new_with_options(cmd.clone(), MS, MS, false).unwrap_err();
+        let held = ProcessMonitor::new_held(cmd, MS, MS, false).unwrap_err();
+        assert_eq!(held.kind(), direct.kind());
+        assert_eq!(held.raw_os_error(), direct.raw_os_error());
+    }
+
+    #[test]
+    fn metadata_reports_command_not_stub() {
+        let mut m = held(&["sleep", "0.2"]);
+        let meta = m.get_metadata().expect("metadata");
+        assert_eq!(meta.cmd, ["sleep", "0.2"]);
+        assert!(meta.executable.ends_with("sleep"), "{}", meta.executable);
     }
 }

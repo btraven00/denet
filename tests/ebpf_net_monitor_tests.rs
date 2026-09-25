@@ -234,3 +234,61 @@ fn test_net_monitor_pid_filter_excludes_others_privileged() {
         m
     );
 }
+
+/// Regression: `denet run --enable-ebpf` used to spawn the command before
+/// loading the probes, so everything it sent while they loaded (hundreds of
+/// ms) was lost, and a short job reported 0 bytes. The command below moves
+/// 2 MiB over loopback the instant it starts; a held spawn must count it.
+#[test]
+#[ignore = "needs CAP_BPF+CAP_PERFMON; run scripts/test_ebpf_caps.sh or sudo -E cargo test -- --ignored"]
+fn test_held_command_traffic_at_startup_is_counted_privileged() {
+    use denet::ProcessMonitor;
+    use std::time::Duration;
+    let _guard = net_test_guard();
+    const TOTAL: u64 = 2 * 1024 * 1024;
+
+    let script = format!(
+        "import socket, threading\n\
+         srv = socket.create_server(('127.0.0.1', 0))\n\
+         def serve():\n    c, _ = srv.accept(); c.sendall(b'x' * {TOTAL}); c.close()\n\
+         threading.Thread(target=serve).start()\n\
+         cli = socket.create_connection(srv.getsockname())\n\
+         while cli.recv(1 << 16): pass\n"
+    );
+    let cmd = vec!["python3".into(), "-c".into(), script];
+    let ms = Duration::from_millis(100);
+    let mut monitor = ProcessMonitor::new_held(cmd, ms, ms, false).unwrap();
+    monitor
+        .enable_ebpf()
+        .expect("eBPF must attach for this test");
+
+    let mut net = None;
+    while monitor.is_running() {
+        let tree = monitor.sample_tree_metrics();
+        net = tree
+            .aggregated
+            .and_then(|a| a.ebpf)
+            .and_then(|e| e.network)
+            .or(net);
+        std::thread::sleep(ms);
+    }
+    let tree = monitor.sample_tree_metrics();
+    let net = tree
+        .aggregated
+        .and_then(|a| a.ebpf)
+        .and_then(|e| e.network)
+        .or(net);
+
+    let net = net.expect("no eBPF network metrics");
+    assert!(net.error.is_none(), "eBPF net error: {:?}", net.error);
+    assert!(
+        net.tx_bytes >= TOTAL,
+        "tx {} < {TOTAL}: startup traffic lost",
+        net.tx_bytes
+    );
+    assert!(
+        net.rx_bytes >= TOTAL,
+        "rx {} < {TOTAL}: startup traffic lost",
+        net.rx_bytes
+    );
+}

@@ -334,13 +334,33 @@ The eBPF implementation works by:
 3. **Category Mapping**: Categorizing each syscall into functional groups
 4. **Runtime Analysis**: Analyzing syscall patterns to detect performance bottlenecks
 
+## Attach Timing
+
+Loading the probes takes a few hundred milliseconds. So that none of a
+command's activity is missed, `denet run --enable-ebpf` (and
+`ProcessMonitor(cmd, enable_ebpf=True)` in Python) holds the command before it
+starts: it runs under a small `/bin/sh` stub that waits on a pipe, the probes
+attach to the stub's PID, then the pipe is closed and the stub `exec`s the
+command (same PID). Arguments pass through unchanged.
+
+The hold always lifts, even when eBPF is unavailable or denet dies during
+setup (the pipe closes and the command runs), so it can never leave a command
+stuck. A missing command still fails immediately, as without eBPF.
+
+Not covered:
+
+- **`attach` / `from_pid`**: activity before denet attaches is not recorded.
+- **Short-lived children**: a child is added to the probe filter at the next
+  sample, so a child that starts and exits between samples (e.g. a quick
+  `curl` launched by a script) can be missed.
+
 ## Current Limitations
 
 The current eBPF implementation has some limitations:
 
 1. **Limited Syscall Coverage**: Only tracks a subset of common syscalls (read, write, openat, close, mmap, socket, connect, recvfrom, sendto).
 
-2. **Sampling Windows**: The implementation shows syscalls that occurred during the monitoring window, which may not represent the application's entire execution profile for short-lived processes.
+2. **Short-lived children**: Child processes are picked up at the next sample, so work done by a child that exits between samples may be missed (see [Attach Timing](#attach-timing)).
 
 3. **Linux-only**: The eBPF functionality is only available on Linux systems with kernel version 4.18+ for full functionality.
 
