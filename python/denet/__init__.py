@@ -72,6 +72,7 @@ def execute_with_monitoring(
     include_children: bool = True,
     write_metadata: bool = False,
     enable_ebpf: bool = False,
+    enable_gpu: bool = False,
 ) -> Tuple[int, "ProcessMonitor"]:
     """
     Execute a command with monitoring from the very start using signal-based process control.
@@ -100,6 +101,8 @@ def execute_with_monitoring(
         write_metadata: Whether to write metadata as first line to output file (default False)
         enable_ebpf: Enable eBPF profiling incl. per-process network bytes (default False).
             Needs CAP_BPF+CAP_PERFMON (root or setcap); degrades to a warning otherwise.
+        enable_gpu: Monitor NVIDIA GPUs (default False). Loads the NVIDIA driver library,
+            which costs tens of MB of memory; a no-op with a warning when no GPU is found.
 
     Returns:
         Tuple of (exit_code, monitor)
@@ -153,6 +156,7 @@ def execute_with_monitoring(
                 include_children=include_children,
                 write_metadata=write_metadata,
                 enable_ebpf=enable_ebpf,
+                enable_gpu=enable_gpu,
             )
 
             # 4. Resume the process if it was paused

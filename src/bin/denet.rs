@@ -59,6 +59,11 @@ struct Args {
     #[clap(long)]
     enable_ebpf: bool,
 
+    /// Monitor NVIDIA GPUs (off by default: loading the driver library costs
+    /// tens of MB of memory, so it is only loaded when asked for)
+    #[clap(long)]
+    gpu: bool,
+
     /// Enable debug mode with verbose output (especially for eBPF diagnostics)
     #[clap(long)]
     debug: bool,
@@ -231,6 +236,10 @@ fn execute_monitoring_with_output(
         if args.debug && !ui_quiet {
             println!("Debug mode enabled for eBPF profiling - verbose output will be shown");
         }
+    }
+
+    if args.gpu && !monitor.enable_gpu() && !args.quiet {
+        eprintln!("Warning: --gpu given, but no NVIDIA GPU could be monitored (driver library missing, no device, or built without the `gpu` feature)");
     }
 
     // Enable eBPF profiling if requested

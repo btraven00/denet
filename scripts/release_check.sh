@@ -73,8 +73,9 @@ EOF
 }
 
 e2e() { # name, expect_gpu, expect_rapl
-    local out="$OUT_DIR/e2e.jsonl" msg=""
-    if "$DENET" --enable-ebpf -q -o "$out" run -- python3 -c "$TRAFFIC" >/dev/null 2>"$OUT_DIR/denet.err" \
+    local out="$OUT_DIR/e2e.jsonl" msg="" gpu=()
+    [[ "$2" == 1 ]] && gpu=(--gpu) # GPU monitoring is opt-in
+    if "$DENET" --enable-ebpf "${gpu[@]}" -q -o "$out" run -- python3 -c "$TRAFFIC" >/dev/null 2>"$OUT_DIR/denet.err" \
         && msg=$(check_jsonl "$out" "$2" "$3" 2>&1); then
         pass "$1"
     else

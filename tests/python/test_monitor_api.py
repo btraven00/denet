@@ -37,6 +37,17 @@ class TestProcessMonitorCreation:
         monitor.run()
         assert marker.read_text() == "ran\n"
 
+    def test_enable_gpu_is_optional_and_safe(self):
+        """GPU monitoring is opt-in; enable_gpu=True must not fail on hosts or
+        builds without an NVIDIA GPU (it only logs a warning)."""
+        for kwargs in ({}, {"enable_gpu": True}):
+            monitor = denet.ProcessMonitor(
+                cmd=["sleep", "0.1"], base_interval_ms=50, max_interval_ms=100, **kwargs
+            )
+            monitor.run()
+        exit_code, _ = denet.execute_with_monitoring(["true"], enable_gpu=True, store_in_memory=False)
+        assert exit_code == 0
+
     def test_create_from_pid(self):
         """Test creating ProcessMonitor from existing PID."""
         current_pid = os.getpid()
