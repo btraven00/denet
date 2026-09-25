@@ -439,6 +439,16 @@ fn execute_monitoring_with_output(
             } else {
                 // Monitor process tree (default behavior)
                 let tree_metrics = monitor.sample_tree_metrics();
+                // New or exec'd children: one record each, ahead of this sample's tree.
+                for child in monitor.take_child_records() {
+                    let json = tagged_json("child", &child).unwrap();
+                    if let Some(file) = &mut file_handles.out_file {
+                        writeln!(file, "{json}")?;
+                    }
+                    if args.json && !args.quiet && !update_in_place {
+                        println!("{json}");
+                    }
+                }
                 if let Some(agg_metrics) = tree_metrics.aggregated.as_ref() {
                     metrics_count += 1;
 

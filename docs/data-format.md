@@ -4,7 +4,7 @@ Denet outputs JSON in a streaming format optimized for efficiency and time-serie
 
 ## Format Structure
 
-Every line carries a `"kind"` discriminator so downstream tooling can dispatch by type. The possible values are `env`, `metadata`, `sample`, and `tree`.
+Every line carries a `"kind"` discriminator so downstream tooling can dispatch by type. The possible values are `env`, `metadata`, `child`, `sample`, and `tree`.
 
 **Optional first line** (when `--write-env` is set): host/NUMA/affinity snapshot, emitted once.
 ```json
@@ -21,7 +21,12 @@ Every line carries a `"kind"` discriminator so downstream tooling can dispatch b
 {"kind":"tree","ts_ms":1748542001000,"parent":{...},"children":[...],"aggregated":{...}}
 ```
 
-Single-process mode (`--exclude-children`) emits `{"kind":"sample",...}` records instead.
+**Child records**: one per child process, written just before the tree record of the sample in which the child first appears, and again if its command line changes (`exec`).
+```json
+{"kind":"child","ts_ms":1748542001000,"pid":1240,"ppid":1234,"cmd":["samtools","sort","-n","-@","2","in.bam"],"exe":"/usr/bin/samtools"}
+```
+
+Single-process mode (`--exclude-children`) emits `{"kind":"sample",...}` records instead, and no child records.
 
 > **Back-compat:** files written before the `kind` field existed are still readable by the `stats` / `summary` subcommands and by the Python reader — parsers fall back to the legacy untagged shapes when no `kind` is present.
 
@@ -70,6 +75,23 @@ Tells consumers which optional per-sample fields to expect. Each entry is `{avai
 | `perf_hw` | `perf` | `perf_event_open` hardware counters. Requires `perf_event_paranoid <= 2` or `CAP_PERFMON`. The `events` array lists which counters opened — `cycles` and `instructions` are required, the rest degrade gracefully if the CPU doesn't expose them. |
 | `rapl` | `rapl` | Intel/AMD RAPL CPU-package energy via `/sys/class/powercap/intel-rapl:*/energy_uj`. `energy_uj` is root-owned `0400` on current kernels (CVE-2020-8694), so needs **root** or **`CAP_DAC_READ_SEARCH`** — `scripts/setup_ebpf_caps.sh` already grants it. The `zones` field counts package sockets being read. |
 
+## Child Record Fields
+
+Identifies each child in the tree, so per-child metrics (`tree.children[]`, keyed by `pid`) can be told apart when several children share a name, e.g. two `samtools sort` in one pipeline. Written once per child rather than in every sample, to keep wide trees (`make -j`, workflow managers) small.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ts_ms` | number | Timestamp of the sample that first saw this argv |
+| `pid` | number | Child process ID |
+| `ppid` | number? | Parent process ID; rebuilds the pipeline structure (`sh -c 'a \| b'` gives `a` and `b` the shell's PID) |
+| `cmd` | string[] | Full command line, same shape as the metadata `cmd`; non-UTF-8 bytes are lossy-converted |
+| `exe` | string? | Executable path; absent when unreadable (zombies, other users' processes) |
+
+- A child whose command line can't be read (zombie, another user's process) gets `cmd: [name]`, the kernel's 15-character process name.
+- A child sampled between `fork` and `exec` shows its parent's argv. The record written after the `exec` has the real one.
+- A child living shorter than one sampling interval may have no record at all.
+- A reused PID (same `pid`, different start time) gets a fresh record. For a PID seen more than once, the latest child record before a tree sample describes it.
+
 ## Metrics Fields
 
 ### Tree Structure
@@ -104,7 +126,7 @@ Tells consumers which optional per-sample fields to expect. Each entry is `{avai
 | Field | Type | Description |
 |-------|------|-------------|
 | `pid` | number | Child process ID |
-| `command` | string | Child process name |
+| `command` | string | Child process name (from `/proc/<pid>/comm`, max 15 characters). See the `child` record for the full command line. |
 | `metrics` | Metrics | Child process metrics |
 
 ### Optional Memory-Characterization Fields

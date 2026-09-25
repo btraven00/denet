@@ -22,9 +22,23 @@ fn map_io_error(err: std::io::Error) -> pyo3::PyErr {
 struct PyProcessMonitor {
     inner: ProcessMonitor,
     samples: Vec<String>,
+    /// Tagged `child` records (JSON), one per new or exec'd child.
+    children: Vec<String>,
     output_config: OutputConfig,
     metadata_written: bool,
     env_written: bool,
+}
+
+/// Tag the monitor's pending child records as JSONL lines.
+fn child_lines(monitor: &mut ProcessMonitor) -> PyResult<Vec<String>> {
+    monitor
+        .take_child_records()
+        .iter()
+        .map(|c| {
+            tagged_json("child", c)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+        })
+        .collect()
 }
 
 /// Build OutputConfig with consistent settings
@@ -120,6 +134,7 @@ impl PyProcessMonitor {
         Ok(PyProcessMonitor {
             inner,
             samples: Vec::new(),
+            children: Vec::new(),
             output_config,
             metadata_written: false,
             env_written: false,
@@ -168,6 +183,7 @@ impl PyProcessMonitor {
         Ok(PyProcessMonitor {
             inner,
             samples: Vec::new(),
+            children: Vec::new(),
             output_config,
             metadata_written: false,
             env_written: false,
@@ -282,6 +298,7 @@ impl PyProcessMonitor {
         let monitor = PyProcessMonitor {
             inner,
             samples: Vec::new(),
+            children: Vec::new(),
             output_config,
             metadata_written: false,
             env_written: false,
@@ -321,6 +338,7 @@ impl PyProcessMonitor {
         // caller that must reap the child could never do so).
         py.detach(|| self.run_loop())
     }
+
     fn sample_once(&mut self) -> PyResult<Option<String>> {
         use std::fs::OpenOptions;
         use std::io::Write;
@@ -330,10 +348,12 @@ impl PyProcessMonitor {
             return Ok(None);
         }
 
+        let mut new_children = Vec::new();
         // Decide which sampling method to use based on include_children setting
         let metrics_json = if self.inner.get_include_children() {
             // Sample the metrics including child processes
             let tree_metrics = self.inner.sample_tree_metrics();
+            new_children = child_lines(&mut self.inner)?;
             tagged_json("tree", &tree_metrics)
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
         } else {
@@ -398,7 +418,13 @@ impl PyProcessMonitor {
                 .open(path)
                 .map_err(map_io_error)?;
 
+            for line in &new_children {
+                writeln!(file, "{line}").map_err(map_io_error)?;
+            }
             writeln!(file, "{metrics_json}").map_err(map_io_error)?;
+        }
+        if self.output_config.store_in_memory {
+            self.children.extend(new_children);
         }
 
         // Return the metrics JSON
@@ -430,6 +456,12 @@ impl PyProcessMonitor {
     fn get_samples(&self) -> Vec<String> {
         // Samples are already stored as strings, just clone them
         self.samples.clone()
+    }
+
+    /// Tagged `child` records (JSON strings): each child's full argv, ppid and
+    /// exe, recorded when it first appears and again after an exec.
+    fn get_children(&self) -> Vec<String> {
+        self.children.clone()
     }
 
     fn clear_samples(&mut self) {
@@ -599,6 +631,14 @@ impl PyProcessMonitor {
         while self.inner.is_running() {
             let json = if self.inner.get_include_children() {
                 let tree_metrics = self.inner.sample_tree_metrics();
+                for line in child_lines(&mut self.inner)? {
+                    if let Some(file) = &mut file_handle {
+                        writeln!(file, "{line}").map_err(map_io_error)?;
+                    }
+                    if self.output_config.store_in_memory {
+                        self.children.push(line);
+                    }
+                }
                 tagged_json("tree", &tree_metrics)
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
             } else {

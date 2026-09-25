@@ -415,6 +415,16 @@ class TestSaveLoadMetrics:
         # Rest should be the metrics
         assert len(loaded_with_metadata) - 1 == len(sample_metrics)
 
+    def test_load_metrics_skips_child_records(self, sample_metrics, tmp_path):
+        """`child` records carry "pid" but are neither metadata nor metrics."""
+        temp_file = tmp_path / "with_children.jsonl"
+        save_metrics(sample_metrics, str(temp_file), format="jsonl", include_metadata=True)
+        meta, rest = temp_file.read_text().split("\n", 1)
+        child = '{"kind":"child","ts_ms":1,"pid":7,"ppid":1,"cmd":["sort","-n"]}'
+        temp_file.write_text(f"{child}\n{meta}\n{child}\n{rest}")
+
+        assert load_metrics(str(temp_file)) == sample_metrics
+
     def test_load_metrics_empty_file(self, tmp_path):
         """Test loading metrics from an empty file."""
         temp_file = tmp_path / "empty.jsonl"
