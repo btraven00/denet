@@ -47,6 +47,15 @@ pixi run test
 pixi run test-all
 ```
 
+### Pre-release hardware check
+
+CI can't exercise GPU, RAPL or eBPF end to end. Before tagging, run this on a Linux machine with a GPU:
+
+```bash
+./scripts/release_check.sh              # uses sudo; kernel matrix needs virtme-ng
+./scripts/release_check.sh '/boot/vmlinuz-6.8*'   # limit the kernel matrix
+```
+
 ### Linting and Formatting
 
 ```bash
