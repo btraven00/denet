@@ -175,6 +175,7 @@ import denet
 denet.generate_report("metrics.jsonl", "report.html")     # default html
 denet.generate_report("metrics.jsonl", "report.png")      # format inferred from extension
 denet.generate_report("metrics.jsonl", fmt="svg")         # explicit format
+denet.generate_report("metrics.jsonl", panels=["cpu", "net"])  # choose panels
 ```
 
 **Output formats** (`-f/--format`, default `html`):
@@ -193,22 +194,49 @@ perf counters) and whether network figures are per-process (eBPF) or the
 system-wide approximation. Long runs are downsampled to at most 512 time slots
 (mean for gauges, max for rates, so spikes survive).
 
+**Panels** (`-p/--panels`, or `panels=` in Python):
+
+| Panel | Default | Shows |
+|---|---|---|
+| `cpu` | yes | CPU (%) |
+| `mem` | yes | RSS (MiB) |
+| `disk` | yes | Block-layer read/write bytes/s |
+| `net` | no | Network bytes/s, plus a per-PID breakdown with eBPF |
+| `psi` | no | Memory stall (PSI `some`/`full`) |
+| `syscalls` | no | Syscall mix per regime (eBPF) |
+
+```bash
+denet-report run.jsonl                      # cpu, mem, disk
+denet-report run.jsonl --panels cpu,mem,net # exactly these
+denet-report run.jsonl --panels all
+```
+
+With no `--panels`, a default panel that is all zero is dropped (e.g. disk for
+a job that never touches it). The header lists what wasn't shown and why.
+Panels you request are always drawn when the run has data for them, even if
+flat. Watch out for **machine-wide** data: without eBPF, `net` counts every
+process on the host, and so does `psi` unless denet read it from the job's own
+cgroup. For a job with no network traffic of its own, the `net` panel shows
+only other traffic on the machine.
+
 The report also runs **regime detection**: binary segmentation over the
-z-scored CPU / memory / network series splits the run into piecewise-constant
-phases (e.g. idle → compute → write-out). Detected regimes are shaded as
+z-scored series of the panels that are **shown and per-process** splits the
+run into piecewise-constant phases (e.g. idle → compute → write-out). A hidden
+or machine-wide signal never splits a phase, so unrelated host traffic can't
+create phases or "network" labels. Detected regimes are shaded as
 alternating bands across the timelines and summarised in a table (span, mean
 CPU, mean RSS, dominant activity). Short runs (fewer than ~8 slots) are left
 unsegmented.
 
-Extra panels appear only when the run carries the data for them:
+The opt-in panels need data the run may not have:
 
-- **Memory pressure (PSI)** — a `some`/`full` memory-stall timeline, shown
-  whenever PSI was recorded. A flat-zero trace is kept: "no memory pressure"
-  is itself a useful reading.
-- **Syscalls by category, per regime (eBPF)** — a normalized stacked bar of the
+- **Memory pressure (PSI)**: a `some`/`full` memory-stall timeline, drawn when
+  requested and PSI was recorded. A flat-zero trace is kept: "no memory
+  pressure" is itself a useful reading.
+- **Syscalls by category, per regime (eBPF)**: a normalized stacked bar of the
   syscall mix (file_io / memory / network / …) for each regime, so you can see
   how the syscall profile shifts between phases. Every regime stays on the axis
-  (an empty row means that phase made no tracked syscalls), and it is hidden
-  entirely when there is no eBPF syscall data. The per-sample counts are
+  (an empty row means that phase made no tracked syscalls). If you request it
+  and there is no eBPF syscall data, the header says so. The per-sample counts are
   alive-PID snapshots rather than clean per-window deltas, so the bar shows the
   phase's typical *mix* (proportions), not absolute call totals.
