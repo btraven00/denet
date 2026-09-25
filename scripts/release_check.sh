@@ -6,6 +6,9 @@
 #   2. eBPF capability matrix on the host kernel (scripts/test_ebpf_caps.sh)
 #   3. End-to-end CLI run as root: eBPF net bytes > 0, GPU found (if
 #      nvidia-smi works), RAPL energy > 0 (if powercap exists)
+#  3b. Same with a static musl build (no GPU: NVML can't be loaded from a
+#      static binary). Skipped if the x86_64-unknown-linux-musl target is
+#      not installed (rustup target add x86_64-unknown-linux-musl)
 #   4. eBPF net tests + end-to-end eBPF check under each KERNEL in a
 #      virtme-ng VM (skipped if `vng` is not installed)
 #
@@ -20,7 +23,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-DENET=target/release/denet
+DENET=${DENET:-target/release/denet}
+MUSL=x86_64-unknown-linux-musl
 OUT_DIR=$(mktemp -d)
 FAILED=0
 pass() { echo "PASS  $1"; }
@@ -115,6 +119,15 @@ GPU=0; nvidia-smi -L >/dev/null 2>&1 && GPU=1
 RAPL=0; [[ -e /sys/class/powercap/intel-rapl:0/energy_uj ]] && RAPL=1
 step "3. end to end ($(uname -r))" "\`denet run --enable-ebpf\` as root on a job that moves 2 MB over loopback from its first instant. Must record eBPF net bytes$( ((GPU)) && echo ", a GPU")$( ((RAPL)) && echo ", RAPL energy")."
 sudo ./scripts/release_check.sh --as-root host "$GPU" "$RAPL" || FAILED=1
+
+step "3b. end to end, static musl binary" "Same as 3 with a fully static build. eBPF and RAPL must work; GPU is not expected (NVML is a glibc library a static binary can't load)."
+if ! rustup target list --installed 2>/dev/null | grep -qx "$MUSL"; then
+    echo "SKIP  $MUSL target not installed (rustup target add $MUSL)"
+elif ! cargo build -q --release --target "$MUSL" --features ebpf --bin denet; then
+    fail "musl build"
+else
+    sudo env DENET="target/$MUSL/release/denet" ./scripts/release_check.sh --as-root host-musl 0 "$RAPL" || FAILED=1
+fi
 
 step "4. kernels (${#KERNELS[@]})" "Step 2's root-only net tests and step 3's eBPF check, inside a VM per kernel (no GPU/RAPL in guests)."
 if ! command -v vng >/dev/null; then

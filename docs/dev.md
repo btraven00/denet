@@ -56,7 +56,8 @@ eBPF) aren't covered by CI. Before tagging a release, run
 
 **Requirements:** `sudo`, `jq`, `python3`, and for the kernel matrix
 [virtme-ng](https://github.com/arighi/virtme-ng) (`pipx install virtme-ng`,
-which uses QEMU). Without `vng` the kernel step is skipped.
+which uses QEMU). Without `vng` the kernel step is skipped. The musl step
+needs `rustup target add x86_64-unknown-linux-musl` and is skipped without it.
 
 ```bash
 ./scripts/release_check.sh                       # host + every kernel in /boot
@@ -72,6 +73,7 @@ What each step checks:
 | 1. `cargo test` | Full Rust suite, unprivileged | Any test fails |
 | 2. eBPF permissions | `scripts/test_ebpf_caps.sh --with-root` on the host kernel: no capabilities (A), `setcap` (B), root (C). B and C include the root-only tests | eBPF doesn't degrade cleanly without permissions, or doesn't count bytes with them |
 | 3. End to end | `denet run --enable-ebpf` as root on a job that moves 2 MB over loopback from its first instant | eBPF network bytes are missing. Also a missing GPU if `nvidia-smi` works, and missing RAPL energy if `/sys/class/powercap/intel-rapl:0` exists |
+| 3b. End to end, musl | Step 3 with a fully static `x86_64-unknown-linux-musl` build (`--features ebpf`) | eBPF network bytes or RAPL energy are missing. A GPU isn't expected: NVIDIA's library is glibc-only and a static binary can't load it |
 | 4. Kernels | Step 2's root-only network tests and step 3's eBPF check, in a VM per kernel | As steps 2 and 3, minus GPU/RAPL (VMs have neither) |
 
 Kernel arguments can be image files (distro kernels from `/boot` are copied
