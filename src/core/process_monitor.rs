@@ -11,7 +11,7 @@ use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use sysinfo::{self, Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+use sysinfo::{self, Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System};
 
 /// Default process refresh flags.
 ///
@@ -989,7 +989,11 @@ impl ProcessMonitor {
                 std::thread::sleep(system::PROCESS_DETECTION);
             }
 
-            self.sys.process(pid).is_some()
+            // A zombie still has a /proc entry until its parent reaps it, but it
+            // has exited: treat it as not running, or attach/run() never return.
+            self.sys
+                .process(pid)
+                .is_some_and(|p| !matches!(p.status(), ProcessStatus::Zombie | ProcessStatus::Dead))
         }
     }
 
