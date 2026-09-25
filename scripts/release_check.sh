@@ -57,11 +57,12 @@ EOF
 
 e2e() { # name, expect_gpu, expect_rapl
     local out="$OUT_DIR/e2e.jsonl" msg=""
-    if "$DENET" --enable-ebpf -q -o "$out" run -- python3 -c "$TRAFFIC" >/dev/null 2>&1 \
+    if "$DENET" --enable-ebpf -q -o "$out" run -- python3 -c "$TRAFFIC" >/dev/null 2>"$OUT_DIR/denet.err" \
         && msg=$(check_jsonl "$out" "$2" "$3" 2>&1); then
         pass "$1"
     else
         fail "$1: ${msg:-denet run failed}"
+        tail -5 "$OUT_DIR/denet.err" | sed 's/^/      denet: /'
     fi
 }
 
