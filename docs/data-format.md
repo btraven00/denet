@@ -47,8 +47,10 @@ Enabled with `--write-env` on the CLI or `write_env=True` in the Python binding.
 | `numa.distances` | number[][] | Square distance matrix from `/sys/.../node*/distance` |
 | `numa.node_sizes_mb` | number[] | `MemTotal` per node, in MB |
 | `affinity_inherited` | string | CPU affinity of the monitor process as a range list (e.g. `"0-3,7-9"`) |
-| `cpu_governor` | string[]? | `scaling_governor` per CPU (omitted if cpufreq is unavailable) |
-| `cpu_freq_khz` | number[]? | `scaling_cur_freq` per CPU |
+| `cpufreq_cpus` | string? | CPUs the per-CPU fields refer to, as a range list: the monitored process's affinity intersected with CPUs that expose cpufreq |
+| `cpu_governor` | string[]? | `scaling_governor` per CPU in `cpufreq_cpus` (omitted if cpufreq is unavailable) |
+| `cpu_freq_khz` | number[]? | `scaling_cur_freq` per CPU in `cpufreq_cpus`; with some drivers (e.g. acpi-cpufreq) each read takes ~20 ms |
+| `cpu_max_freq_khz` | number[]? | `cpuinfo_max_freq` per CPU in `cpufreq_cpus` |
 | `thp_enabled` | string? | `/sys/kernel/mm/transparent_hugepage/enabled` raw value |
 | `smt_active` | bool? | `/sys/devices/system/cpu/smt/active` |
 | `cgroup` | string? | `/proc/<pid>/cgroup` of the monitored process |
