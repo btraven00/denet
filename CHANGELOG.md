@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.0](https://github.com/btraven00/denet/compare/v0.9.1...v0.10.0) (2026-09-26)
+
+
+### Features
+
+* record each child's full command line as a `child` record ([95de926](https://github.com/btraven00/denet/commit/95de926550e55bd7a9e81abba1ba1dac25cf1745))
+
+
+### Bug Fixes
+
+* **cli:** propagate the monitored command's exit code ([b1c6a51](https://github.com/btraven00/denet/commit/b1c6a515644fbcc5166b4f346cb4a695479b5d49))
+* **env:** per-CPU cpufreq fields for the job's CPUs, no truncation at offline CPUs, add max frequency ([7b3e1a4](https://github.com/btraven00/denet/commit/7b3e1a4209a932711b53fcb69674a383a23ca32c))
+
+
+### Performance Improvements
+
+* skip CPU frequency reads when creating a monitor; release the GIL in from_pid ([d4f8fa5](https://github.com/btraven00/denet/commit/d4f8fa58a4871741811ce06f508a7772a94f441e))
+
 ## [0.9.1](https://github.com/btraven00/denet/compare/v0.9.0...v0.9.1) (2026-09-25)
 
 
