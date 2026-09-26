@@ -18,10 +18,19 @@ pub struct EnvRecord {
     /// CPU affinity inherited by the monitoring process, as a range list
     /// (e.g. "0-3,7-9"). Empty string if unknown.
     pub affinity_inherited: String,
+    /// CPUs the per-CPU fields below refer to, as a range list: those the
+    /// monitored process may run on (its affinity) that expose cpufreq.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpufreq_cpus: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cpu_governor: Option<Vec<String>>,
+    /// Current frequency per CPU in `cpufreq_cpus`. With some drivers (e.g.
+    /// acpi-cpufreq) each read measures the frequency on demand, ~20 ms per CPU.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cpu_freq_khz: Option<Vec<u64>>,
+    /// Maximum frequency per CPU in `cpufreq_cpus` (static, cheap to read).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_max_freq_khz: Option<Vec<u64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thp_enabled: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,6 +63,7 @@ impl EnvRecord {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
+        let cpus = cpufreq_cpus(pid);
         Self {
             ts_ms,
             host: hostname(),
@@ -61,9 +71,10 @@ impl EnvRecord {
             lscpu: lscpu(),
             numa: numa(),
             affinity_inherited: affinity_range_list(),
-            cpu_governor: read_cpu_attr("scaling_governor", |s| s.trim().to_string()),
-            cpu_freq_khz: read_cpu_attr("scaling_cur_freq", |s| s.trim().parse().ok())
-                .map(|v: Vec<Option<u64>>| v.into_iter().flatten().collect()),
+            cpufreq_cpus: (!cpus.is_empty()).then(|| format_range_list(&cpus)),
+            cpu_governor: read_cpu_attr(&cpus, "scaling_governor", |s| Some(s.trim().to_string())),
+            cpu_freq_khz: read_cpu_attr(&cpus, "scaling_cur_freq", |s| s.trim().parse().ok()),
+            cpu_max_freq_khz: read_cpu_attr(&cpus, "cpuinfo_max_freq", |s| s.trim().parse().ok()),
             thp_enabled: fs::read_to_string("/sys/kernel/mm/transparent_hugepage/enabled")
                 .ok()
                 .map(|s| s.trim().to_string()),
@@ -209,39 +220,91 @@ fn cpu_topology() -> Option<(u32, u32, u32)> {
 
 /// Read a per-cpu sysfs attribute (e.g. cpufreq/scaling_governor) for every
 /// online CPU. Returns None if the attribute is unreadable for cpu0.
-fn read_cpu_attr<T, F>(attr: &str, mut parse: F) -> Option<Vec<T>>
+/// Read one cpufreq attribute for each CPU in `cpus`. All-or-nothing, so the
+/// result stays aligned with `cpus`: None if any CPU's value is missing.
+fn read_cpu_attr<T, F>(cpus: &[u32], attr: &str, mut parse: F) -> Option<Vec<T>>
 where
-    F: FnMut(&str) -> T,
+    F: FnMut(&str) -> Option<T>,
 {
-    let mut results = Vec::new();
-    for cpu in 0u32.. {
-        let path = format!("/sys/devices/system/cpu/cpu{cpu}/cpufreq/{attr}");
-        match fs::read_to_string(&path) {
-            Ok(s) => results.push(parse(&s)),
-            Err(_) => break,
-        }
+    if cpus.is_empty() {
+        return None;
     }
-    if results.is_empty() {
-        None
-    } else {
-        Some(results)
+    cpus.iter()
+        .map(|cpu| {
+            fs::read_to_string(format!("/sys/devices/system/cpu/cpu{cpu}/cpufreq/{attr}"))
+                .ok()
+                .and_then(|s| parse(&s))
+        })
+        .collect()
+}
+
+/// CPUs to report cpufreq for: the monitored process's affinity (its
+/// allocation, on a cluster) intersected with the CPUs that expose cpufreq.
+/// Falls back to all cpufreq CPUs if the affinity cannot be read.
+fn cpufreq_cpus(pid: u32) -> Vec<u32> {
+    let available = cpufreq_available();
+    match affinity_cpus(pid as i32) {
+        Some(affinity) => select_cpus(&affinity, &available),
+        None => available,
     }
+}
+
+/// CPUs with a cpufreq directory, found by listing rather than counting up
+/// from 0, so an offline CPU in the middle does not truncate the list.
+fn cpufreq_available() -> Vec<u32> {
+    let mut cpus: Vec<u32> = fs::read_dir("/sys/devices/system/cpu")
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let name = e.file_name().into_string().ok()?;
+                    let n: u32 = name.strip_prefix("cpu")?.parse().ok()?;
+                    e.path().join("cpufreq").is_dir().then_some(n)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    cpus.sort_unstable();
+    cpus
+}
+
+/// Sorted intersection of an affinity set with the available CPUs.
+fn select_cpus(affinity: &[u32], available: &[u32]) -> Vec<u32> {
+    let mut out: Vec<u32> = available
+        .iter()
+        .copied()
+        .filter(|c| affinity.contains(c))
+        .collect();
+    out.sort_unstable();
+    out
+}
+
+#[cfg(target_os = "linux")]
+fn affinity_cpus(pid: i32) -> Option<Vec<u32>> {
+    let mut set = unsafe { std::mem::zeroed::<libc::cpu_set_t>() };
+    let rc =
+        unsafe { libc::sched_getaffinity(pid, std::mem::size_of::<libc::cpu_set_t>(), &mut set) };
+    if rc != 0 {
+        return None;
+    }
+    let max = libc::CPU_SETSIZE as usize;
+    Some(
+        (0..max)
+            .filter(|&i| unsafe { libc::CPU_ISSET(i, &set) })
+            .map(|i| i as u32)
+            .collect(),
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+fn affinity_cpus(_pid: i32) -> Option<Vec<u32>> {
+    None
 }
 
 #[cfg(target_os = "linux")]
 fn affinity_range_list() -> String {
-    let mut set = unsafe { std::mem::zeroed::<libc::cpu_set_t>() };
-    let rc =
-        unsafe { libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut set) };
-    if rc != 0 {
-        return String::new();
-    }
-    let max = libc::CPU_SETSIZE as usize;
-    let cpus: Vec<u32> = (0..max)
-        .filter(|&i| unsafe { libc::CPU_ISSET(i, &set) })
-        .map(|i| i as u32)
-        .collect();
-    format_range_list(&cpus)
+    affinity_cpus(0)
+        .map(|cpus| format_range_list(&cpus))
+        .unwrap_or_default()
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -438,8 +501,10 @@ mod tests {
                 node_sizes_mb: vec![64272, 64500, 64500, 64481],
             },
             affinity_inherited: "0-127".into(),
+            cpufreq_cpus: Some("0".into()),
             cpu_governor: Some(vec!["performance".into()]),
             cpu_freq_khz: Some(vec![2_400_000]),
+            cpu_max_freq_khz: Some(vec![3_200_000]),
             thp_enabled: Some("always [madvise] never".into()),
             smt_active: Some(true),
             cgroup: Some("0::/user.slice".into()),
@@ -490,6 +555,32 @@ mod tests {
         assert!(!s.is_empty());
         // Whatever subset is returned, count must match a positive number.
         assert!(count_range_list(&s) > 0);
+    }
+
+    #[test]
+    fn select_cpus_keeps_only_allowed_cpus_across_gaps() {
+        // cpu5 offline (absent from `available`), job allowed 2-7
+        let available = [0, 1, 2, 3, 4, 6, 7, 8];
+        let affinity = [2, 3, 4, 5, 6, 7];
+        assert_eq!(select_cpus(&affinity, &available), vec![2, 3, 4, 6, 7]);
+    }
+
+    #[test]
+    fn cpufreq_fields_stay_aligned_with_cpufreq_cpus() {
+        let rec = EnvRecord::collect(std::process::id());
+        if let Some(list) = &rec.cpufreq_cpus {
+            let n = count_range_list(list);
+            for len in [
+                rec.cpu_governor.as_ref().map(|v| v.len()),
+                rec.cpu_freq_khz.as_ref().map(|v| v.len()),
+                rec.cpu_max_freq_khz.as_ref().map(|v| v.len()),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                assert_eq!(len, n);
+            }
+        }
     }
 
     #[test]
