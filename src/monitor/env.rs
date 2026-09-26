@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -64,6 +65,7 @@ impl EnvRecord {
             .unwrap_or(0);
 
         let cpus = cpufreq_cpus(pid);
+        let sys = Path::new(SYS_CPU);
         Self {
             ts_ms,
             host: hostname(),
@@ -72,9 +74,13 @@ impl EnvRecord {
             numa: numa(),
             affinity_inherited: affinity_range_list(),
             cpufreq_cpus: (!cpus.is_empty()).then(|| format_range_list(&cpus)),
-            cpu_governor: read_cpu_attr(&cpus, "scaling_governor", |s| Some(s.trim().to_string())),
-            cpu_freq_khz: read_cpu_attr(&cpus, "scaling_cur_freq", |s| s.trim().parse().ok()),
-            cpu_max_freq_khz: read_cpu_attr(&cpus, "cpuinfo_max_freq", |s| s.trim().parse().ok()),
+            cpu_governor: read_cpu_attr(sys, &cpus, "scaling_governor", |s| {
+                Some(s.trim().to_string())
+            }),
+            cpu_freq_khz: read_cpu_attr(sys, &cpus, "scaling_cur_freq", |s| s.trim().parse().ok()),
+            cpu_max_freq_khz: read_cpu_attr(sys, &cpus, "cpuinfo_max_freq", |s| {
+                s.trim().parse().ok()
+            }),
             thp_enabled: fs::read_to_string("/sys/kernel/mm/transparent_hugepage/enabled")
                 .ok()
                 .map(|s| s.trim().to_string()),
@@ -218,11 +224,11 @@ fn cpu_topology() -> Option<(u32, u32, u32)> {
     Some((n_sockets, cores, threads))
 }
 
-/// Read a per-cpu sysfs attribute (e.g. cpufreq/scaling_governor) for every
-/// online CPU. Returns None if the attribute is unreadable for cpu0.
+const SYS_CPU: &str = "/sys/devices/system/cpu";
+
 /// Read one cpufreq attribute for each CPU in `cpus`. All-or-nothing, so the
 /// result stays aligned with `cpus`: None if any CPU's value is missing.
-fn read_cpu_attr<T, F>(cpus: &[u32], attr: &str, mut parse: F) -> Option<Vec<T>>
+fn read_cpu_attr<T, F>(root: &Path, cpus: &[u32], attr: &str, mut parse: F) -> Option<Vec<T>>
 where
     F: FnMut(&str) -> Option<T>,
 {
@@ -231,7 +237,7 @@ where
     }
     cpus.iter()
         .map(|cpu| {
-            fs::read_to_string(format!("/sys/devices/system/cpu/cpu{cpu}/cpufreq/{attr}"))
+            fs::read_to_string(root.join(format!("cpu{cpu}/cpufreq/{attr}")))
                 .ok()
                 .and_then(|s| parse(&s))
         })
@@ -242,7 +248,7 @@ where
 /// allocation, on a cluster) intersected with the CPUs that expose cpufreq.
 /// Falls back to all cpufreq CPUs if the affinity cannot be read.
 fn cpufreq_cpus(pid: u32) -> Vec<u32> {
-    let available = cpufreq_available();
+    let available = cpufreq_available(Path::new(SYS_CPU));
     match affinity_cpus(pid as i32) {
         Some(affinity) => select_cpus(&affinity, &available),
         None => available,
@@ -251,8 +257,8 @@ fn cpufreq_cpus(pid: u32) -> Vec<u32> {
 
 /// CPUs with a cpufreq directory, found by listing rather than counting up
 /// from 0, so an offline CPU in the middle does not truncate the list.
-fn cpufreq_available() -> Vec<u32> {
-    let mut cpus: Vec<u32> = fs::read_dir("/sys/devices/system/cpu")
+fn cpufreq_available(root: &Path) -> Vec<u32> {
+    let mut cpus: Vec<u32> = fs::read_dir(root)
         .map(|rd| {
             rd.filter_map(|e| e.ok())
                 .filter_map(|e| {
@@ -566,21 +572,39 @@ mod tests {
     }
 
     #[test]
-    fn cpufreq_fields_stay_aligned_with_cpufreq_cpus() {
-        let rec = EnvRecord::collect(std::process::id());
-        if let Some(list) = &rec.cpufreq_cpus {
-            let n = count_range_list(list);
-            for len in [
-                rec.cpu_governor.as_ref().map(|v| v.len()),
-                rec.cpu_freq_khz.as_ref().map(|v| v.len()),
-                rec.cpu_max_freq_khz.as_ref().map(|v| v.len()),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                assert_eq!(len, n);
-            }
+    fn cpufreq_reads_listed_cpus_all_or_nothing() {
+        // cpu0, cpu1, cpu3 have cpufreq; cpu2 is offline (no cpufreq dir)
+        let root = tempfile::tempdir().unwrap();
+        for (cpu, gov) in [(0, "performance"), (1, "powersave"), (3, "performance")] {
+            let dir = root.path().join(format!("cpu{cpu}/cpufreq"));
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("scaling_governor"), format!("{gov}\n")).unwrap();
         }
+        fs::create_dir_all(root.path().join("cpu2")).unwrap();
+        fs::create_dir_all(root.path().join("cpufreq")).unwrap(); // not a cpu
+
+        let cpus = cpufreq_available(root.path());
+        assert_eq!(cpus, [0, 1, 3]);
+        let gov = |cpus: &[u32]| {
+            read_cpu_attr(root.path(), cpus, "scaling_governor", |s| {
+                Some(s.trim().to_string())
+            })
+        };
+        assert_eq!(
+            gov(&cpus).unwrap(),
+            ["performance", "powersave", "performance"]
+        );
+        assert_eq!(gov(&[0, 2]), None); // one missing value drops the field
+        assert_eq!(gov(&[]), None);
+    }
+
+    #[test]
+    fn cpufreq_cpus_falls_back_when_affinity_unreadable() {
+        // no such pid: sched_getaffinity fails, so every cpufreq CPU is reported
+        assert_eq!(
+            cpufreq_cpus(i32::MAX as u32),
+            cpufreq_available(Path::new(SYS_CPU))
+        );
     }
 
     #[test]
