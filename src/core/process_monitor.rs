@@ -394,7 +394,7 @@ impl ProcessMonitor {
         // Use minimal system initialization - avoid expensive system-wide scans
         let mut sys = System::new();
         // Only refresh CPU info once at startup
-        sys.refresh_cpu_all();
+        sys.refresh_cpu_usage();
 
         let now = Instant::now();
         let pid_usize: usize = pid.try_into().unwrap();
@@ -489,7 +489,7 @@ impl ProcessMonitor {
         // Use minimal system initialization - avoid expensive system-wide scans
         let mut sys = System::new();
         // Only refresh CPU info once at startup
-        sys.refresh_cpu_all();
+        sys.refresh_cpu_usage();
 
         // Check if the specific process exists - much faster than system-wide scan
         let pid_sys = Pid::from_u32(pid as u32);
@@ -808,12 +808,12 @@ impl ProcessMonitor {
 
             // Now we can safely refresh
             let _ = process; // Explicitly drop the process reference
-            self.sys.refresh_cpu_all();
+            self.sys.refresh_cpu_usage();
 
             // If not enough time has passed, add a delay for accuracy
             if time_since_last_refresh < delays::CPU_MEASUREMENT {
                 std::thread::sleep(delays::CPU_MEASUREMENT);
-                self.sys.refresh_cpu_all();
+                self.sys.refresh_cpu_usage();
                 self.sys.refresh_processes_specifics(
                     ProcessesToUpdate::Some(&[pid]),
                     false,
