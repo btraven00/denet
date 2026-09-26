@@ -145,6 +145,7 @@ impl PyProcessMonitor {
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (pid, base_interval_ms, max_interval_ms, since_process_start=false, output_file=None, output_format="jsonl", store_in_memory=true, quiet=false, include_children=true, write_metadata=false, write_env=false, enable_ebpf=false, enable_gpu=false))]
     fn from_pid(
+        py: Python<'_>,
         pid: usize,
         base_interval_ms: u64,
         max_interval_ms: u64,
@@ -167,13 +168,18 @@ impl PyProcessMonitor {
             write_metadata.unwrap_or(false),
             write_env.unwrap_or(false),
         )?;
-        let mut inner = ProcessMonitor::from_pid_with_options(
-            pid,
-            Duration::from_millis(base_interval_ms),
-            Duration::from_millis(max_interval_ms),
-            since_process_start,
-        )
-        .map_err(map_io_error)?;
+        // Setup reads /proc and sysfs and probes perf/PSI/RAPL; release the GIL
+        // so monitors for concurrent jobs can start in parallel.
+        let mut inner = py
+            .detach(|| {
+                ProcessMonitor::from_pid_with_options(
+                    pid,
+                    Duration::from_millis(base_interval_ms),
+                    Duration::from_millis(max_interval_ms),
+                    since_process_start,
+                )
+            })
+            .map_err(map_io_error)?;
 
         // Enable child process monitoring if requested
         inner.set_include_children(include_children);
