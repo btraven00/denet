@@ -1,6 +1,6 @@
 [package]
 name = "denet"
-version = "0.9.1"
+version = "0.10.0"
 default-run = "denet"
 edition = "2021"
 description = "a simple process monitor"
