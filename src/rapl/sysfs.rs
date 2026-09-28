@@ -82,11 +82,17 @@ impl RaplSampler {
             total_uj += counter_delta(z.last_uj, cur, z.max_uj);
             z.last_uj = cur;
         }
-        let package_joules = total_uj as f64 / 1_000_000.0;
-        Some(RaplEnergy {
+        Some(self.attribute(total_uj as f64 / 1_000_000.0, cpu_usage))
+    }
+
+    /// Split an already-read package total by `cpu_usage`'s share of the machine.
+    /// The tree sampler calls this again with the whole tree's CPU, so the counter
+    /// is read once per tick but attributed to every monitored process.
+    pub fn attribute(&self, package_joules: f64, cpu_usage: f32) -> RaplEnergy {
+        RaplEnergy {
             package_joules,
             process_joules: package_joules * cpu_share(cpu_usage, self.ncpus),
-        })
+        }
     }
 }
 
@@ -120,6 +126,12 @@ impl RaplSampler {
     pub fn sample_delta(&mut self, _cpu_usage: f32) -> Option<RaplEnergy> {
         None
     }
+    pub fn attribute(&self, package_joules: f64, _cpu_usage: f32) -> RaplEnergy {
+        RaplEnergy {
+            package_joules,
+            process_joules: 0.0,
+        }
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -144,6 +156,17 @@ mod tests {
         assert!(!is_package_zone("intel-rapl-mmio:0")); // mmio mirror
         assert!(!is_package_zone("intel-rapl:")); // malformed
         assert!(!is_package_zone("other"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn attribute_splits_by_cpu_share() {
+        let s = RaplSampler {
+            zones: vec![],
+            ncpus: 4,
+        };
+        // Two full cores of four → half the package energy.
+        assert_eq!(s.attribute(8.0, 200.0).process_joules, 4.0);
     }
 
     #[test]
