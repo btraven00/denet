@@ -3,8 +3,8 @@
 use crate::core::constants::delays;
 use crate::core::constants::system;
 use crate::monitor::{
-    AggregatedMetrics, Capabilities, ChildProcessMetrics, ChildRecord, Metrics, ProcessMetadata,
-    ProcessTreeMetrics, Summary,
+    AggregatedMetrics, Capabilities, ChildProcessMetrics, ChildRecord, ExitRecord, Metrics,
+    ProcessMetadata, ProcessTreeMetrics, Summary,
 };
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
@@ -257,6 +257,16 @@ pub struct ProcessMonitor {
     child: Option<Child>,
     pid: usize,
     sys: System,
+    /// ts_ms of the last sample that read /proc/<pid>/io; see [`Self::finish`].
+    last_sample_ms: Option<u64>,
+    /// Last readable (rchar, wchar): a zombie's /proc/<pid>/io is EACCES, so
+    /// the post-exit sample carries these forward instead of dropping to None.
+    last_syscall_io: Option<(u64, u64)>,
+    /// rusage of the exited spawned child, peeked (not reaped) at exit.
+    #[cfg(target_os = "linux")]
+    exit_rusage: Option<libc::rusage>,
+    /// ts_ms at which `is_running` first saw the process gone or a zombie.
+    exit_detected_ms: Option<u64>,
     base_interval: Duration,
     max_interval: Duration,
     start_time: Instant,
@@ -433,6 +443,11 @@ impl ProcessMonitor {
             #[cfg(feature = "ebpf")]
             net_monitor: None,
             last_refresh_time: now,
+            last_sample_ms: None,
+            last_syscall_io: None,
+            #[cfg(target_os = "linux")]
+            exit_rusage: None,
+            exit_detected_ms: None,
             #[cfg(target_os = "linux")]
             cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
             #[cfg(feature = "gpu")]
@@ -557,6 +572,11 @@ impl ProcessMonitor {
             #[cfg(feature = "ebpf")]
             net_monitor: None,
             last_refresh_time: now,
+            last_sample_ms: None,
+            last_syscall_io: None,
+            #[cfg(target_os = "linux")]
+            exit_rusage: None,
+            exit_detected_ms: None,
             #[cfg(target_os = "linux")]
             cpu_sampler: crate::cpu_sampler::CpuSampler::new(),
             #[cfg(feature = "gpu")]
@@ -784,9 +804,20 @@ impl ProcessMonitor {
         // Extract basic process info
         let mem_rss_kb = process.memory() / 1024;
         let mem_vms_kb = process.virtual_memory() / 1024;
-        let current_disk_read = process.disk_usage().total_read_bytes;
-        let current_disk_write = process.disk_usage().total_written_bytes;
-        let current_syscall_io = read_syscall_io_bytes(self.pid);
+        #[allow(unused_mut)]
+        let mut current_disk_read = process.disk_usage().total_read_bytes;
+        #[allow(unused_mut)]
+        let mut current_disk_write = process.disk_usage().total_written_bytes;
+        let io_readable = read_syscall_io_bytes(self.pid);
+        let current_syscall_io = io_readable.or(self.last_syscall_io);
+        self.last_syscall_io = current_syscall_io;
+        // Exited child: /proc/<pid>/io is gone, but rusage has the final
+        // block counts (read_bytes/write_bytes >> 9, so up to 511 B short).
+        #[cfg(target_os = "linux")]
+        if let Some(ru) = &self.exit_rusage {
+            current_disk_read = current_disk_read.max(ru.ru_inblock as u64 * 512);
+            current_disk_write = current_disk_write.max(ru.ru_oublock as u64 * 512);
+        }
         let current_faults = read_page_faults(self.pid);
         let thread_count = get_thread_count(self.pid);
         let uptime_secs = process.run_time();
@@ -943,6 +974,9 @@ impl ProcessMonitor {
             .as_mut()
             .and_then(|s| s.sample_delta(cpu_usage));
 
+        if io_readable.is_some() {
+            self.last_sample_ms = Some(ts_ms);
+        }
         Some(Metrics {
             ts_ms,
             cpu_usage,
@@ -977,45 +1011,120 @@ impl ProcessMonitor {
         status.code()
     }
 
+    /// Whether the process is still alive. Exit is detected without reaping
+    /// (a spawned child stays a zombie until [`Self::exit_code`]), so one more
+    /// sample after this turns false still reads the final `/proc` counters.
     pub fn is_running(&mut self) -> bool {
         self.release_hold();
-        // If we have a child process, use try_wait to check its status
-        if let Some(child) = &mut self.child {
-            match child.try_wait() {
-                Ok(Some(_)) => false,
-                Ok(None) => true,
-                Err(_) => false,
+        let running = self.check_running();
+        if !running && self.exit_detected_ms.is_some() {
+            // Second look after exit: the final sample had its chance, reap.
+            if let Some(child) = &mut self.child {
+                let _ = child.try_wait();
             }
-        } else {
-            // For existing processes, check if it still exists
-            let pid = Pid::from_u32(self.pid as u32);
+        } else if !running {
+            self.exit_detected_ms = Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_millis() as u64,
+            );
+        }
+        running
+    }
 
-            // First try with specific process refresh
+    fn check_running(&mut self) -> bool {
+        // Spawned child: WNOWAIT peeks at the exit without reaping, keeping
+        // /proc/<pid>/stat readable for the final sample. The raw syscall's
+        // 5th argument (not exposed by libc's waitid) returns the zombie's
+        // rusage, the only post-exit source for its block I/O totals.
+        #[cfg(target_os = "linux")]
+        if let Some(child) = &self.child {
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
+            let rc = unsafe {
+                libc::syscall(
+                    libc::SYS_waitid,
+                    libc::P_PID,
+                    child.id() as libc::id_t,
+                    &mut info as *mut libc::siginfo_t,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                    &mut ru as *mut libc::rusage,
+                )
+            };
+            // si_pid stays 0 while the child runs; ECHILD means already reaped.
+            let running = rc == 0 && unsafe { info.si_pid() } == 0;
+            if !running && rc == 0 && self.exit_rusage.is_none() {
+                self.exit_rusage = Some(ru);
+            }
+            return running;
+        }
+        #[cfg(not(target_os = "linux"))]
+        if let Some(child) = &mut self.child {
+            return matches!(child.try_wait(), Ok(None));
+        }
+
+        // For existing processes, check if it still exists
+        let pid = Pid::from_u32(self.pid as u32);
+
+        // First try with specific process refresh
+        self.sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid]),
+            false,
+            process_refresh_kind(),
+        );
+
+        // If specific refresh doesn't work, try refreshing all processes
+        if self.sys.process(pid).is_none() {
             self.sys.refresh_processes_specifics(
-                ProcessesToUpdate::Some(&[pid]),
-                false,
+                ProcessesToUpdate::All,
+                true,
                 process_refresh_kind(),
             );
 
-            // If specific refresh doesn't work, try refreshing all processes
-            if self.sys.process(pid).is_none() {
-                self.sys.refresh_processes_specifics(
-                    ProcessesToUpdate::All,
-                    true,
-                    process_refresh_kind(),
-                );
-
-                // Give a small amount of time for the process to be detected
-                // This helps with the test reliability
-                std::thread::sleep(system::PROCESS_DETECTION);
-            }
-
-            // A zombie still has a /proc entry until its parent reaps it, but it
-            // has exited: treat it as not running, or attach/run() never return.
-            self.sys
-                .process(pid)
-                .is_some_and(|p| !matches!(p.status(), ProcessStatus::Zombie | ProcessStatus::Dead))
+            // Give a small amount of time for the process to be detected
+            // This helps with the test reliability
+            std::thread::sleep(system::PROCESS_DETECTION);
         }
+
+        // A zombie still has a /proc entry until its parent reaps it, but it
+        // has exited: treat it as not running, or attach/run() never return.
+        self.sys
+            .process(pid)
+            .is_some_and(|p| !matches!(p.status(), ProcessStatus::Zombie | ProcessStatus::Dead))
+    }
+
+    /// Sleep until the next sample is due, but return as soon as the process
+    /// exits. Liveness is polled every `sampling::LIVENESS_POLL` rather than
+    /// once per (adaptive, up to seconds) interval, so the final sample is
+    /// taken right after exit: in attach mode the real parent may reap the
+    /// zombie at any moment, and its counters go with it.
+    pub fn wait_next_sample(&mut self, interval: Duration) {
+        let deadline = Instant::now() + interval;
+        while self.is_running() {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            std::thread::sleep(left.min(crate::core::constants::sampling::LIVENESS_POLL));
+        }
+    }
+
+    /// Call after the final sample: reaps a spawned child and, if the
+    /// process exited, returns the record closing the stream.
+    /// `last_sample_to_exit_ms` bounds the tail of /proc/<pid>/io-derived
+    /// counters no sample covered. In run mode that is only `syscall_*`:
+    /// `disk_*` come from the exit rusage, and page faults and RAPL from the
+    /// post-exit sample. In attach mode it bounds `disk_*` and `syscall_*`.
+    pub fn finish(&mut self) -> Option<ExitRecord> {
+        if let Some(child) = &mut self.child {
+            let _ = child.try_wait();
+        }
+        let exit_ms = self.exit_detected_ms?;
+        Some(ExitRecord {
+            ts_ms: exit_ms,
+            last_sample_to_exit_ms: self.last_sample_ms.map(|last| exit_ms.saturating_sub(last)),
+        })
     }
 
     // Get the process ID

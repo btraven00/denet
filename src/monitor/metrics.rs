@@ -191,6 +191,20 @@ pub struct ChildRecord {
     pub exe: Option<String>,
 }
 
+/// Written once, after the last sample, when the monitored process exited.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ExitRecord {
+    /// When exit was detected (the exit itself happened at most one
+    /// liveness poll earlier).
+    pub ts_ms: u64,
+    /// Detection time minus the last sample that read /proc/<pid>/io, which
+    /// an exited process no longer allows: counters sourced only there (see
+    /// docs/data-format.md) miss at most this window. None if no sample ever
+    /// read it.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub last_sample_to_exit_ms: Option<u64>,
+}
+
 /// Aggregated metrics across multiple processes
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AggregatedMetrics {

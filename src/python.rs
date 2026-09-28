@@ -619,7 +619,6 @@ impl PyProcessMonitor {
     fn run_loop(&mut self) -> PyResult<()> {
         use std::fs::OpenOptions;
         use std::io::Write;
-        use std::thread::sleep;
 
         // Open file if output_file is specified
         let mut file_handle = if let Some(path) = &self.output_config.output_file {
@@ -634,7 +633,11 @@ impl PyProcessMonitor {
             None
         };
 
-        while self.inner.is_running() {
+        // The sample after exit is detected is the last one: it still reads
+        // the exited process's final counters.
+        let mut exited = false;
+        while !exited {
+            exited = !self.inner.is_running();
             let json = if self.inner.get_include_children() {
                 let tree_metrics = self.inner.sample_tree_metrics();
                 for line in child_lines(&mut self.inner)? {
@@ -651,8 +654,10 @@ impl PyProcessMonitor {
                 match self.inner.sample_metrics() {
                     Some(metrics) => tagged_json("sample", &metrics)
                         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?,
+                    None if exited => break,
                     None => {
-                        sleep(self.inner.adaptive_interval());
+                        let interval = self.inner.adaptive_interval();
+                        self.inner.wait_next_sample(interval);
                         continue;
                     }
                 }
@@ -668,7 +673,20 @@ impl PyProcessMonitor {
                 println!("{json}");
             }
 
-            sleep(self.inner.adaptive_interval());
+            if !exited {
+                let interval = self.inner.adaptive_interval();
+                self.inner.wait_next_sample(interval);
+            }
+        }
+
+        if let Some(exit) = self.inner.finish() {
+            let json = tagged_json("exit", &exit)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+            if let Some(file) = &mut file_handle {
+                writeln!(file, "{json}").map_err(map_io_error)?;
+            } else if !self.output_config.quiet {
+                println!("{json}");
+            }
         }
         Ok(())
     }

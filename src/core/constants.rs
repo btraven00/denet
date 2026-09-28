@@ -28,6 +28,10 @@ pub mod sampling {
     /// Maximum interval - 1000ms
     /// Default maximum adaptive interval
     pub const MAX_ADAPTIVE: Duration = Duration::from_millis(1000);
+
+    /// Liveness poll while waiting for the next sample - 20ms
+    /// Bounds how late exit is noticed, whatever the sampling interval
+    pub const LIVENESS_POLL: Duration = Duration::from_millis(20);
 }
 
 /// Duration constants for timeouts

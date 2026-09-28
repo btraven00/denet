@@ -364,8 +364,12 @@ def load_metrics(path: str, include_metadata: bool = False) -> list[dict[str, An
             return json.loads(content)
         else:
             # JSONL format (one JSON object per line)
-            # `child` records (per-child argv) are not metrics; they'd pass for metadata below
-            lines = [line for line in content.split("\n") if line.strip() and '"kind":"child"' not in line]
+            # `child` (per-child argv) and `exit` records are not metrics; they'd pass for metadata below
+            lines = [
+                line
+                for line in content.split("\n")
+                if line.strip() and '"kind":"child"' not in line and '"kind":"exit"' not in line
+            ]
 
             # Process metadata line
             metadata = None

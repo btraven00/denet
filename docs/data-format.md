@@ -4,7 +4,7 @@ Denet outputs JSON in a streaming format optimized for efficiency and time-serie
 
 ## Format Structure
 
-Every line carries a `"kind"` discriminator so downstream tooling can dispatch by type. The possible values are `env`, `metadata`, `child`, `sample`, and `tree`.
+Every line carries a `"kind"` discriminator so downstream tooling can dispatch by type. The possible values are `env`, `metadata`, `child`, `sample`, `tree`, and `exit`.
 
 **Optional first line** (when `--write-env` is set): host/NUMA/affinity snapshot, emitted once.
 ```json
@@ -24,6 +24,11 @@ Every line carries a `"kind"` discriminator so downstream tooling can dispatch b
 **Child records**: one per child process, written just before the tree record of the sample in which the child first appears, and again if its command line changes (`exec`).
 ```json
 {"kind":"child","ts_ms":1748542001000,"pid":1240,"ppid":1234,"cmd":["samtools","sort","-n","-@","2","in.bam"],"exe":"/usr/bin/samtools"}
+```
+
+**Exit record**: last line, written once when the monitored process exited (absent on Ctrl-C or `--duration` timeout). See [Final interval](#final-interval).
+```json
+{"kind":"exit","ts_ms":1748542005020,"last_sample_to_exit_ms":20}
 ```
 
 Single-process mode (`--exclude-children`) emits `{"kind":"sample",...}` records instead, and no child records.
@@ -154,6 +159,17 @@ Includes all fields from Individual Process Metrics plus:
 - **Default**: Shows delta I/O since monitoring started
 - **`--since-process-start`**: Shows cumulative I/O since process start
 - **Network I/O**: `sys_net_*` fields are a system-wide approximation (not per-process). With the `ebpf` feature and `--enable-ebpf`, per-process bytes appear under `ebpf.network` (see docs/ebpf.md).
+
+### Final interval
+
+Liveness is polled every 20 ms, independently of the (adaptive) sampling interval, and one more sample is taken as soon as exit is seen. That sample still captures the last interval of `page_faults_*` (from `/proc/<pid>/stat`) and `rapl`. `/proc/<pid>/io` is unreadable once a process has exited, however, so what the last sample holds for the fields read from it depends on the mode:
+
+| Field | `run` | `attach` |
+|-------|-------|----------|
+| `disk_read_bytes`, `disk_write_bytes` | exact, from the exit rusage (up to 511 B short: 512-byte units) | last `/proc/<pid>/io` read |
+| `syscall_read_bytes`, `syscall_write_bytes` | last `/proc/<pid>/io` read | last `/proc/<pid>/io` read |
+
+The `exit` record's `last_sample_to_exit_ms` is the time between the last sample that read `/proc/<pid>/io` and exit detection, so the fields marked "last read" miss at most that window of I/O. The process exited at most one liveness poll before `ts_ms`. In attach mode, a parent that reaps the process within that poll leaves it gone before the final sample, so page faults and RAPL also stop at the previous sample.
 
 ## Output Options
 
