@@ -3,7 +3,7 @@
 //! logic these methods call lives in the parent module and is covered there.
 
 #[cfg(target_os = "linux")]
-use super::{counter_delta, cpu_share};
+use super::counter_delta;
 use super::{RaplCapability, RaplEnergy};
 
 #[cfg(target_os = "linux")]
@@ -89,9 +89,21 @@ impl RaplSampler {
     /// The tree sampler calls this again with the whole tree's CPU, so the counter
     /// is read once per tick but attributed to every monitored process.
     pub fn attribute(&self, package_joules: f64, cpu_usage: f32) -> RaplEnergy {
-        RaplEnergy {
-            package_joules,
-            process_joules: package_joules * cpu_share(cpu_usage, self.ncpus),
+        super::attribute(package_joules, cpu_usage, self.ncpus)
+    }
+
+    /// Sampler over a single fake counter file, so tests can drive RAPL
+    /// without root.
+    #[cfg(test)]
+    pub(crate) fn from_counter(energy_path: std::path::PathBuf, ncpus: usize) -> Self {
+        let last_uj = read_uj(&energy_path).expect("readable fake counter");
+        Self {
+            zones: vec![Zone {
+                energy_path,
+                max_uj: u64::MAX,
+                last_uj,
+            }],
+            ncpus,
         }
     }
 }
@@ -156,17 +168,6 @@ mod tests {
         assert!(!is_package_zone("intel-rapl-mmio:0")); // mmio mirror
         assert!(!is_package_zone("intel-rapl:")); // malformed
         assert!(!is_package_zone("other"));
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn attribute_splits_by_cpu_share() {
-        let s = RaplSampler {
-            zones: vec![],
-            ncpus: 4,
-        };
-        // Two full cores of four → half the package energy.
-        assert_eq!(s.attribute(8.0, 200.0).process_joules, 4.0);
     }
 
     #[test]

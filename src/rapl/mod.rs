@@ -56,6 +56,15 @@ pub(crate) fn cpu_share(cpu_usage: f32, ncpus: usize) -> f64 {
     ((cpu_usage as f64 / 100.0) / ncpus as f64).clamp(0.0, 1.0)
 }
 
+/// Split a package total by `cpu_usage`'s share of an `ncpus` machine.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn attribute(package_joules: f64, cpu_usage: f32, ncpus: usize) -> RaplEnergy {
+    RaplEnergy {
+        package_joules,
+        process_joules: package_joules * cpu_share(cpu_usage, ncpus),
+    }
+}
+
 /// Wrap-safe delta of a cumulative counter that resets at `max`.
 /// Only used by the Linux-gated sampler; `test` keeps it for cross-platform tests.
 #[cfg(any(target_os = "linux", test))]
@@ -95,6 +104,14 @@ mod tests {
     fn share_single_core_of_four() {
         // 100% (one full core) on a 4-core box = 1/4 of capacity.
         assert!((cpu_share(100.0, 4) - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn attribute_splits_by_cpu_share() {
+        // Two full cores of four → half the package energy.
+        let e = attribute(8.0, 200.0, 4);
+        assert_eq!(e.package_joules, 8.0);
+        assert_eq!(e.process_joules, 4.0);
     }
 
     #[test]

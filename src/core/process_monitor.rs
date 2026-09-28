@@ -3328,6 +3328,48 @@ mod gpu_opt_in_tests {
 }
 
 #[cfg(all(test, target_os = "linux"))]
+mod rapl_tree_tests {
+    use super::*;
+
+    /// A wrapper parent idles while its child burns CPU: the tree's energy
+    /// slice must follow the tree's CPU, not the parent's.
+    #[test]
+    fn tree_energy_follows_tree_cpu() {
+        let dir = tempfile::tempdir().unwrap();
+        let counter = dir.path().join("energy_uj");
+        std::fs::write(&counter, "0").unwrap();
+
+        let ms = Duration::from_millis(100);
+        let cmd = ["sh", "-c", "timeout 3 sh -c 'while :; do :; done'"];
+        let mut m =
+            ProcessMonitor::new(cmd.iter().map(|s| s.to_string()).collect(), ms, ms).unwrap();
+        m.rapl_sampler = Some(crate::rapl::RaplSampler::from_counter(counter.clone(), 1));
+
+        let mut uj = 0u64;
+        for _ in 0..30 {
+            uj += 1_000_000; // 1 J per tick
+            std::fs::write(&counter, uj.to_string()).unwrap();
+            std::thread::sleep(ms);
+            let tree = m.sample_tree_metrics();
+            let (Some(parent), Some(agg)) = (tree.parent, tree.aggregated) else {
+                continue;
+            };
+            if agg.cpu_usage <= parent.cpu_usage + 50.0 {
+                continue; // child not busy yet
+            }
+            let e = agg.rapl.expect("rapl on aggregate");
+            assert_eq!(
+                e,
+                crate::rapl::attribute(e.package_joules, agg.cpu_usage, 1)
+            );
+            assert!(e.process_joules > parent.rapl.unwrap().process_joules);
+            return;
+        }
+        panic!("busy child never showed up in tree CPU");
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
 mod hold_tests {
     use super::*;
 
