@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.2](https://github.com/btraven00/denet/compare/v0.10.1...v0.10.2) (2026-09-28)
+
+
+### Bug Fixes
+
+* **monitor:** capture the final interval before exit ([281ed0d](https://github.com/btraven00/denet/commit/281ed0d56cba6a0cb79385d03a9600c8ea30fb77))
+
 ## [0.10.1](https://github.com/btraven00/denet/compare/v0.10.0...v0.10.1) (2026-09-28)
 
 
