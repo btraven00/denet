@@ -1290,7 +1290,7 @@ impl ProcessMonitor {
                     cpu_core: Self::get_process_cpu_core(*child_pid),
                     gpu: None,     // Child processes don't get individual GPU metrics
                     psi_mem: None, // PSI is per-tree, captured on the parent
-                    rapl: None,    // RAPL is per-tree, captured on the parent
+                    rapl: None,    // RAPL is per-tree, attributed on the aggregate
                     perf: None,    // Per-child perf groups not opened (parent uses inherit=1)
                 };
 
@@ -1367,6 +1367,13 @@ impl ProcessMonitor {
                 agg.sys_net_tx_bytes += child.metrics.sys_net_tx_bytes;
                 agg.thread_count += child.metrics.thread_count;
                 agg.process_count += 1;
+            }
+
+            // The parent attributed RAPL by its own CPU only; a wrapper parent
+            // (shell, launcher) idles while children work, so re-attribute the
+            // same package total (no second counter read) by the tree's CPU.
+            if let (Some(e), Some(s)) = (agg.rapl.as_mut(), self.rapl_sampler.as_ref()) {
+                *e = s.attribute(e.package_joules, agg.cpu_usage);
             }
 
             // Collect eBPF metrics if enabled
