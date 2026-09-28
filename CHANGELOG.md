@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/btraven00/denet/compare/v0.10.0...v0.10.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* **rapl:** attribute CPU energy over the whole process tree ([61f316f](https://github.com/btraven00/denet/commit/61f316fccdcb614793f0a671669308a9c5b3576e))
+
 ## [0.10.0](https://github.com/btraven00/denet/compare/v0.9.1...v0.10.0) (2026-09-26)
 
 
