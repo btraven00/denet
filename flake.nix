@@ -43,11 +43,10 @@
               python312
               #linuxHeaders  # Linux headers for eBPF development
               #libbpf
-              #bcc          # For BPF headers
             ];
 
             # Add compile flags for BPF headers
-            NIX_CFLAGS_COMPILE = "-I${pkgs.linuxHeaders}/include -I${pkgs.libbpf}/include -I${pkgs.bcc}/include";
+            NIX_CFLAGS_COMPILE = "-I${pkgs.linuxHeaders}/include -I${pkgs.libbpf}/include";
 
             # Set Cargo build target
             CARGO_BUILD_TARGET = pkgs.stdenv.hostPlatform.rust.rustcTargetSpec;
