@@ -353,3 +353,62 @@ fn test_monitoring_result_sample_access() {
         assert!(last.mem_rss_kb < u64::MAX);
     }
 }
+
+/// Disk I/O done between the last regular sample and exit must still be
+/// counted: the exit rusage covers it. With a 5s interval no regular sample
+/// can land after the write. Needs a disk-backed dir (tmpfs has no
+/// write_bytes), hence the cwd, not /tmp.
+#[cfg(target_os = "linux")]
+#[test]
+fn test_final_interval_disk_write_is_counted() {
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let out = dir.path().join("out");
+    let cmd = vec![
+        "sh".to_string(),
+        "-c".to_string(),
+        format!(
+            "sleep 0.3; exec dd if=/dev/zero of={} bs=1M count=4 conv=fsync status=none",
+            out.display()
+        ),
+    ];
+    let monitor = ProcessMonitor::new(cmd, Duration::from_secs(5), Duration::from_secs(5)).unwrap();
+    let started = Instant::now();
+    let config = MonitoringConfig::new().with_sample_interval(Duration::from_secs(5));
+    let result = MonitoringLoop::with_config(config).run(monitor);
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "exit not noticed mid-interval"
+    );
+    let written = result.last_sample().unwrap().disk_write_bytes;
+    assert!(
+        written >= 4 << 20,
+        "final interval lost: disk_write_bytes {written}"
+    );
+}
+
+/// The exit record bounds the window /proc/<pid>/io could not cover, and
+/// `finish` reaps the child.
+#[cfg(target_os = "linux")]
+#[test]
+fn test_exit_record_bounds_tail() {
+    let cmd = vec!["sh".to_string(), "-c".to_string(), "sleep 0.2".to_string()];
+    let mut monitor =
+        ProcessMonitor::new(cmd, Duration::from_millis(50), Duration::from_millis(50)).unwrap();
+    while monitor.is_running() {
+        monitor.sample_metrics();
+        monitor.wait_next_sample(Duration::from_millis(50));
+    }
+    let last = monitor
+        .sample_metrics()
+        .expect("zombie must stay sampleable");
+    assert!(
+        last.syscall_read_bytes.is_some(),
+        "syscall_* carried forward"
+    );
+    let exit = monitor.finish().expect("exit record");
+    let gap = exit
+        .last_sample_to_exit_ms
+        .expect("some sample read /proc io");
+    assert!(gap <= 200, "gap {gap}ms exceeds one interval + poll");
+    assert_eq!(monitor.exit_code(), Some(0));
+}

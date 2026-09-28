@@ -366,8 +366,11 @@ fn execute_monitoring_with_output(
             metrics_count = 1;
         }
     } else {
-        // Regular adaptive polling mode
-        while monitor.is_running() && running.load(Ordering::SeqCst) {
+        // Regular adaptive polling mode. The sample after exit is detected is
+        // the last one: it still reads the exited process's final counters.
+        let mut exited = false;
+        while !exited && running.load(Ordering::SeqCst) {
+            exited = !monitor.is_running();
             // Check timeout
             if let Some(timeout_duration) = timeout {
                 if start_time.elapsed() >= timeout_duration {
@@ -519,10 +522,22 @@ fn execute_monitoring_with_output(
                 }
             }
 
-            // Sleep for the adaptive interval
-            std::thread::sleep(monitor.adaptive_interval());
+            if !exited {
+                let interval = monitor.adaptive_interval();
+                monitor.wait_next_sample(interval);
+            }
         }
     } // End of polling mode else block
+
+    if let Some(exit) = monitor.finish() {
+        let json = tagged_json("exit", &exit).unwrap();
+        if let Some(file) = &mut file_handles.out_file {
+            writeln!(file, "{json}")?;
+        }
+        if args.json && !args.quiet && !update_in_place {
+            println!("{json}");
+        }
+    }
 
     // Calculate summary
     let runtime = start_time.elapsed();

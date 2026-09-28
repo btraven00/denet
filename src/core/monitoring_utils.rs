@@ -155,8 +155,11 @@ impl MonitoringLoop {
         let mut timed_out = false;
         let mut interrupted = false;
 
-        // Main monitoring loop
-        while monitor.is_running() {
+        // Main monitoring loop. The sample after exit is detected is the
+        // last one: it still reads the exited process's final counters.
+        let mut exited = false;
+        while !exited {
+            exited = !monitor.is_running();
             // Check for timeout
             if let Some(timeout) = self.config.timeout {
                 if start_time.elapsed() >= timeout {
@@ -179,9 +182,12 @@ impl MonitoringLoop {
                 samples.push(metrics);
             }
 
-            // Sleep between samples
-            std::thread::sleep(self.config.sample_interval);
+            if !exited {
+                monitor.wait_next_sample(self.config.sample_interval);
+            }
         }
+
+        monitor.finish();
 
         // Collect final samples if configured
         if self.config.monitor_after_exit && self.config.final_sample_count > 0 {
