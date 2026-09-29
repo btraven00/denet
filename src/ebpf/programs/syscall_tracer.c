@@ -14,6 +14,7 @@
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
+#include "pidns.h"
 
 // BPF map to store syscall counts per PID
 struct {
@@ -60,8 +61,9 @@ static inline void update_syscall_maps(__u32 pid, __u32 syscall_nr) {
 #define TRACE_SYSCALL(name, nr)                                                \
     SEC("tracepoint/syscalls/sys_enter_" #name)                                \
     int trace_##name##_enter(void *ctx) {                                      \
-        __u32 pid = bpf_get_current_pid_tgid() >> 32;                          \
-        update_syscall_maps(pid, (nr));                                        \
+        __u32 tgid, tid;                                                       \
+        if (current_tgid_pid(&tgid, &tid))                                     \
+            update_syscall_maps(tgid, (nr));                                   \
         return 0;                                                              \
     }
 

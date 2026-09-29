@@ -92,9 +92,11 @@ impl NetMonitor {
     }
 
     fn init_ebpf(pids: &HashSet<u32>) -> Result<(Ebpf, NetBytesMap, PidFilterMap)> {
-        let mut bpf = Ebpf::load(NET_MONITOR_BYTECODE).map_err(|e| {
-            DenetError::EbpfInitError(format!("failed to load net_monitor bytecode: {}", e))
-        })?;
+        let mut bpf = crate::ebpf::pidns_loader()
+            .load(NET_MONITOR_BYTECODE)
+            .map_err(|e| {
+                DenetError::EbpfInitError(format!("failed to load net_monitor bytecode: {}", e))
+            })?;
 
         // Seed the PID filter BEFORE attaching: maps exist after Ebpf::load,
         // so there is no window where probes run against an empty filter and

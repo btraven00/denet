@@ -19,6 +19,29 @@ pub mod syscall_tracker;
 
 pub use metrics::*;
 
+/// Loader for denet's eBPF programs, with the `pidns_dev`/`pidns_ino` globals
+/// set to denet's own PID namespace so the programs report PIDs as /proc shows
+/// them to denet (see `programs/pidns.h`). In the initial namespace both stay
+/// zero and the programs use initial-namespace PIDs, as before.
+#[cfg(target_os = "linux")]
+pub(crate) fn pidns_loader() -> aya::EbpfLoader<'static> {
+    use std::os::unix::fs::MetadataExt;
+    use std::sync::OnceLock;
+
+    // Inode of the initial PID namespace (PROC_PID_INIT_INO in the kernel)
+    const PROC_PID_INIT_INO: u64 = 0xEFFF_FFFC;
+    static NS: OnceLock<(u64, u64)> = OnceLock::new();
+    let (dev, ino) = NS.get_or_init(|| match std::fs::metadata("/proc/self/ns/pid") {
+        Ok(m) if m.ino() != PROC_PID_INIT_INO => (m.dev(), m.ino()),
+        _ => (0, 0),
+    });
+    let mut loader = aya::EbpfLoader::new();
+    loader
+        .set_global("pidns_dev", dev, true)
+        .set_global("pidns_ino", ino, true);
+    loader
+}
+
 #[cfg(target_os = "linux")]
 pub use debug::debug_println;
 #[cfg(target_os = "linux")]

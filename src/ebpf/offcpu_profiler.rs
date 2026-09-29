@@ -332,7 +332,7 @@ impl OffCpuProfiler {
         debug::debug_println(&format!("eBPF bytecode preview: {}", hex_bytes.join(" ")));
 
         // Load the eBPF program
-        let bpf = match Ebpf::load(OFFCPU_PROFILER_BYTECODE) {
+        let bpf = match crate::ebpf::pidns_loader().load(OFFCPU_PROFILER_BYTECODE) {
             Ok(bpf) => {
                 debug::debug_println("Successfully loaded off-CPU profiler eBPF program");
                 bpf
