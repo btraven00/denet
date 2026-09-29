@@ -9,7 +9,11 @@
 #  3b. Same with a static musl build (no GPU: NVML can't be loaded from a
 #      static binary). Skipped if the x86_64-unknown-linux-musl target is
 #      not installed (rustup target add x86_64-unknown-linux-musl)
-#   4. eBPF net tests + end-to-end eBPF check under each KERNEL in a
+#  3c. eBPF across a process tree: a job whose work is done by child
+#      processes that exit before the end. Syscalls and off-CPU time must be
+#      attributed to the children and survive their exit; run on the host
+#      and again inside a new PID namespace (as in a container, kernel >= 5.7)
+#   4. eBPF net tests + end-to-end eBPF checks under each KERNEL in a
 #      virtme-ng VM (skipped if `vng` is not installed)
 #
 # Usage: ./scripts/release_check.sh [KERNEL...]
@@ -72,6 +76,50 @@ if errs:
 EOF
 }
 
+# The work is done by children that exit before the job ends: dd makes
+# ~2M read/write syscalls over ~0.7 s (long enough that denet's first samples
+# find it), then ten short-lived sleeps go off-CPU for 0.1 s each. The parent
+# shell does next to nothing itself.
+TREE='dd if=/dev/zero of=/dev/null bs=1 count=1000000 status=none; for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.1; done'
+
+# check_tree JSONL — assert on the last tree sample that eBPF followed the
+# children (regressions fixed for 0.10.3: syscalls read only for live PIDs,
+# off-CPU filtered against the start-time PID list, eBPF PIDs not in denet's
+# namespace).
+check_tree() {
+    python3 - "$@" <<'EOF'
+import json, sys
+recs = [json.loads(l) for l in open(sys.argv[1])]
+parent = next(r["pid"] for r in recs if r.get("kind") == "metadata")
+samples = [r["aggregated"] for r in recs if "aggregated" in r]
+if not samples:
+    sys.exit("no samples recorded")
+ebpf, errs = samples[-1].get("ebpf") or {}, []
+calls = (ebpf.get("syscalls") or {}).get("total", 0)
+# half of dd's ~2M: a child is added to the kernel filter at denet's next
+# sample, so up to one interval of its syscalls can be missed
+if calls < 1000000:
+    errs.append(f"syscalls {calls} < 1000000: children's counts lost")
+threads = (ebpf.get("offcpu") or {}).get("thread_stats") or {}
+child_ns = sum(s["total_time_ns"] for k, s in threads.items() if int(k.split(":")[0]) != parent)
+if child_ns < 5e8:
+    errs.append(f"child off-CPU {child_ns / 1e9:.2f} s < 0.5 s: children not followed")
+if errs:
+    sys.exit("; ".join(errs))
+EOF
+}
+
+e2e_tree() { # name, [wrapper...]: e.g. unshare --pid --fork --mount-proc
+    local name=$1 out="$OUT_DIR/tree.jsonl" msg=""; shift
+    if "$@" "$DENET" --enable-ebpf -q -o "$out" run -- bash -c "$TREE" >/dev/null 2>"$OUT_DIR/denet.err" \
+        && msg=$(check_tree "$out" 2>&1); then
+        pass "$name"
+    else
+        fail "$name: ${msg:-denet run failed}"
+        tail -5 "$OUT_DIR/denet.err" | sed 's/^/      denet: /'
+    fi
+}
+
 e2e() { # name, expect_gpu, expect_rapl
     local out="$OUT_DIR/e2e.jsonl" msg="" gpu=()
     [[ "$2" == 1 ]] && gpu=(--gpu) # GPU monitoring is opt-in
@@ -97,6 +145,15 @@ if [[ "${1:-}" == "--as-root" ]]; then
             && pass "$2: net tests" || { fail "$2: net tests"; sed 's/^/      /' "$OUT_DIR/log"; }
     fi
     e2e "$2: e2e" "$3" "$4"
+    e2e_tree "$2: process tree"
+    # bpf_get_ns_current_pid_tgid() arrived in 5.7
+    if [[ "$(printf '%s\n' 5.7 "$(uname -r)" | sort -V | head -1)" != 5.7 ]]; then
+        echo "SKIP  $2: PID namespace (kernel $(uname -r) < 5.7)"
+    elif ! command -v unshare >/dev/null; then
+        echo "SKIP  $2: PID namespace (unshare not installed)"
+    else
+        e2e_tree "$2: process tree in a PID namespace" unshare --pid --fork --mount-proc
+    fi
     rm -rf "$OUT_DIR"
     exit $FAILED
 fi
@@ -118,7 +175,7 @@ step "2. eBPF permissions ($(uname -r))" "The net monitor must degrade with no c
 
 GPU=0; nvidia-smi -L >/dev/null 2>&1 && GPU=1
 RAPL=0; [[ -e /sys/class/powercap/intel-rapl:0/energy_uj ]] && RAPL=1
-step "3. end to end ($(uname -r))" "\`denet run --enable-ebpf\` as root on a job that moves 2 MB over loopback from its first instant. Must record eBPF net bytes$( ((GPU)) && echo ", a GPU")$( ((RAPL)) && echo ", RAPL energy")."
+step "3. end to end ($(uname -r))" "\`denet run --enable-ebpf\` as root on a job that moves 2 MB over loopback from its first instant. Must record eBPF net bytes$( ((GPU)) && echo ", a GPU")$( ((RAPL)) && echo ", RAPL energy"). Then (3c) a job whose work is done by short-lived children: their syscalls and off-CPU time must be attributed and kept after they exit, on the host and in a new PID namespace."
 sudo ./scripts/release_check.sh --as-root host "$GPU" "$RAPL" || FAILED=1
 
 step "3b. end to end, static musl binary" "Same as 3 with a fully static build. eBPF and RAPL must work; GPU is not expected (NVML is a glibc library a static binary can't load)."
@@ -130,7 +187,7 @@ else
     sudo env DENET="target/$MUSL/release/denet" ./scripts/release_check.sh --as-root host-musl 0 "$RAPL" || FAILED=1
 fi
 
-step "4. kernels (${#KERNELS[@]})" "Step 2's root-only net tests and step 3's eBPF check, inside a VM per kernel (no GPU/RAPL in guests)."
+step "4. kernels (${#KERNELS[@]})" "Step 2's root-only net tests and step 3's eBPF check, inside a VM per kernel (no GPU/RAPL in guests). Include one kernel < 5.7 (e.g. v5.4.x) to check eBPF still loads where the PID-namespace helper is missing."
 if ! command -v vng >/dev/null; then
     echo "SKIP  vng not installed (pipx install virtme-ng)"
 else
