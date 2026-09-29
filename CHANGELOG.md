@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.3](https://github.com/btraven00/denet/compare/v0.10.2...v0.10.3) (2026-09-29)
+
+
+### Bug Fixes
+
+* **ebpf:** count syscalls of the whole tree, including exited children ([31268d1](https://github.com/btraven00/denet/commit/31268d12cb9cb46e4d2022e636a643833525f1a3))
+* **ebpf:** keep off-CPU events of children spawned after start ([181d427](https://github.com/btraven00/denet/commit/181d42739cf10228049cd89598ebe45720682514))
+* **ebpf:** report PIDs in denet's own PID namespace ([f65ea1a](https://github.com/btraven00/denet/commit/f65ea1aaf580758be32c84e5fda65453b9f5c4c8))
+
 ## [0.10.2](https://github.com/btraven00/denet/compare/v0.10.1...v0.10.2) (2026-09-28)
 
 
