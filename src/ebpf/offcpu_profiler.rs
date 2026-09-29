@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 
@@ -163,6 +163,10 @@ pub struct OffCpuProfiler {
     /// Monitored process IDs
     monitored_pids: Vec<u32>,
 
+    /// The same PIDs, shared with the per-CPU event threads so that
+    /// processes found after start (children) pass their filter too
+    shared_pids: Arc<RwLock<Vec<u32>>>,
+
     /// Off-CPU statistics by thread
     stats: Arc<Mutex<HashMap<(u32, u32), OffCpuStats>>>,
 
@@ -192,6 +196,16 @@ pub struct OffCpuProfiler {
 /// Global debug mode flag for the OffCpuProfiler
 #[cfg(feature = "ebpf")]
 static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Whether an event belongs to the monitored tree. Reads the list shared
+/// with `update_pids`, so children found after start are included.
+/// For single-threaded processes tid == pid, and the tid_to_tgid map may not
+/// be populated yet for the very first off-CPU event, hence the tid fallback.
+fn is_monitored(pids: &RwLock<Vec<u32>>, pid: u32, tid: u32) -> bool {
+    pids.read()
+        .map(|p| p.is_empty() || p.contains(&pid) || p.contains(&tid))
+        .unwrap_or(true)
+}
 
 // Helper to create off-CPU stats entries for a thread
 fn create_offcpu_stats() -> OffCpuStats {
@@ -231,6 +245,7 @@ impl OffCpuProfiler {
             #[cfg(feature = "ebpf")]
             bpf: None,
             monitored_pids: pids.clone(),
+            shared_pids: Arc::new(RwLock::new(pids.clone())),
             stats: Arc::new(Mutex::new(HashMap::new())),
             events: Arc::new(Mutex::new(Vec::new())),
             #[cfg(feature = "ebpf")]
@@ -477,7 +492,7 @@ impl OffCpuProfiler {
         let events = self.events.clone();
         let running = self.running.clone();
         let debug_mode = self.debug_mode;
-        let monitored_pids = self.monitored_pids.clone();
+        let monitored_pids = self.shared_pids.clone();
 
         let mut perf_readers = Vec::new();
 
@@ -530,14 +545,8 @@ impl OffCpuProfiler {
                                             )
                                         };
 
-                                        // Process the event if it's from a monitored PID.
-                                        // Also check by tid as a fallback: for single-threaded
-                                        // processes tid == pid, and the tid_to_tgid map may not
-                                        // be populated yet for the very first off-CPU event.
-                                        if cpu_monitored_pids.is_empty()
-                                            || cpu_monitored_pids.contains(&event.pid)
-                                            || cpu_monitored_pids.contains(&event.tid)
-                                        {
+                                        // Process the event if it's from the monitored tree.
+                                        if is_monitored(&cpu_monitored_pids, event.pid, event.tid) {
                                             if cpu_debug {
                                                 debug::debug_println(&format!(
                                                     "Received off-CPU event: PID={}, TID={}, time={}ms",
@@ -659,6 +668,9 @@ impl OffCpuProfiler {
     /// Update the list of monitored PIDs
     pub fn update_pids(&mut self, pids: Vec<u32>) {
         self.monitored_pids = pids.clone();
+        if let Ok(mut shared) = self.shared_pids.write() {
+            *shared = pids.clone();
+        }
 
         #[cfg(feature = "ebpf")]
         {
@@ -680,6 +692,9 @@ impl OffCpuProfiler {
 
             // Add to the monitored list
             self.monitored_pids.push(pid);
+            if let Ok(mut shared) = self.shared_pids.write() {
+                shared.push(pid);
+            }
 
             // Cache memory maps immediately
             let success = self.memory_map_cache.refresh_maps_for_pid(pid);
@@ -1670,6 +1685,19 @@ impl Drop for OffCpuProfiler {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_is_monitored_sees_pids_added_after_start() {
+        // Regression: the per-CPU event threads used to filter against a copy
+        // of the PID list taken at start, so children spawned later (every
+        // stage of a wrapped pipeline) never had their off-CPU events kept.
+        let shared = std::sync::Arc::new(super::RwLock::new(vec![100]));
+        let reader = shared.clone(); // what an event thread holds
+        assert!(super::is_monitored(&reader, 100, 100));
+        assert!(!super::is_monitored(&reader, 200, 201));
+        shared.write().unwrap().push(200); // update_pids after a child appears
+        assert!(super::is_monitored(&reader, 200, 201));
+    }
+
     use super::*;
 
     #[test]
