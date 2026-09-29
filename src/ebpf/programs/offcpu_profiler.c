@@ -9,6 +9,7 @@
 #include <bpf/bpf_tracing.h>
 #include <linux/ptrace.h>
 #include <linux/types.h>
+#include "pidns.h"
 
 // Type definitions for convenience
 typedef __u32 u32;
@@ -25,15 +26,22 @@ struct {
     __uint(max_entries, 10240);
 } thread_last_offcpu SEC(".maps");
 
-// Map to resolve tid → tgid (process group id / userspace PID).
+// Map to resolve tid → (tgid, tid) as userspace sees them.
 //
-// bpf_get_current_pid_tgid() in a sched_switch tracepoint returns the PREV
-// task's tgid (the outgoing task), not the next task's. We record the mapping
-// when a thread goes off-CPU so we can look it up when it comes back on-CPU.
+// The current task in a sched_switch tracepoint is the PREV (outgoing) task,
+// so its IDs can only be read then. We record them when a thread goes
+// off-CPU and look them up when it comes back on-CPU. Keys are the kernel's
+// initial-namespace tids from the tracepoint; values are in denet's PID
+// namespace (see pidns.h).
+struct task_ids {
+    u32 tgid;
+    u32 tid;
+};
+
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, u32);        // tid
-    __type(value, u32);      // tgid (userspace PID)
+    __type(key, u32);              // tid (initial namespace)
+    __type(value, struct task_ids);
     __uint(max_entries, 10240);
 } tid_to_tgid SEC(".maps");
 
@@ -93,15 +101,18 @@ int trace_sched_switch(struct sched_switch_args *ctx) {
     // bpf_get_current_pid_tgid() is valid here: before the context switch,
     // "current" is still the prev task.
     u32 prev_tid = (u32)ctx->prev_pid;
-    u64 pid_tgid = bpf_get_current_pid_tgid();
-    u32 prev_tgid = (u32)(pid_tgid >> 32);
+    struct task_ids prev_ids;
 
-    // Record tid→tgid so we can reconstruct it when the thread wakes up.
-    if (prev_tgid != 0) {
-        bpf_map_update_elem(&tid_to_tgid, &prev_tid, &prev_tgid, BPF_ANY);
+    // Threads outside denet's PID namespace are not recorded, so they never
+    // produce an event when they come back on-CPU.
+    if (current_tgid_pid(&prev_ids.tgid, &prev_ids.tid)) {
+        // Record the IDs so we can reconstruct them when the thread wakes up.
+        if (prev_ids.tgid != 0) {
+            bpf_map_update_elem(&tid_to_tgid, &prev_tid, &prev_ids, BPF_ANY);
+        }
+        // Record the timestamp at which this thread leaves the CPU.
+        bpf_map_update_elem(&thread_last_offcpu, &prev_tid, &now, BPF_ANY);
     }
-    // Record the timestamp at which this thread leaves the CPU.
-    bpf_map_update_elem(&thread_last_offcpu, &prev_tid, &now, BPF_ANY);
 
     // ── Incoming thread (next) ────────────────────────────────────────────────
     u32 next_tid = (u32)ctx->next_pid;
@@ -119,10 +130,15 @@ int trace_sched_switch(struct sched_switch_args *ctx) {
         return 0;
     }
 
-    // Look up the TGID that was recorded when this thread last went off-CPU.
-    u32 *tgid_ptr = bpf_map_lookup_elem(&tid_to_tgid, &next_tid);
-    // Fall back to using the TID as the PID (correct for single-threaded processes).
-    u32 event_pid = tgid_ptr ? *tgid_ptr : next_tid;
+    // Look up the IDs recorded when this thread last went off-CPU.
+    struct task_ids *ids = bpf_map_lookup_elem(&tid_to_tgid, &next_tid);
+    // Fall back to using the TID as the PID (correct for single-threaded
+    // processes), which is only valid in the initial namespace.
+    if (!ids && pidns_ino) {
+        return 0;
+    }
+    u32 event_pid = ids ? ids->tgid : next_tid;
+    u32 event_tid = ids ? ids->tid : next_tid;
 
     u32 user_stack_id = bpf_get_stackid(ctx, &user_stackmap,
                                          BPF_F_USER_STACK | BPF_F_FAST_STACK_CMP);
@@ -130,7 +146,7 @@ int trace_sched_switch(struct sched_switch_args *ctx) {
 
     struct offcpu_event event = {
         .pid             = event_pid,
-        .tid             = next_tid,
+        .tid             = event_tid,
         .prev_state      = (u32)ctx->prev_state,
         .offcpu_time_ns  = off_cpu_time,
         .start_time_ns   = *last_ts,

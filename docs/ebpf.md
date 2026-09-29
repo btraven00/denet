@@ -120,6 +120,22 @@ The setup script:
 - Configures kernel parameters for eBPF access
 - Sets permissions for the current session
 
+### Running inside a container
+
+denet's eBPF programs report PIDs in denet's own PID namespace, so denet can
+run inside a container (Docker, Podman, Apptainer) and profile processes in
+that container, the same as on the host. The container needs the eBPF
+capabilities and the host's tracefs, and the kernel must be 5.7 or newer:
+
+```bash
+docker run --privileged -v /sys/kernel/tracing:/sys/kernel/tracing ... \
+  denet --enable-ebpf run <command>
+```
+
+Processes outside denet's namespace are not recorded. Run from the host, in
+the initial namespace, denet sees every process, including those in
+containers.
+
 ## Troubleshooting
 
 If you encounter issues with eBPF:

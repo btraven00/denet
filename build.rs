@@ -116,6 +116,11 @@ fn compile_ebpf_programs() {
         "net_monitor.c",
     ];
 
+    println!(
+        "cargo:rerun-if-changed={}",
+        PathBuf::from(ebpf_src_dir).join("pidns.h").display()
+    );
+
     for program in ebpf_programs {
         let src_path = PathBuf::from(ebpf_src_dir).join(program);
         let obj_name = program.replace(".c", ".o");

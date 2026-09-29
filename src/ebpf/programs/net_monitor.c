@@ -16,6 +16,7 @@
 #include <bpf/bpf_tracing.h>
 #include <linux/ptrace.h>
 #include <linux/types.h>
+#include "pidns.h"
 
 typedef __u32 u32;
 typedef __u64 u64;
@@ -45,7 +46,9 @@ struct {
 
 static __always_inline void add_bytes(u64 rx, u64 tx)
 {
-    u32 tgid = bpf_get_current_pid_tgid() >> 32;
+    u32 tgid, tid;
+    if (!current_tgid_pid(&tgid, &tid))
+        return;
     if (!bpf_map_lookup_elem(&pid_filter, &tgid))
         return;
 

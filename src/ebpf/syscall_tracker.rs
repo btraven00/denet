@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 // Real eBPF implementation using aya
 #[cfg(feature = "ebpf")]
-use aya::{maps::HashMap as BpfHashMap, Ebpf, EbpfLoader};
+use aya::{maps::HashMap as BpfHashMap, Ebpf};
 
 #[cfg(feature = "ebpf")]
 #[allow(dead_code)]
@@ -411,8 +411,8 @@ impl SyscallTracker {
         log::debug!("Creating BPF loader...");
         crate::ebpf::debug::debug_println("Creating BPF loader");
 
-        // Create loader with default options
-        let mut loader = EbpfLoader::new();
+        // Loader with denet's PID namespace set (see ebpf::pidns_loader)
+        let mut loader = crate::ebpf::pidns_loader();
 
         // Log the Aya usage
         crate::ebpf::debug::debug_println("Using Aya for eBPF loading");
@@ -517,7 +517,7 @@ impl SyscallTracker {
                 "Trying to load from file: {}",
                 bytecode_path.display()
             ));
-            let load_attempt = Ebpf::load_file(&bytecode_path);
+            let load_attempt = loader.load_file(&bytecode_path);
             if let Err(ref e) = load_attempt {
                 crate::ebpf::debug::debug_println(&format!("File load error: {}", e));
                 // Check error message for verifier logs
