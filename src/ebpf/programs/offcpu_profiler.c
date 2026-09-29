@@ -18,9 +18,12 @@ typedef __u64 u64;
 // Maximum stack depth for stack traces
 #define PERF_MAX_STACK_DEPTH 127
 
-// Map to store timestamps when threads go off-CPU (tid → timestamp)
+// Map to store timestamps when threads go off-CPU (tid → timestamp).
+// LRU, like tid_to_tgid below: both see every thread on the host and are
+// never cleaned up for exited threads, so a plain hash fills on a busy host
+// and then silently drops new threads, i.e. the monitored ones.
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __type(key, u32);        // tid
     __type(value, u64);      // timestamp (ns) when thread went off-CPU
     __uint(max_entries, 10240);
@@ -39,7 +42,7 @@ struct task_ids {
 };
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __type(key, u32);              // tid (initial namespace)
     __type(value, struct task_ids);
     __uint(max_entries, 10240);
