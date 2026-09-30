@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: If you use this software, please cite it using the metadata below.
 title: denet
 version: 0.10.3
-date-released: 2026-05-26T00:00:00.000Z
+date-released: "2026-05-26"
 authors:
   - family-names: Traven
     given-names: B
@@ -16,3 +16,19 @@ keywords:
   - process monitoring
   - streaming
 license: GPL-3.0-or-later
+preferred-citation:
+  type: article
+  title: "denet, A lightweight command-line tool for process monitoring in benchmarking and beyond"
+  authors:
+    - family-names: Carrillo
+      given-names: Ben
+    - family-names: Mallona
+      given-names: Izaskun
+  year: 2025
+  journal: arXiv
+  doi: 10.48550/arXiv.2510.13818
+  url: https://arxiv.org/abs/2510.13818
+identifiers:
+  - type: doi
+    value: 10.48550/arXiv.2510.13818
+    description: arXiv preprint

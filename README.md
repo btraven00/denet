@@ -9,6 +9,7 @@ Denet is a lightweight streaming process monitor. It tracks CPU, memory, I/O, an
 [![codecov](https://codecov.io/gh/btraven00/denet/branch/main/graph/badge.svg)](https://codecov.io/gh/btraven00/denet)
 [![Ruff](https://img.shields.io/badge/code%20style-ruff-black)](https://github.com/astral-sh/ruff)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![DOI](https://img.shields.io/badge/DOI-10.48550%2FarXiv.2510.13818-b31b1b.svg)](https://doi.org/10.48550/arXiv.2510.13818)
 
 ## Installation
 
