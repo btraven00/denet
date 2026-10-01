@@ -9,6 +9,8 @@
 #  3b. Same with a static musl build (no GPU: NVML can't be loaded from a
 #      static binary). Skipped if the x86_64-unknown-linux-musl target is
 #      not installed (rustup target add x86_64-unknown-linux-musl)
+#  3d. Off-CPU stacks: a pipe writer and a sleeping reader must each be
+#      charged with their wait and the kernel stack they waited in
 #  3c. eBPF across a process tree: a job whose work is done by child
 #      processes that exit before the end. Syscalls and off-CPU time must be
 #      attributed to the children and survive their exit; run on the host
@@ -120,6 +122,50 @@ e2e_tree() { # name, [wrapper...]: e.g. unshare --pid --fork --mount-proc
     fi
 }
 
+# A writer blocked on a full pipe and a sleeping reader: `yes` waits ~2 s in
+# the kernel's pipe-write path and `sleep` in nanosleep, both children that
+# block at once, before denet's first sample.
+WAITS='yes | (sleep 2; head -c 1 >/dev/null)'
+
+# check_waits JSONL — off-CPU time must be attributed to the process that
+# waited, with the kernel stack it waited in, named from /proc/kallsyms
+# (0.10.4: stacks were captured from the wrong task, never named, never
+# written, and children were tracked only from denet's next sample).
+check_waits() {
+    python3 - "$@" <<'EOF'
+import json, sys
+from collections import defaultdict
+recs = [json.loads(l) for l in open(sys.argv[1])]
+name = {r["pid"]: r["cmd"][0] for r in recs if r.get("kind") == "child"}
+stacks, waited = {}, defaultdict(float)
+for r in recs:
+    off = ((r.get("aggregated") or {}).get("ebpf") or {}).get("offcpu") or {}
+    stacks.update({int(k): v for k, v in (off.get("kernel_stacks") or {}).items()})
+    for w in off.get("waits") or []:
+        waited[(name.get(w["pid"]), w["stack"])] += w["time_ns"] / 1e9
+errs = []
+for proc, frame in (("yes", "pipe_write"), ("sleep", "nanosleep")):
+    t = sum(s for (p, k), s in waited.items() if p == proc and any(frame in f for f in stacks.get(k, [])))
+    if t < 1.0:
+        seen = {k: round(s, 2) for (p, k), s in waited.items() if p == proc}
+        errs.append(f"{proc}: {t:.2f} s off-CPU in a stack with {frame} (want >= 1 s); "
+                    f"its waits by stack: {seen}")
+if errs:
+    sys.exit("; ".join(errs))
+EOF
+}
+
+e2e_waits() { # name, [wrapper...]
+    local name=$1 out="$OUT_DIR/waits.jsonl" msg=""; shift
+    if "$@" "$DENET" --enable-ebpf -q -i 50 -m 100 -o "$out" run -- bash -c "$WAITS" >/dev/null 2>"$OUT_DIR/denet.err" \
+        && msg=$(check_waits "$out" 2>&1); then
+        pass "$name"
+    else
+        fail "$name: ${msg:-denet run failed}"
+        tail -5 "$OUT_DIR/denet.err" | sed 's/^/      denet: /'
+    fi
+}
+
 e2e() { # name, expect_gpu, expect_rapl
     local out="$OUT_DIR/e2e.jsonl" msg="" gpu=()
     [[ "$2" == 1 ]] && gpu=(--gpu) # GPU monitoring is opt-in
@@ -146,6 +192,7 @@ if [[ "${1:-}" == "--as-root" ]]; then
     fi
     e2e "$2: e2e" "$3" "$4"
     e2e_tree "$2: process tree"
+    e2e_waits "$2: off-CPU stacks"
     # bpf_get_ns_current_pid_tgid() arrived in 5.7
     if [[ "$(printf '%s\n' 5.7 "$(uname -r)" | sort -V | head -1)" != 5.7 ]]; then
         echo "SKIP  $2: PID namespace (kernel $(uname -r) < 5.7)"
@@ -153,6 +200,7 @@ if [[ "${1:-}" == "--as-root" ]]; then
         echo "SKIP  $2: PID namespace (unshare not installed)"
     else
         e2e_tree "$2: process tree in a PID namespace" unshare --pid --fork --mount-proc
+        e2e_waits "$2: off-CPU stacks in a PID namespace" unshare --pid --fork --mount-proc
     fi
     rm -rf "$OUT_DIR"
     exit $FAILED
