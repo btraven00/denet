@@ -341,6 +341,44 @@ The privileged integration tests can also be run directly:
 sudo -E cargo test --features ebpf --test ebpf_net_monitor_tests -- --ignored
 ```
 
+## Off-CPU Waits and Kernel Stacks
+
+With eBPF enabled, denet records when each thread of the monitored tree
+leaves the CPU and when it comes back, and the kernel stack it waited in.
+That answers *why* a process was idle: blocked writing to a full pipe, on
+disk I/O, on a lock, sleeping on a timer, or waiting for a child.
+
+**How it works:** the `sched_switch` tracepoint captures the stack of the
+thread going off-CPU (the current task at that moment) and keeps it until
+the thread is switched back in, when the wait is reported. A kernel-side PID
+filter restricts this to the monitored tree; children forked by it are
+followed in the kernel (`sched_process_fork`), so a child that blocks at once
+is counted from its first wait, before denet's next sample sees it.
+
+**JSON output** (inside the `ebpf.offcpu` object of each tree sample):
+
+```json
+"waits": [
+  {"pid": 4211, "stack": 17, "time_ns": 1998000000, "count": 1}
+],
+"kernel_stacks": {
+  "17": ["perf_trace_sched_switch", "__schedule", "schedule",
+         "anon_pipe_write", "vfs_write", "ksys_write", "__x64_sys_write"]
+}
+```
+
+- `waits`: off-CPU time per process and kernel stack credited since the
+  previous sample, most time first. A wait is credited when the thread wakes
+  up, so a long wait appears in the sample after it ends.
+- `kernel_stacks`: function names of each stack, innermost first, written
+  once, in the first sample that refers to it. Stack `4294967295` means the
+  stack couldn't be captured; its time is still counted.
+- Names come from `/proc/kallsyms`, which shows addresses only to privileged
+  readers (root, or `CAP_SYSLOG` under `kernel.kptr_restrict=1`); otherwise
+  frames are given as hex addresses.
+- Stacks are truncated to the 32 innermost kernel frames, which reach from
+  `schedule()` to the system call entry.
+
 ## Implementation Details
 
 The eBPF implementation works by:
@@ -376,7 +414,7 @@ The current eBPF implementation has some limitations:
 
 1. **Limited Syscall Coverage**: Only tracks a subset of common syscalls (read, write, openat, close, mmap, socket, connect, recvfrom, sendto).
 
-2. **Short-lived children**: Child processes are picked up at the next sample, so work done by a child that exits between samples may be missed (see [Attach Timing](#attach-timing)).
+2. **Short-lived children**: For syscalls and network bytes, child processes are picked up at the next sample, so work done by a child that exits between samples may be missed (see [Attach Timing](#attach-timing)). Off-CPU waits follow forks in the kernel and are not affected.
 
 3. **Linux-only**: The eBPF functionality is only available on Linux systems with kernel version 4.18+ for full functionality.
 
