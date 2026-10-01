@@ -1513,10 +1513,17 @@ impl ProcessMonitor {
 
                     // Collect off-CPU profiling data
                     if let Some(ref mut profiler) = self.offcpu_profiler {
+                        // final sample: let the last waits (they end as the tree
+                        // exits) arrive from the perf buffers before reading
+                        if self.exit_detected_ms.is_some() {
+                            profiler.settle();
+                        }
                         profiler.update_pids(all_pids.clone());
                         let stats = profiler.get_stats();
                         if !stats.is_empty() {
-                            ebpf_metrics.offcpu = Some(build_offcpu_metrics(&stats));
+                            let mut offcpu = build_offcpu_metrics(&stats);
+                            (offcpu.waits, offcpu.kernel_stacks) = profiler.take_waits();
+                            ebpf_metrics.offcpu = Some(offcpu);
                         }
                     }
 
@@ -1780,6 +1787,8 @@ fn build_offcpu_metrics(
         bottlenecks: vec![],
         stack_traces: vec![],
         stacks: None,
+        waits: vec![],
+        kernel_stacks: Default::default(),
     }
 }
 

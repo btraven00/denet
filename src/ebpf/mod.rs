@@ -7,6 +7,8 @@
 #[cfg(target_os = "linux")]
 pub mod debug;
 #[cfg(target_os = "linux")]
+pub mod kallsyms;
+#[cfg(target_os = "linux")]
 pub mod memory_map_cache;
 #[cfg(target_os = "linux")]
 pub mod metrics;

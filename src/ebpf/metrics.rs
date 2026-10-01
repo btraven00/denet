@@ -374,6 +374,26 @@ pub struct OffCpuMetrics {
     /// Aggregated stack information (for display)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stacks: Option<AggregatedStacks>,
+
+    /// Off-CPU time credited since the previous sample, per process and
+    /// kernel stack it waited in. A wait is credited when the thread wakes up.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub waits: Vec<OffCpuWait>,
+
+    /// Kernel stacks referenced by `waits` for the first time in this run:
+    /// stack id -> function names, innermost first. Each stack is written once.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub kernel_stacks: BTreeMap<u32, Vec<String>>,
+}
+
+/// Off-CPU time one process spent in one kernel stack since the last sample
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OffCpuWait {
+    pub pid: u32,
+    /// Key into `kernel_stacks` (here or in an earlier sample)
+    pub stack: u32,
+    pub time_ns: u64,
+    pub count: u64,
 }
 
 /// Thread-specific off-CPU statistics

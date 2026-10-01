@@ -5,9 +5,11 @@
 //! or sleeping). This information can be used to identify bottlenecks
 //! related to I/O, locks, and other blocking operations.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+use crate::ebpf::metrics::OffCpuWait;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -25,6 +27,8 @@ use log::{debug, error, info};
 const OFFCPU_PROFILER_BYTECODE: &[u8] =
     include_bytes_aligned!(concat!(env!("OUT_DIR"), "/ebpf/offcpu_profiler.o"));
 
+#[cfg(feature = "ebpf")]
+use crate::ebpf::kallsyms::KernelSymbols;
 #[cfg(feature = "ebpf")]
 use crate::ebpf::memory_map_cache::MemoryMapCache;
 #[cfg(feature = "ebpf")]
@@ -163,15 +167,28 @@ pub struct OffCpuProfiler {
     /// Monitored process IDs
     monitored_pids: Vec<u32>,
 
-    /// The same PIDs, shared with the per-CPU event threads so that
-    /// processes found after start (children) pass their filter too
-    shared_pids: Arc<RwLock<Vec<u32>>>,
-
     /// Off-CPU statistics by thread
     stats: Arc<Mutex<HashMap<(u32, u32), OffCpuStats>>>,
 
     /// Collected events
     events: Arc<Mutex<Vec<ProcessedOffCpuEvent>>>,
+
+    /// Off-CPU time and count per (pid, kernel stack id), kept by the event
+    /// threads; `take_waits` reports what accrued since its last call
+    wait_totals: Arc<Mutex<WaitTotals>>,
+
+    /// `wait_totals` as of the last `take_waits`
+    last_waits: WaitTotals,
+
+    /// Kernel stack ids already named in an earlier sample
+    named_stacks: HashSet<u32>,
+
+    /// Poll loops completed by the event threads, for `settle`
+    polls: Arc<std::sync::atomic::AtomicU64>,
+
+    /// Kernel symbols, loaded on first use; `Some(None)` if unavailable
+    #[cfg(feature = "ebpf")]
+    kernel_syms: Option<Option<KernelSymbols>>,
 
     /// Whether the eBPF programs are attached
     #[cfg(feature = "ebpf")]
@@ -197,17 +214,71 @@ pub struct OffCpuProfiler {
 #[cfg(feature = "ebpf")]
 static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
 
-/// Whether an event belongs to the monitored tree. Reads the list shared
-/// with `update_pids`, so children found after start are included.
-/// For single-threaded processes tid == pid, and the tid_to_tgid map may not
-/// be populated yet for the very first off-CPU event, hence the tid fallback.
-fn is_monitored(pids: &RwLock<Vec<u32>>, pid: u32, tid: u32) -> bool {
-    pids.read()
-        .map(|p| p.is_empty() || p.contains(&pid) || p.contains(&tid))
-        .unwrap_or(true)
+// Helper to create off-CPU stats entries for a thread
+/// Offset of `child_pid` in a sched_process_fork record, from the tracepoint's
+/// format file (`field:pid_t child_pid;\toffset:20;...`)
+fn parse_fork_child_pid_offset(format: &str) -> Option<u32> {
+    format
+        .lines()
+        .find(|l| l.contains(" child_pid;"))?
+        .split(';')
+        .find_map(|f| f.trim().strip_prefix("offset:"))?
+        .parse()
+        .ok()
 }
 
-// Helper to create off-CPU stats entries for a thread
+/// The running kernel's offset, or the pre-6.10 layout's if unreadable
+#[cfg(feature = "ebpf")]
+fn fork_child_pid_offset() -> &'static u32 {
+    static OFF: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    OFF.get_or_init(|| {
+        ["/sys/kernel/tracing", "/sys/kernel/debug/tracing"]
+            .iter()
+            .find_map(|d| {
+                std::fs::read_to_string(format!("{d}/events/sched/sched_process_fork/format")).ok()
+            })
+            .and_then(|f| parse_fork_child_pid_offset(&f))
+            .unwrap_or(44)
+    })
+}
+
+/// Cumulative off-CPU (time, count) per (pid, kernel stack id)
+type WaitTotals = HashMap<(u32, u32), (u64, u64)>;
+
+/// Stored events (for `get_stack_traces`) are capped: every off-CPU event of
+/// the tree carries stacks, so an unbounded list grows for the whole run.
+/// Per-stack totals (`wait_totals`) are kept separately and stay bounded by the
+/// number of distinct stacks.
+const MAX_STORED_EVENTS: usize = 4096;
+
+/// A stack id from bpf_get_stackid: an index, or a negative errno cast to u32
+fn valid_stack_id(id: u32) -> bool {
+    (id as i32) >= 0
+}
+
+/// Stack id under which waits whose kernel stack couldn't be captured are
+/// reported, so that no off-CPU time goes missing from `waits`
+pub const STACK_UNAVAILABLE: u32 = u32::MAX;
+
+/// Off-CPU time and count that accrued per (pid, stack) between two snapshots
+/// of the cumulative totals, most time first
+fn wait_deltas(prev: &WaitTotals, cur: &WaitTotals) -> Vec<OffCpuWait> {
+    let mut out: Vec<OffCpuWait> = cur
+        .iter()
+        .filter_map(|(&(pid, stack), &(t, c))| {
+            let (pt, pc) = prev.get(&(pid, stack)).copied().unwrap_or((0, 0));
+            (t > pt).then(|| OffCpuWait {
+                pid,
+                stack,
+                time_ns: t - pt,
+                count: c.saturating_sub(pc),
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| b.time_ns.cmp(&a.time_ns).then(a.pid.cmp(&b.pid)));
+    out
+}
+
 fn create_offcpu_stats() -> OffCpuStats {
     OffCpuStats {
         total_time_ns: 0,
@@ -245,9 +316,14 @@ impl OffCpuProfiler {
             #[cfg(feature = "ebpf")]
             bpf: None,
             monitored_pids: pids.clone(),
-            shared_pids: Arc::new(RwLock::new(pids.clone())),
             stats: Arc::new(Mutex::new(HashMap::new())),
             events: Arc::new(Mutex::new(Vec::new())),
+            wait_totals: Arc::new(Mutex::new(HashMap::new())),
+            last_waits: HashMap::new(),
+            named_stacks: HashSet::new(),
+            polls: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            #[cfg(feature = "ebpf")]
+            kernel_syms: None,
             #[cfg(feature = "ebpf")]
             _attached_programs: false,
             #[cfg(feature = "ebpf")]
@@ -276,6 +352,9 @@ impl OffCpuProfiler {
             match Self::init_ebpf() {
                 Ok(bpf) => {
                     profiler.bpf = Some(bpf);
+                    // seed the in-kernel filter before attaching, so the tree's
+                    // first waits are recorded
+                    profiler.sync_pid_filter(&[], &pids);
                     profiler.attach_tracepoint()?;
                     profiler._attached_programs = true;
                     profiler.start_perf_buffer()?;
@@ -347,7 +426,10 @@ impl OffCpuProfiler {
         debug::debug_println(&format!("eBPF bytecode preview: {}", hex_bytes.join(" ")));
 
         // Load the eBPF program
-        let bpf = match crate::ebpf::pidns_loader().load(OFFCPU_PROFILER_BYTECODE) {
+        let bpf = match crate::ebpf::pidns_loader()
+            .set_global("fork_child_pid_off", fork_child_pid_offset(), true)
+            .load(OFFCPU_PROFILER_BYTECODE)
+        {
             Ok(bpf) => {
                 debug::debug_println("Successfully loaded off-CPU profiler eBPF program");
                 bpf
@@ -377,6 +459,23 @@ impl OffCpuProfiler {
             .map(|(name, _)| name.to_string())
             .collect::<Vec<_>>();
         debug::debug_println(&format!("Available eBPF programs: {:?}", program_names));
+
+        // Fork and exit first, so no child of the tree forks unseen once
+        // sched_switch starts recording
+        for (prog_name, event) in [
+            ("trace_process_fork", "sched_process_fork"),
+            ("trace_process_exit", "sched_process_exit"),
+        ] {
+            let tp: &mut TracePoint = bpf
+                .program_mut(prog_name)
+                .ok_or_else(|| std::io::Error::other(format!("{prog_name} not in eBPF object")))?
+                .try_into()
+                .map_err(|e| std::io::Error::other(format!("{prog_name}: {e}")))?;
+            tp.load()
+                .map_err(|e| std::io::Error::other(format!("load {prog_name}: {e}")))?;
+            tp.attach("sched", event)
+                .map_err(|e| std::io::Error::other(format!("attach {prog_name}: {e}")))?;
+        }
 
         // Get the sched_switch program
         let program = match bpf.program_mut("trace_sched_switch") {
@@ -490,9 +589,10 @@ impl OffCpuProfiler {
         // Get a copy of the stats mutex for the event handlers
         let stats = self.stats.clone();
         let events = self.events.clone();
+        let waits = self.wait_totals.clone();
+        let polls = self.polls.clone();
         let running = self.running.clone();
         let debug_mode = self.debug_mode;
-        let monitored_pids = self.shared_pids.clone();
 
         let mut perf_readers = Vec::new();
 
@@ -511,9 +611,10 @@ impl OffCpuProfiler {
             // Clone resources for this CPU's handler
             let cpu_stats = stats.clone();
             let cpu_events = events.clone();
+            let cpu_waits = waits.clone();
+            let cpu_polls = polls.clone();
             let cpu_running = running.clone();
             let cpu_debug = debug_mode;
-            let cpu_monitored_pids = monitored_pids.clone();
 
             // Spawn a thread to handle events from this CPU
             let handler = thread::spawn(move || {
@@ -546,7 +647,9 @@ impl OffCpuProfiler {
                                         };
 
                                         // Process the event if it's from the monitored tree.
-                                        if is_monitored(&cpu_monitored_pids, event.pid, event.tid) {
+                                        // Only the monitored tree's threads reach here: the
+                                        // kernel filters them (pid_filter, following forks)
+                                        {
                                             if cpu_debug {
                                                 debug::debug_println(&format!(
                                                     "Received off-CPU event: PID={}, TID={}, time={}ms",
@@ -556,11 +659,31 @@ impl OffCpuProfiler {
                                                 ));
                                             }
 
-                                            // Store events with valid stack IDs
+                                            // Time per (process, kernel stack waited in)
+                                            let stack = if valid_stack_id(event.kernel_stack_id) {
+                                                event.kernel_stack_id
+                                            } else {
+                                                STACK_UNAVAILABLE
+                                            };
+                                            {
+                                                if let Ok(mut w) = cpu_waits.lock() {
+                                                    let e = w
+                                                        .entry((event.pid, stack))
+                                                        .or_insert((0, 0));
+                                                    e.0 = e.0.saturating_add(event.offcpu_time_ns);
+                                                    e.1 += 1;
+                                                }
+                                            }
+
+                                            // Store events with valid stack IDs, up to a cap
                                             if event.user_stack_id != 0
                                                 || event.kernel_stack_id != 0
                                             {
-                                                if let Ok(mut events_guard) = cpu_events.lock() {
+                                                if let Some(mut events_guard) = cpu_events
+                                                    .lock()
+                                                    .ok()
+                                                    .filter(|g| g.len() < MAX_STORED_EVENTS)
+                                                {
                                                     if cpu_debug {
                                                         debug::debug_println(&format!(
                                                             "Storing event with stack IDs: user={}, kernel={}",
@@ -646,6 +769,7 @@ impl OffCpuProfiler {
                         }
                     }
 
+                    cpu_polls.fetch_add(1, Ordering::Relaxed);
                     // Small sleep to prevent 100% CPU usage while polling
                     thread::sleep(Duration::from_millis(10));
                 }
@@ -667,10 +791,12 @@ impl OffCpuProfiler {
 
     /// Update the list of monitored PIDs
     pub fn update_pids(&mut self, pids: Vec<u32>) {
-        self.monitored_pids = pids.clone();
-        if let Ok(mut shared) = self.shared_pids.write() {
-            *shared = pids.clone();
+        #[cfg(feature = "ebpf")]
+        {
+            let old = std::mem::take(&mut self.monitored_pids);
+            self.sync_pid_filter(&old, &pids);
         }
+        self.monitored_pids = pids.clone();
 
         #[cfg(feature = "ebpf")]
         {
@@ -692,9 +818,6 @@ impl OffCpuProfiler {
 
             // Add to the monitored list
             self.monitored_pids.push(pid);
-            if let Ok(mut shared) = self.shared_pids.write() {
-                shared.push(pid);
-            }
 
             // Cache memory maps immediately
             let success = self.memory_map_cache.refresh_maps_for_pid(pid);
@@ -710,6 +833,84 @@ impl OffCpuProfiler {
                 }
             }
         }
+    }
+
+    /// Keep the in-kernel `pid_filter` equal to the monitored tree: only its
+    /// threads are timed and have their stacks captured.
+    #[cfg(feature = "ebpf")]
+    fn sync_pid_filter(&mut self, old: &[u32], new: &[u32]) {
+        let Some(map) = self.bpf.as_mut().and_then(|b| b.map_mut("pid_filter")) else {
+            return;
+        };
+        let Ok(mut filter) = aya::maps::HashMap::<_, u32, u8>::try_from(map) else {
+            return;
+        };
+        for pid in old.iter().filter(|p| !new.contains(p)) {
+            let _ = filter.remove(pid);
+        }
+        for pid in new.iter().filter(|p| !old.contains(p)) {
+            let _ = filter.insert(pid, 1, 0);
+        }
+    }
+
+    /// Wait until every event thread has completed two more polls (at most
+    /// 200 ms), so that events the kernel sent before now have been read.
+    /// For the final sample: the tree's last waits end as it exits, and their
+    /// events would otherwise still be in the perf buffers.
+    pub fn settle(&self) {
+        let readers = self.perf_reader_count() as u64;
+        let target = self.polls.load(Ordering::Relaxed) + 2 * readers;
+        let deadline = std::time::Instant::now() + Duration::from_millis(200);
+        while self.polls.load(Ordering::Relaxed) < target && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    fn perf_reader_count(&self) -> usize {
+        #[cfg(feature = "ebpf")]
+        return self._perf_readers.len();
+        #[cfg(not(feature = "ebpf"))]
+        0
+    }
+
+    /// Off-CPU time per (process, kernel stack) since the previous call, and
+    /// the function names of the stacks among them not reported before
+    /// (innermost first). Frames are named from /proc/kallsyms; where the
+    /// kernel hides addresses they are given as hex addresses.
+    pub fn take_waits(&mut self) -> (Vec<OffCpuWait>, BTreeMap<u32, Vec<String>>) {
+        let cur = self
+            .wait_totals
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let waits = wait_deltas(&self.last_waits, &cur);
+        self.last_waits = cur;
+        let mut stacks = BTreeMap::new();
+        #[cfg(feature = "ebpf")]
+        for w in &waits {
+            if self.named_stacks.insert(w.stack) {
+                stacks.insert(w.stack, self.kernel_stack_names(w.stack));
+            }
+        }
+        (waits, stacks)
+    }
+
+    #[cfg(feature = "ebpf")]
+    fn kernel_stack_names(&mut self, stack_id: u32) -> Vec<String> {
+        if stack_id == STACK_UNAVAILABLE {
+            return vec!["[stack unavailable]".to_string()];
+        }
+        let frames = self.get_symbolicated_stack_frames(stack_id, false, 0);
+        let syms = self.kernel_syms.get_or_insert_with(KernelSymbols::load);
+        frames
+            .iter()
+            .map(|f| {
+                syms.as_ref()
+                    .and_then(|s| s.resolve(f.address))
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("0x{:x}", f.address))
+            })
+            .collect()
     }
 
     /// Get the current off-CPU statistics
@@ -1686,16 +1887,66 @@ impl Drop for OffCpuProfiler {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn test_is_monitored_sees_pids_added_after_start() {
-        // Regression: the per-CPU event threads used to filter against a copy
-        // of the PID list taken at start, so children spawned later (every
-        // stage of a wrapped pipeline) never had their off-CPU events kept.
-        let shared = std::sync::Arc::new(super::RwLock::new(vec![100]));
-        let reader = shared.clone(); // what an event thread holds
-        assert!(super::is_monitored(&reader, 100, 100));
-        assert!(!super::is_monitored(&reader, 200, 201));
-        shared.write().unwrap().push(200); // update_pids after a child appears
-        assert!(super::is_monitored(&reader, 200, 201));
+    fn test_wait_deltas_report_only_new_time() {
+        use std::collections::HashMap;
+        let prev: HashMap<(u32, u32), (u64, u64)> = [((10, 7), (100, 2))].into();
+        let cur: HashMap<(u32, u32), (u64, u64)> =
+            [((10, 7), (350, 5)), ((10, 8), (40, 1)), ((11, 7), (900, 3))].into();
+        let d = super::wait_deltas(&prev, &cur);
+        // most time first; (10, 7) reports only what accrued since prev
+        let got: Vec<_> = d
+            .iter()
+            .map(|w| (w.pid, w.stack, w.time_ns, w.count))
+            .collect();
+        assert_eq!(got, vec![(11, 7, 900, 3), (10, 7, 250, 3), (10, 8, 40, 1)]);
+        // nothing new: nothing reported
+        assert!(super::wait_deltas(&cur, &cur).is_empty());
+    }
+
+    #[test]
+    fn test_fork_child_pid_offset_both_layouts() {
+        // kernel >= 6.10: comm fields are __data_loc strings
+        let new = "\tfield:__data_loc char[] parent_comm;\toffset:8;\tsize:4;\tsigned:0;\n\
+                   \tfield:pid_t parent_pid;\toffset:12;\tsize:4;\tsigned:1;\n\
+                   \tfield:__data_loc char[] child_comm;\toffset:16;\tsize:4;\tsigned:0;\n\
+                   \tfield:pid_t child_pid;\toffset:20;\tsize:4;\tsigned:1;\n";
+        assert_eq!(super::parse_fork_child_pid_offset(new), Some(20));
+        // before: char[16] arrays
+        let old = "\tfield:char parent_comm[16];\toffset:8;\tsize:16;\tsigned:0;\n\
+                   \tfield:pid_t parent_pid;\toffset:24;\tsize:4;\tsigned:1;\n\
+                   \tfield:char child_comm[16];\toffset:28;\tsize:16;\tsigned:0;\n\
+                   \tfield:pid_t child_pid;\toffset:44;\tsize:4;\tsigned:1;\n";
+        assert_eq!(super::parse_fork_child_pid_offset(old), Some(44));
+        assert_eq!(super::parse_fork_child_pid_offset("no such field"), None);
+    }
+
+    #[test]
+    fn test_valid_stack_id() {
+        assert!(super::valid_stack_id(0));
+        assert!(super::valid_stack_id(1023));
+        assert!(!super::valid_stack_id(-14i32 as u32)); // EFAULT from bpf_get_stackid
+        assert!(!super::valid_stack_id(-17i32 as u32)); // EEXIST
+    }
+
+    #[test]
+    fn test_waits_serialize_compactly() {
+        use crate::ebpf::metrics::{OffCpuMetrics, OffCpuWait};
+        let mut m = OffCpuMetrics::default();
+        let empty = serde_json::to_value(&m).unwrap();
+        assert!(empty.get("waits").is_none() && empty.get("kernel_stacks").is_none());
+        m.waits = vec![OffCpuWait {
+            pid: 10,
+            stack: 7,
+            time_ns: 250,
+            count: 3,
+        }];
+        m.kernel_stacks
+            .insert(7, vec!["schedule".into(), "pipe_write".into()]);
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(v["waits"][0]["stack"], 7);
+        assert_eq!(v["kernel_stacks"]["7"][1], "pipe_write");
+        let back: Vec<OffCpuWait> = serde_json::from_value(v["waits"].clone()).unwrap();
+        assert_eq!(back, m.waits);
     }
 
     use super::*;
