@@ -376,7 +376,7 @@ dependencies = [
 
 [[package]]
 name = "denet"
-version = "0.10.3"
+version = "0.11.0"
 dependencies = [
  "aya",
  "aya-log",
