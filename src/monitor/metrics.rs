@@ -226,6 +226,13 @@ pub struct AggregatedMetrics {
     pub sys_net_rx_bytes: u64,
     #[serde(alias = "net_tx_bytes")]
     pub sys_net_tx_bytes: u64,
+    /// TCP bytes received by the tree's own sockets since monitoring started
+    /// (Linux, same network namespace as denet; see `tcp_diag`).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub tcp_rx_bytes: Option<u64>,
+    /// TCP bytes sent (acknowledged by the peer) by the tree's own sockets.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub tcp_tx_bytes: Option<u64>,
     pub thread_count: usize,
     pub process_count: usize,
     pub uptime_secs: u64,
@@ -330,6 +337,8 @@ impl AggregatedMetrics {
             page_faults_disk,
             sys_net_rx_bytes,
             sys_net_tx_bytes,
+            tcp_rx_bytes: None,
+            tcp_tx_bytes: None,
             thread_count,
             process_count: metrics.len(),
             uptime_secs: max_uptime,
@@ -386,6 +395,8 @@ impl Default for AggregatedMetrics {
             page_faults_disk: None,
             sys_net_rx_bytes: 0,
             sys_net_tx_bytes: 0,
+            tcp_rx_bytes: None,
+            tcp_tx_bytes: None,
             thread_count: 0,
             process_count: 0,
             uptime_secs: 0,
@@ -523,6 +534,12 @@ pub struct Summary {
     pub total_sys_net_rx_bytes: u64,
     /// Cumulative network transmitted bytes
     pub total_sys_net_tx_bytes: u64,
+    /// Cumulative TCP bytes received by the tree's own sockets
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub total_tcp_rx_bytes: Option<u64>,
+    /// Cumulative TCP bytes sent by the tree's own sockets
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub total_tcp_tx_bytes: Option<u64>,
     /// Maximum memory RSS observed across all processes (in KB)
     pub peak_mem_rss_kb: u64,
     /// Average CPU usage (percent)
@@ -714,6 +731,8 @@ impl Summary {
             peak_page_faults_disk: metrics.iter().filter_map(|m| m.page_faults_disk).max(),
             total_sys_net_rx_bytes: last_metrics.sys_net_rx_bytes,
             total_sys_net_tx_bytes: last_metrics.sys_net_tx_bytes,
+            total_tcp_rx_bytes: None,
+            total_tcp_tx_bytes: None,
             peak_mem_rss_kb,
             avg_cpu_usage: if metrics.is_empty() {
                 0.0
@@ -814,6 +833,8 @@ impl Summary {
             peak_page_faults_disk: metrics.iter().filter_map(|m| m.page_faults_disk).max(),
             total_sys_net_rx_bytes: last_metrics.sys_net_rx_bytes,
             total_sys_net_tx_bytes: last_metrics.sys_net_tx_bytes,
+            total_tcp_rx_bytes: metrics.iter().rev().find_map(|m| m.tcp_rx_bytes),
+            total_tcp_tx_bytes: metrics.iter().rev().find_map(|m| m.tcp_tx_bytes),
             peak_mem_rss_kb,
             avg_cpu_usage: if metrics.is_empty() {
                 0.0
@@ -842,6 +863,8 @@ impl Default for Summary {
             peak_page_faults_disk: None,
             total_sys_net_rx_bytes: 0,
             total_sys_net_tx_bytes: 0,
+            total_tcp_rx_bytes: None,
+            total_tcp_tx_bytes: None,
             peak_mem_rss_kb: 0,
             avg_cpu_usage: 0.0,
             syscalls: None,

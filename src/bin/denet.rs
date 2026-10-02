@@ -833,11 +833,18 @@ fn summary_rows(summary: &Summary) -> Vec<(&'static str, String)> {
         ("Disk Read", format_bytes(summary.total_disk_read_bytes)),
         ("Disk Write", format_bytes(summary.total_disk_write_bytes)),
         (
-            "Network Received",
+            "System network Received",
             format_bytes(summary.total_sys_net_rx_bytes),
         ),
-        ("Network Sent", format_bytes(summary.total_sys_net_tx_bytes)),
+        (
+            "System network Sent",
+            format_bytes(summary.total_sys_net_tx_bytes),
+        ),
     ];
+    if let (Some(rx), Some(tx)) = (summary.total_tcp_rx_bytes, summary.total_tcp_tx_bytes) {
+        rows.push(("TCP bytes received", format_bytes(rx)));
+        rows.push(("TCP bytes sent", format_bytes(tx)));
+    }
 
     if let Some(ref mc) = summary.memory_characterization {
         rows.push(("Mem Verdict", mc.verdict.clone()));

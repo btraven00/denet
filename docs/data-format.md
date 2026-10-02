@@ -151,6 +151,7 @@ Includes all fields from Individual Process Metrics plus:
 | Field | Type | Description |
 |-------|------|-------------|
 | `process_count` | number | Total processes (parent + children) |
+| `tcp_rx_bytes`, `tcp_tx_bytes` | number? | TCP bytes received / sent (acknowledged) by the tree's own sockets since monitoring started, from `tcp_info` via `NETLINK_SOCK_DIAG`; no privileges needed. Linux, and only when the tree shares denet's network namespace. TCP only (UDP and unix sockets have no per-socket byte counters); bytes after a socket's last sample before it closes are missed. Network filesystems (NFS, Lustre, GPFS) are kernel traffic and appear in neither these nor `sys_net_*`. |
 | `ebpf` | object? | eBPF profiling counters (only when the `ebpf` feature is enabled and `--enable-ebpf` is passed). |
 | `gpu` | object? | GPU metrics aggregated across all monitored processes (only with the `gpu` feature). |
 
