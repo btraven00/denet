@@ -71,6 +71,7 @@ denet -i 50 -m 500 run python train.py
 | Disk I/O metrics and how to interpret them | [docs/disk-io.md](docs/disk-io.md) |
 | Output data format | [docs/data-format.md](docs/data-format.md) |
 | Development setup | [docs/dev.md](docs/dev.md) |
+| Worked example: a Snakemake workflow profiled end to end | [btraven00/denet_example](https://github.com/btraven00/denet_example) |
 
 ## License
 
