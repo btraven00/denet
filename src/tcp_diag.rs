@@ -182,6 +182,17 @@ pub struct TcpTracker {
 }
 
 impl TcpTracker {
+    /// For a process denet started (`run`): every socket in the tree was
+    /// opened during the run, so all count from zero, including those that
+    /// finished their transfer before the first sample. `Default` is for
+    /// `attach`, where sockets open at the first sample predate monitoring.
+    pub fn for_spawned() -> Self {
+        Self {
+            started: true,
+            ..Default::default()
+        }
+    }
+
     /// Sample the tree's sockets; `(received, sent)` since the first sample,
     /// or `None` if the tree is not in denet's network namespace or the dump
     /// fails.
@@ -266,6 +277,16 @@ mod tests {
         buf[16..20].copy_from_slice(&(-libc::EPERM).to_ne_bytes());
         let err = parse_dump(&buf, &mut HashMap::new()).unwrap_err();
         assert_eq!(err.raw_os_error(), Some(libc::EPERM));
+    }
+
+    #[test]
+    fn spawned_tracker_counts_sockets_seen_at_first_sample_from_zero() {
+        // `run`: a short transfer can finish before denet's first sample; its
+        // bytes are the job's and must not become the baseline.
+        let mut t = TcpTracker::for_spawned();
+        let inodes: HashSet<u64> = [7].into();
+        let all: HashMap<u64, (u64, u64)> = [(7, (2_000_000, 0))].into();
+        assert_eq!(t.update(&inodes, &all), (2_000_000, 0));
     }
 
     #[test]
