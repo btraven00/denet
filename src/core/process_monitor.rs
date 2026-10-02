@@ -435,7 +435,7 @@ impl ProcessMonitor {
             io_baseline: None,
             child_io_baselines: std::collections::HashMap::new(),
             #[cfg(target_os = "linux")]
-            tcp_tracker: Default::default(),
+            tcp_tracker: crate::tcp_diag::TcpTracker::for_spawned(),
             child_cmds: std::collections::HashMap::new(),
             pending_child_records: Vec::new(),
             since_process_start,
