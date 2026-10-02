@@ -591,13 +591,20 @@ where
     } else {
         None
     };
+    // An optional counter the CPU doesn't expose is recorded as 0 in every
+    // sample (and was in traces from earlier versions). A working counter never
+    // sums to exactly 0 over a run, so a zero numerator means "not available",
+    // not 0%.
+    // ponytail: heuristic on the sums, so it also fixes old traces; carry
+    // per-counter availability in the samples if a true zero ever matters.
+    let nonzero_over = |num: u64, den: u64| if num == 0 { None } else { div(num, den) };
     let llc_miss_rate = if perf_seen {
-        div(sum.cache_misses, sum.cache_refs)
+        nonzero_over(sum.cache_misses, sum.cache_refs)
     } else {
         None
     };
     let backend_stall_ratio = if perf_seen {
-        div(sum.stalled_backend, sum.cycles)
+        nonzero_over(sum.stalled_backend, sum.cycles)
     } else {
         None
     };
@@ -1029,7 +1036,7 @@ mod tests {
                 instructions: instr,
                 cache_refs: 0,
                 cache_misses: 0,
-                stalled_backend: 0,
+                stalled_backend: 5,
             }),
             ..Default::default()
         };
@@ -1038,6 +1045,30 @@ mod tests {
         // (200 + 200) / (100 + 100) = 2.0 — high IPC, no stalls → cpu-bound.
         assert!((mc.mean_ipc.unwrap() - 2.0).abs() < 1e-9);
         assert_eq!(mc.verdict, "cpu-bound");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unavailable_counters_are_not_reported_as_zero() {
+        // AMD Zen: no stalled-cycles-backend event, so the stall counter reads
+        // 0 in every sample; likewise cache-misses when only it fails to open.
+        // The ratios must be absent, not 0%, and the verdict must not rest on
+        // them.
+        let make = || AggregatedMetrics {
+            perf: Some(crate::perf::PerfCounters {
+                cycles: 1000,
+                instructions: 210,
+                cache_refs: 50,
+                cache_misses: 0,
+                stalled_backend: 0,
+            }),
+            ..Default::default()
+        };
+        let mc = MemoryCharacterization::from_aggregated(&[make(), make()]).unwrap();
+        assert!((mc.mean_ipc.unwrap() - 0.21).abs() < 1e-9);
+        assert!(mc.llc_miss_rate.is_none());
+        assert!(mc.backend_stall_ratio.is_none());
+        assert_eq!(mc.verdict, "insufficient-data");
     }
 
     #[cfg(target_os = "linux")]
