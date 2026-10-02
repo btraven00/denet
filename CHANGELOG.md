@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.0](https://github.com/btraven00/denet/compare/v0.10.3...v0.11.0) (2026-10-02)
+
+
+### Features
+
+* **ebpf:** report off-CPU waits with the kernel stack they waited in ([883634a](https://github.com/btraven00/denet/commit/883634a2f51b48ac41424a3cfa6c637a8a9ca951))
+
+
+### Bug Fixes
+
+* **stats:** don't report unavailable perf counters as 0% ([c104f61](https://github.com/btraven00/denet/commit/c104f615ae5f477891671cf5c06544c1b6274386))
+
 ## [0.10.3](https://github.com/btraven00/denet/compare/v0.10.2...v0.10.3) (2026-09-29)
 
 
