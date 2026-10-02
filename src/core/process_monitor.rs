@@ -273,6 +273,8 @@ pub struct ProcessMonitor {
     t0_ms: u64,
     io_baseline: Option<IoBaseline>,
     child_io_baselines: std::collections::HashMap<usize, ChildIoBaseline>,
+    #[cfg(target_os = "linux")]
+    tcp_tracker: crate::tcp_diag::TcpTracker,
     /// Last argv seen per child, keyed by pid, with its start time to spot PID reuse.
     child_cmds: std::collections::HashMap<usize, (u64, Vec<String>)>,
     /// Child records not yet taken by the writer (see `take_child_records`).
@@ -432,6 +434,8 @@ impl ProcessMonitor {
             debug_mode: false,
             io_baseline: None,
             child_io_baselines: std::collections::HashMap::new(),
+            #[cfg(target_os = "linux")]
+            tcp_tracker: crate::tcp_diag::TcpTracker::for_spawned(),
             child_cmds: std::collections::HashMap::new(),
             pending_child_records: Vec::new(),
             since_process_start,
@@ -561,6 +565,8 @@ impl ProcessMonitor {
             debug_mode: false,
             io_baseline: None,
             child_io_baselines: std::collections::HashMap::new(),
+            #[cfg(target_os = "linux")]
+            tcp_tracker: Default::default(),
             child_cmds: std::collections::HashMap::new(),
             pending_child_records: Vec::new(),
             since_process_start,
@@ -1439,6 +1445,8 @@ impl ProcessMonitor {
                 page_faults_disk: parent.page_faults_disk,
                 sys_net_rx_bytes: parent.sys_net_rx_bytes,
                 sys_net_tx_bytes: parent.sys_net_tx_bytes,
+                tcp_rx_bytes: None,
+                tcp_tx_bytes: None,
                 thread_count: parent.thread_count,
                 process_count: 1, // Parent
                 uptime_secs: parent.uptime_secs,
@@ -1476,6 +1484,17 @@ impl ProcessMonitor {
                 agg.sys_net_tx_bytes += child.metrics.sys_net_tx_bytes;
                 agg.thread_count += child.metrics.thread_count;
                 agg.process_count += 1;
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                let pids: Vec<usize> = std::iter::once(self.pid)
+                    .chain(child_pids.iter().copied())
+                    .collect();
+                if let Some((rx, tx)) = self.tcp_tracker.sample(&pids) {
+                    agg.tcp_rx_bytes = Some(rx);
+                    agg.tcp_tx_bytes = Some(tx);
+                }
             }
 
             // The parent attributed RAPL by its own CPU only; a wrapper parent

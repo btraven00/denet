@@ -3,6 +3,9 @@
 # end to end through the CLI, on this host and across kernels.
 #
 #   1. cargo test (unprivileged)
+#  1b. TCP bytes without eBPF, unprivileged: a server and a client in the
+#      tree move 2 MB; the JSONL tcp_* fields and the `denet stats` rows must
+#      report it, and system-wide network bytes must stay separate
 #   2. eBPF capability matrix on the host kernel (scripts/test_ebpf_caps.sh)
 #   3. End-to-end CLI run as root: eBPF net bytes > 0, GPU found (if
 #      nvidia-smi works), RAPL energy > 0 (if powercap exists)
@@ -166,6 +169,47 @@ e2e_waits() { # name, [wrapper...]
     fi
 }
 
+# A server and a client, separate processes in the tree, move 2,000,000 bytes
+# over one loopback connection held open for a second after the transfer, so
+# a sample sees the socket's final counters.
+TCP_JOB='python3 -c "import socket,time
+s=socket.socket(); s.bind((\"127.0.0.1\",0)); s.listen(1)
+import sys; open(sys.argv[1],\"w\").write(str(s.getsockname()[1]))
+c,_=s.accept(); n=0
+while n<2000000: n+=len(c.recv(65536))
+time.sleep(1)" $1 & for _ in $(seq 100); do [ -s $1 ] && break; sleep 0.05; done
+python3 -c "import socket,time,sys
+c=socket.create_connection((\"127.0.0.1\",int(open(sys.argv[1]).read()))); c.sendall(b\"x\"*2000000); time.sleep(1)" $1; wait'
+
+# check_tcp JSONL — tcp_* on the last tree sample within 2% of the transfer
+# (sent counts SYN/FIN, so +2 at most); stats shows the TCP rows and labels
+# the procfs rows as system-wide.
+check_tcp() {
+    python3 - "$1" <<'EOF2' || return 1
+import json, sys
+agg = [r for r in map(json.loads, open(sys.argv[1])) if "aggregated" in r][-1]["aggregated"]
+errs = [f"{k}={agg.get(k)}" for k in ("tcp_rx_bytes", "tcp_tx_bytes")
+        if not agg.get(k) or abs(agg[k] - 2_000_000) > 40_000]
+if errs:
+    sys.exit("; ".join(errs))
+EOF2
+    local stats; stats=$("$DENET" stats "$1") || return 1
+    for row in "TCP bytes received" "TCP bytes sent" "System network Received" "System network Sent"; do
+        grep -q "$row" <<<"$stats" || { echo "stats: no '$row' row"; return 1; }
+    done
+}
+
+e2e_tcp() { # name
+    local out="$OUT_DIR/tcp.jsonl" msg=""
+    if "$DENET" -q -o "$out" run -- bash -c "$TCP_JOB" bash "$OUT_DIR/port" >/dev/null 2>"$OUT_DIR/denet.err" \
+        && msg=$(check_tcp "$out" 2>&1); then
+        pass "$1"
+    else
+        fail "$1: ${msg:-denet run failed}"
+        tail -5 "$OUT_DIR/denet.err" | sed 's/^/      denet: /'
+    fi
+}
+
 e2e() { # name, expect_gpu, expect_rapl
     local out="$OUT_DIR/e2e.jsonl" msg="" gpu=()
     [[ "$2" == 1 ]] && gpu=(--gpu) # GPU monitoring is opt-in
@@ -217,6 +261,9 @@ NET_BIN=$(net_test_bin)
 step "1. cargo test" "Full Rust suite, unprivileged. eBPF-dependent tests must degrade cleanly without permissions."
 cargo test --release --features ebpf,gpu >"$OUT_DIR/cargo.log" 2>&1 \
     && pass "cargo test" || { fail "cargo test"; grep -E 'FAILED|panicked' "$OUT_DIR/cargo.log" | sed 's/^/      /'; }
+
+step "1b. TCP bytes without eBPF" "\`denet run\` unprivileged on a server and a client that move 2 MB over loopback. The tree's own tcp_* bytes must match the transfer, and \`denet stats\` must show them apart from the system-wide network rows."
+e2e_tcp "TCP bytes (unprivileged)"
 
 step "2. eBPF permissions ($(uname -r))" "The net monitor must degrade with no capabilities (A), and count real bytes with setcap (B) and as root (C), incl. the root-only tests."
 ./scripts/test_ebpf_caps.sh --with-root || FAILED=1
