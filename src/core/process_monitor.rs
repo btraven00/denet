@@ -947,6 +947,8 @@ impl ProcessMonitor {
                     .collect();
                 gm.gpu_energy = Some(crate::gpu::attribute_gpu_energy(pkg_j, &utils));
             }
+            // Also once per tick: NVML blocks ~20 ms per PCIe counter read.
+            self.gpu_monitor.fill_pcie_throughput(&mut gm);
             Some(gm)
         } else {
             None
@@ -1559,6 +1561,13 @@ impl ProcessMonitor {
                         .collect();
                     ag.gpu_energy =
                         Some(crate::gpu::attribute_gpu_energy(pe.package_joules, &utils));
+                }
+                // PCIe is device-wide: reuse the parent's read rather than block again.
+                if let Some(pg) = parent.gpu.as_ref() {
+                    for (a, p) in ag.system_metrics.iter_mut().zip(&pg.system_metrics) {
+                        a.pcie_tx_kbps = p.pcie_tx_kbps;
+                        a.pcie_rx_kbps = p.pcie_rx_kbps;
+                    }
                 }
                 agg.gpu = Some(ag);
             }
