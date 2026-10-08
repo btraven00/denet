@@ -341,7 +341,14 @@ impl ProcessMonitor {
         max_interval: Duration,
         since_process_start: bool,
     ) -> ProcessResult<Self> {
-        Self::spawn(cmd, base_interval, max_interval, since_process_start, false)
+        Self::spawn(
+            cmd,
+            base_interval,
+            max_interval,
+            since_process_start,
+            false,
+            Stdio::inherit(),
+        )
     }
 
     /// Like [`Self::new_with_options`], but the command is held before `exec`
@@ -358,15 +365,25 @@ impl ProcessMonitor {
         max_interval: Duration,
         since_process_start: bool,
     ) -> ProcessResult<Self> {
-        Self::spawn(cmd, base_interval, max_interval, since_process_start, true)
+        Self::spawn(
+            cmd,
+            base_interval,
+            max_interval,
+            since_process_start,
+            true,
+            Stdio::inherit(),
+        )
     }
 
-    fn spawn(
+    /// Spawn `cmd` (held as in [`Self::new_held`] if `hold`), with its stdout
+    /// sent to `child_stdout`. Stderr is always inherited.
+    pub fn spawn(
         cmd: Vec<String>,
         base_interval: Duration,
         max_interval: Duration,
         since_process_start: bool,
         hold: bool,
+        child_stdout: Stdio,
     ) -> ProcessResult<Self> {
         if cmd.is_empty() {
             return Err(std::io::Error::new(
@@ -388,18 +405,15 @@ impl ProcessMonitor {
             command.arg("-c").arg(HOLD_STUB).arg("denet").args(&cmd);
             // SAFETY: only async-signal-safe calls (dup2/fcntl) between fork and exec.
             unsafe { command.pre_exec(move || inherit_as(fd, 3)) };
-            let child = command
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()?;
+            let child = command.stdout(child_stdout).spawn()?;
             (child, Some(writer), Some((cmd.clone(), exe)))
         } else {
-            (Self::spawn_direct(&cmd)?, None, None)
+            (Self::spawn_direct(&cmd, child_stdout)?, None, None)
         };
         #[cfg(not(target_os = "linux"))]
         let (child, held_cmd) = {
             let _ = hold;
-            (Self::spawn_direct(&cmd)?, None)
+            (Self::spawn_direct(&cmd, child_stdout)?, None)
         };
         let pid = child.id();
 
@@ -467,11 +481,10 @@ impl ProcessMonitor {
         })
     }
 
-    fn spawn_direct(cmd: &[String]) -> ProcessResult<Child> {
+    fn spawn_direct(cmd: &[String], child_stdout: Stdio) -> ProcessResult<Child> {
         Command::new(&cmd[0])
             .args(&cmd[1..])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(child_stdout)
             .spawn()
     }
 

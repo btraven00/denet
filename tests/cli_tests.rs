@@ -188,6 +188,37 @@ fn test_cli_run_with_json_output() {
 }
 
 #[test]
+#[cfg(unix)]
+fn test_cli_run_passes_child_output_through() {
+    // Markers are built by printf so they never appear in the `cmd` metadata.
+    let script = "printf '%s%s\\n' AA BB; printf '%s%s\\n' CC DD >&2; sleep 0.3";
+    let run = |json: bool| {
+        let mut args = vec!["run", "--bin", "denet", "--", "--quiet"];
+        if json {
+            args.push("--json");
+        }
+        args.extend(["run", "--", "sh", "-c", script]);
+        let out = Command::new("cargo").args(&args).output().unwrap();
+        assert!(out.status.success());
+        let s = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+        (s(&out.stdout), s(&out.stderr))
+    };
+
+    let (stdout, stderr) = run(false);
+    assert!(stdout.contains("AABB"), "stdout was: {stdout}");
+    assert!(stderr.contains("CCDD"), "stderr was: {stderr}");
+
+    // --json keeps stdout pure JSONL: the child's stdout moves to stderr.
+    let (stdout, stderr) = run(true);
+    assert!(
+        stdout.lines().all(|l| l.starts_with('{')),
+        "stdout was: {stdout}"
+    );
+    assert!(stderr.contains("AABB"), "stderr was: {stderr}");
+    assert!(stderr.contains("CCDD"), "stderr was: {stderr}");
+}
+
+#[test]
 fn test_cli_run_with_custom_intervals() {
     let output = Command::new("cargo")
         .args([
