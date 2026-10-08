@@ -28,6 +28,15 @@
 //! attribute a `process_joules` slice by GPU-utilization share (an estimate, as
 //! coarse as the util proxy that feeds it). Volta+ only; older GPUs report no
 //! counter and `gpu_energy` is omitted.
+//!
+//! # PCIe throughput
+//!
+//! `nvmlDeviceGetPcieThroughput` reports device-wide TX/RX in KB/s, measured by
+//! the driver over a 20 ms window *inside the call* — so a TX+RX pair blocks
+//! ~40 ms per device. Like energy, it is read once per emitted sample
+//! ([`GpuMonitor::fill_pcie_throughput`]), never from `sample_metrics`. It is a
+//! point-in-time snapshot, not an interval average, and NVML has no per-process
+//! split: other processes' transfers are included.
 
 #[cfg(feature = "gpu")]
 use nvml_wrapper::enums::device::UsedGpuMemory;
@@ -70,6 +79,12 @@ pub struct SystemGpuMetrics {
     pub temperature: Option<u32>,
     /// Power usage in watts
     pub power_usage: Option<u32>,
+    /// PCIe transmit (GPU → host) in KB/s over NVML's 20 ms window, device-wide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pcie_tx_kbps: Option<u32>,
+    /// PCIe receive (host → GPU) in KB/s over NVML's 20 ms window, device-wide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pcie_rx_kbps: Option<u32>,
 }
 
 /// GPU energy over one sample interval, in joules.
@@ -138,6 +153,11 @@ pub struct GpuSummary {
     /// `None` when the driver did not report temperature for any sample.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_temperature_c: Option<u32>,
+    /// Peak PCIe TX / RX (KB/s) seen on any one device. `None` if never reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_pcie_tx_kbps: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_pcie_rx_kbps: Option<u32>,
 }
 
 impl Default for GpuSummary {
@@ -151,6 +171,8 @@ impl Default for GpuSummary {
             max_process_gpu_utilization: None,
             process_memory_usage_gb: 0.0,
             max_temperature_c: None,
+            max_pcie_tx_kbps: None,
+            max_pcie_rx_kbps: None,
         }
     }
 }
@@ -285,6 +307,24 @@ impl GpuMonitor {
         }
     }
 
+    /// Set PCIe TX/RX on each device in `gm`. Blocks ~20 ms per counter per
+    /// device inside NVML, so call it **once per emitted sample** (like
+    /// `board_energy_delta_joules`). Unsupported devices stay `None`.
+    pub fn fill_pcie_throughput(&self, gm: &mut GpuMetrics) {
+        #[cfg(feature = "gpu")]
+        if let Some(ref nvml) = self.nvml {
+            use nvml_wrapper::enum_wrappers::device::PcieUtilCounter;
+            for sm in &mut gm.system_metrics {
+                if let Ok(device) = nvml.device_by_index(sm.device_index) {
+                    sm.pcie_tx_kbps = device.pcie_throughput(PcieUtilCounter::Send).ok();
+                    sm.pcie_rx_kbps = device.pcie_throughput(PcieUtilCounter::Receive).ok();
+                }
+            }
+        }
+        #[cfg(not(feature = "gpu"))]
+        let _ = gm;
+    }
+
     /// Sample GPU metrics for specific processes
     pub fn sample_metrics(&self, process_pids: &[u32]) -> GpuMetrics {
         #[cfg(feature = "gpu")]
@@ -321,6 +361,9 @@ impl GpuMonitor {
                                 )
                                 .ok(),
                             power_usage: device.power_usage().ok(),
+                            // Filled once per tick by `fill_pcie_throughput` (blocks ~40 ms).
+                            pcie_tx_kbps: None,
+                            pcie_rx_kbps: None,
                         };
                         system_metrics.push(system_gpu_metrics);
                     }
@@ -477,6 +520,8 @@ pub fn summarize_samples(metrics_history: &[GpuMetrics]) -> GpuSummary {
         let mut peak_used_memory_gb = 0.0;
         let mut max_process_memory = 0;
         let mut max_temperature_c: Option<u32> = None;
+        let mut max_pcie_tx_kbps: Option<u32> = None;
+        let mut max_pcie_rx_kbps: Option<u32> = None;
         let mut device_count = 0u32;
 
         for metrics in metrics_history {
@@ -498,6 +543,8 @@ pub fn summarize_samples(metrics_history: &[GpuMetrics]) -> GpuSummary {
                 if let Some(temp) = system_metric.temperature {
                     max_temperature_c = Some(max_temperature_c.unwrap_or(0).max(temp));
                 }
+                max_pcie_tx_kbps = max_pcie_tx_kbps.max(system_metric.pcie_tx_kbps);
+                max_pcie_rx_kbps = max_pcie_rx_kbps.max(system_metric.pcie_rx_kbps);
             }
 
             // Track maximum process utilization and memory
@@ -521,6 +568,8 @@ pub fn summarize_samples(metrics_history: &[GpuMetrics]) -> GpuSummary {
             max_process_gpu_utilization,
             process_memory_usage_gb: (max_process_memory as f64) / (1024.0 * 1024.0 * 1024.0),
             max_temperature_c,
+            max_pcie_tx_kbps,
+            max_pcie_rx_kbps,
         }
     }
 }
@@ -579,6 +628,8 @@ mod tests {
                 memory_free: Some(6 * 1024 * 1024 * 1024),
                 temperature: Some(61),
                 power_usage: Some(120),
+                pcie_tx_kbps: Some(900),
+                pcie_rx_kbps: None,
             }],
             process_data: vec![],
             has_process_data: false,
@@ -598,6 +649,8 @@ mod tests {
         );
         assert_eq!(summary.max_system_gpu_utilization, 73);
         assert_eq!(summary.max_temperature_c, Some(61));
+        assert_eq!(summary.max_pcie_tx_kbps, Some(900));
+        assert_eq!(summary.max_pcie_rx_kbps, None);
         assert!((summary.peak_used_memory_gb - 2.0).abs() < 1e-6);
         assert!((summary.total_memory_gb - 8.0).abs() < 1e-6);
     }

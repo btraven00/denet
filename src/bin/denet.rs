@@ -883,6 +883,12 @@ fn summary_rows(summary: &Summary) -> Vec<(&'static str, String)> {
             if let Some(temp) = gpu.max_temperature_c {
                 rows.push(("Peak GPU Temperature", format!("{temp} C")));
             }
+            if let (Some(tx), Some(rx)) = (gpu.max_pcie_tx_kbps, gpu.max_pcie_rx_kbps) {
+                rows.push((
+                    "Peak GPU PCIe TX/RX",
+                    format!("{:.1} / {:.1} MB/s", tx as f64 / 1024.0, rx as f64 / 1024.0),
+                ));
+            }
             if gpu.process_memory_usage_gb > 0.0 {
                 rows.push((
                     "Process GPU Memory",
