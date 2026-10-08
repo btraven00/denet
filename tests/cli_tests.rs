@@ -209,7 +209,12 @@ fn test_cli_run_passes_child_output_through() {
     assert!(stderr.contains("CCDD"), "stderr was: {stderr}");
 
     // --json keeps stdout pure JSONL: the child's stdout moves to stderr.
+    // --quiet silences denet's UI, never the JSON records asked for.
     let (stdout, stderr) = run(true);
+    assert!(
+        stdout.contains(r#""kind":"metadata""#),
+        "stdout was: {stdout}"
+    );
     assert!(
         stdout.lines().all(|l| l.starts_with('{')),
         "stdout was: {stdout}"

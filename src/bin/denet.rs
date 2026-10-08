@@ -318,7 +318,7 @@ fn execute_monitoring_with_output(
         if let Some(file) = &mut file_handles.out_file {
             writeln!(file, "{env_json}")?;
         }
-        if args.json && !args.quiet {
+        if args.json {
             println!("{env_json}");
         }
     }
@@ -332,14 +332,14 @@ fn execute_monitoring_with_output(
         if let Some(file) = &mut file_handles.out_file {
             writeln!(file, "{metadata_json}")?;
         }
-        if args.json && !args.quiet {
+        if args.json {
             println!("{metadata_json}");
         }
     }
 
     // Check for no-polling mode
     if args.no_polling {
-        if !args.quiet {
+        if !ui_quiet {
             println!("🚀 Pure event-driven mode: eBPF collecting syscalls until completion...");
         }
 
@@ -347,7 +347,7 @@ fn execute_monitoring_with_output(
         while monitor.is_running() && running.load(Ordering::SeqCst) {
             if let Some(timeout_duration) = timeout {
                 if start_time.elapsed() >= timeout_duration {
-                    if !args.quiet {
+                    if !ui_quiet {
                         println!("\nTimeout reached after {} seconds", args.duration);
                     }
                     break;
@@ -357,7 +357,7 @@ fn execute_monitoring_with_output(
         }
 
         // Generate final summary
-        if !args.quiet {
+        if !ui_quiet {
             println!("✅ Process completed. Generating comprehensive summary...");
         }
 
@@ -378,7 +378,7 @@ fn execute_monitoring_with_output(
             // Check timeout
             if let Some(timeout_duration) = timeout {
                 if start_time.elapsed() >= timeout_duration {
-                    if !args.quiet {
+                    if !ui_quiet {
                         println!("\nTimeout reached after {} seconds", args.duration);
                     }
                     break;
@@ -399,25 +399,7 @@ fn execute_monitoring_with_output(
                         if let Some(file) = &mut file_handles.out_file {
                             writeln!(file, "{json}")?;
                         }
-                        if !args.quiet {
-                            if update_in_place {
-                                // Clear line and print new content with spinner and elapsed time
-                                let spinner = progress_chars[progress_index % progress_chars.len()];
-                                let elapsed = start_time.elapsed().as_secs();
-                                print!(
-                                    "\r{}\r{} [{}s] {}",
-                                    " ".repeat(terminal_width.saturating_sub(1)),
-                                    spinner.to_string().cyan(),
-                                    elapsed.to_string().bright_black(),
-                                    json
-                                );
-                                io::stdout().flush()?;
-                                needs_newline_on_exit = true;
-                                progress_index += 1;
-                            } else {
-                                println!("{json}");
-                            }
-                        }
+                        println!("{json}");
                     } else {
                         let formatted = format_metrics(&metrics);
                         if let Some(file) = &mut file_handles.out_file {
@@ -454,7 +436,7 @@ fn execute_monitoring_with_output(
                     if let Some(file) = &mut file_handles.out_file {
                         writeln!(file, "{json}")?;
                     }
-                    if args.json && !args.quiet && !update_in_place {
+                    if args.json {
                         println!("{json}");
                     }
                 }
@@ -475,26 +457,7 @@ fn execute_monitoring_with_output(
                         if let Some(file) = &mut file_handles.out_file {
                             writeln!(file, "{json}")?;
                         }
-                        if !args.quiet {
-                            if update_in_place {
-                                // For in-place updates, show just aggregated metrics
-                                let agg_json = serde_json::to_string(&agg_metrics).unwrap();
-                                let spinner = progress_chars[progress_index % progress_chars.len()];
-                                let elapsed = start_time.elapsed().as_secs();
-                                print!(
-                                    "\r{}\r{} [{}s] {}",
-                                    " ".repeat(terminal_width.saturating_sub(1)),
-                                    spinner.to_string().cyan(),
-                                    elapsed.to_string().bright_black(),
-                                    agg_json
-                                );
-                                io::stdout().flush()?;
-                                needs_newline_on_exit = true;
-                                progress_index += 1;
-                            } else {
-                                println!("{json}");
-                            }
-                        }
+                        println!("{json}");
                     } else {
                         // Format and display tree metrics with parent and children
                         let formatted = format_aggregated_metrics(agg_metrics);
@@ -538,7 +501,7 @@ fn execute_monitoring_with_output(
         if let Some(file) = &mut file_handles.out_file {
             writeln!(file, "{json}")?;
         }
-        if args.json && !args.quiet && !update_in_place {
+        if args.json {
             println!("{json}");
         }
     }
