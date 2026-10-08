@@ -18,6 +18,8 @@
 #      processes that exit before the end. Syscalls and off-CPU time must be
 #      attributed to the children and survive their exit; run on the host
 #      and again inside a new PID namespace (as in a container, kernel >= 5.7)
+#  3e. GPU PCIe throughput: a CUDA host<->device copy loop must show up in
+#      pcie_tx_kbps/pcie_rx_kbps (skipped without a GPU or nvcc)
 #   4. eBPF net tests + end-to-end eBPF checks under each KERNEL in a
 #      virtme-ng VM (skipped if `vng` is not installed)
 #
@@ -30,7 +32,7 @@
 # as root (on the host via sudo, in each guest via vng).
 
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 DENET=${DENET:-target/release/denet}
 MUSL=x86_64-unknown-linux-musl
@@ -280,6 +282,40 @@ elif ! cargo build -q --release --target "$MUSL" --features ebpf --bin denet; th
     fail "musl build"
 else
     sudo env DENET="target/$MUSL/release/denet" ./scripts/release_check.sh --as-root host-musl 0 "$RAPL" || FAILED=1
+fi
+
+step "3e. GPU PCIe throughput" "\`denet --gpu\` on a CUDA loop copying 256 MiB host<->device for 5 s. Peak pcie_tx_kbps and pcie_rx_kbps must both exceed 100 MB/s (idle is <1 MB/s; a laptop PCIe 4.0 x8 link reaches ~14 GB/s)."
+if ((!GPU)); then
+    echo "SKIP  no NVIDIA GPU"
+elif ! command -v nvcc >/dev/null; then
+    echo "SKIP  nvcc not installed"
+else
+    cat >"$OUT_DIR/h2d.cu" <<'EOF'
+#include <cuda_runtime.h>
+#include <time.h>
+int main() {
+    size_t n = 256 << 20; void *h, *d;
+    if (cudaMallocHost(&h, n) || cudaMalloc(&d, n)) return 1;
+    for (time_t end = time(0) + 5; time(0) < end;) {
+        cudaMemcpy(d, h, n, cudaMemcpyHostToDevice);
+        cudaMemcpy(h, d, n, cudaMemcpyDeviceToHost);
+    }
+    return 0;
+}
+EOF
+    peak() { jq -s "[.. | .$1? // empty] | max // 0" "$OUT_DIR/pcie.jsonl"; }
+    if ! nvcc -o "$OUT_DIR/h2d" "$OUT_DIR/h2d.cu" >"$OUT_DIR/nvcc.log" 2>&1; then
+        fail "pcie: nvcc build"; tail -5 "$OUT_DIR/nvcc.log" | sed 's/^/      /'
+    elif ! "$DENET" --gpu -q -o "$OUT_DIR/pcie.jsonl" run -- "$OUT_DIR/h2d" >/dev/null 2>"$OUT_DIR/denet.err"; then
+        fail "pcie: denet run failed"; tail -5 "$OUT_DIR/denet.err" | sed 's/^/      denet: /'
+    else
+        tx=$(peak pcie_tx_kbps) rx=$(peak pcie_rx_kbps)
+        if ((tx > 102400 && rx > 102400)); then
+            pass "pcie: peak tx=${tx} rx=${rx} KB/s"
+        else
+            fail "pcie: peak tx=${tx} rx=${rx} KB/s, want > 102400"
+        fi
+    fi
 fi
 
 step "4. kernels (${#KERNELS[@]})" "Step 2's root-only net tests and step 3's eBPF check, inside a VM per kernel (no GPU/RAPL in guests). Include one kernel < 5.7 (e.g. v5.4.x) to check eBPF still loads where the PID-namespace helper is missing."
