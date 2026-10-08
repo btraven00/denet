@@ -148,6 +148,27 @@ counter and are accurate on datacenter GPUs (A100/H100). On some laptop/Optimus
 dGPUs the counter is noisy and NVML polling itself perturbs the power state, so
 treat laptop readings as indicative, not billable.
 
+## PCIe throughput (`pcie_tx_kbps`, `pcie_rx_kbps`)
+
+Each device in `system_metrics` carries the PCIe bus traffic NVML reports
+(`nvmlDeviceGetPcieThroughput`, **Maxwell and newer**, not on vGPUs):
+
+```json
+{ "device_index": 0, "pcie_tx_kbps": 488, "pcie_rx_kbps": 1843200 }
+```
+
+- **`pcie_tx_kbps`**: GPU → host, KB/s. **`pcie_rx_kbps`**: host → GPU, KB/s.
+- **Snapshot, not average.** The driver counts bytes over a 20 ms window
+  during the call, so a short burst between samples can be missed. A
+  bandwidth-bound transfer shows up reliably. A single 20 ms blip may not.
+- **Device-wide.** NVML has no per-process PCIe counter, so other processes'
+  (and the display's) transfers are included.
+- **Cost.** Each read blocks ~20 ms in NVML, so TX+RX costs ~40 ms per device
+  per sample. denet reads it once per sample and reuses it for the
+  child-aggregated record. At very short `--interval` on multi-GPU hosts this
+  sets the floor on the sampling period.
+- `denet stats` reports the peak TX/RX seen as `Peak GPU PCIe TX/RX`.
+
 ## Notes
 
 - GPU monitoring requires NVIDIA GPUs and drivers

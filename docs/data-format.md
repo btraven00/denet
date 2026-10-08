@@ -127,7 +127,7 @@ Identifies each child in the tree, so per-child metrics (`tree.children[]`, keye
 | `thread_count` | number | Number of threads |
 | `uptime_secs` | number | Process uptime (seconds) |
 | `cpu_core` | number? | Last CPU core the process ran on, if known. |
-| `gpu` | object? | Per-process GPU metrics (only when the `gpu` feature is enabled and an NVIDIA GPU is present). May include `gpu_energy: {package_joules, process_joules}` — whole-board energy over the interval plus the slice attributed by GPU-util share (Volta+; see `docs/gpu.md`). |
+| `gpu` | object? | Per-process GPU metrics (only when the `gpu` feature is enabled and an NVIDIA GPU is present). May include `gpu_energy: {package_joules, process_joules}` — whole-board energy over the interval plus the slice attributed by GPU-util share (Volta+; see `docs/gpu.md`). Each `system_metrics[]` device may carry `pcie_tx_kbps` / `pcie_rx_kbps` (device-wide PCIe KB/s, Maxwell+). |
 
 ### Child Process Metrics
 | Field | Type | Description |
