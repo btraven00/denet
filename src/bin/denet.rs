@@ -161,18 +161,22 @@ fn create_monitor_for_command(command: &[String], args: &Args) -> Result<Process
         exit(1);
     }
 
-    // With eBPF, hold the command until the probes are attached so its first
-    // bytes/syscalls are not lost while they load.
-    let spawn = if args.enable_ebpf {
-        ProcessMonitor::new_held
+    // The child inherits stdout/stderr, like `time` or `perf stat`; under
+    // --json its stdout goes to stderr so ours stays parseable JSONL.
+    let child_stdout = if args.json {
+        io::stderr().into()
     } else {
-        ProcessMonitor::new_with_options
+        std::process::Stdio::inherit()
     };
-    match spawn(
+    match ProcessMonitor::spawn(
         command.to_vec(),
         Duration::from_millis(args.interval),
         Duration::from_millis(args.max_interval),
         args.since_process_start,
+        // With eBPF, hold the command until the probes are attached so its
+        // first bytes/syscalls are not lost while they load.
+        args.enable_ebpf,
+        child_stdout,
     ) {
         Ok(monitor) => {
             if args.debug && !args.quiet && !args.json {
