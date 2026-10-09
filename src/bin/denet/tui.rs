@@ -88,6 +88,19 @@ struct Panel {
     data: VecDeque<(u64, u64)>,
     /// Decaying (up, down) scale, see [`SCALE_DECAY`].
     scale: (f64, f64),
+    /// Round the up scale up to a multiple of this (CPU: whole cores).
+    scale_step: Option<f64>,
+}
+
+impl Panel {
+    fn up_scale(&self) -> f64 {
+        match self.scale_step {
+            // A tenth of a step of slack: a noisy 203% stays on a 2-core
+            // scale (clipped at the top) instead of flipping to 3.
+            Some(step) => ((self.scale.0 - step / 10.0) / step).ceil().max(1.0) * step,
+            None => self.scale.0,
+        }
+    }
 }
 
 /// A panel's latest sample: title, colors, value, mirrored value.
@@ -140,7 +153,14 @@ impl Tui {
                 sys.total_memory()
             },
             prev: None,
-            panels: (0..4).map(|_| Panel::default()).collect(),
+            panels: (0..4)
+                .map(|i| Panel {
+                    // CPU: full height means N cores busy, N the fewest that
+                    // fit the recent peak, rather than "the peak, whatever it was".
+                    scale_step: (i == 0).then_some(100.0),
+                    ..Default::default()
+                })
+                .collect(),
         }
     }
 
@@ -247,6 +267,12 @@ impl Tui {
         // RSS hardly moves, so against its own peak it would always fill the
         // graph: scale it to the machine's RAM instead, as btop does.
         self.panels[1].scale.0 = self.total_ram.max(1) as f64;
+        let cores = self.panels[0].up_scale() / 100.0;
+        self.panels[0].title = Line::from(format!(
+            " CPU  {:.0}%  (scale {cores} core{}) ",
+            m.cpu_usage,
+            if cores > 1.0 { "s" } else { "" }
+        ));
         self.draw()
     }
 
@@ -285,7 +311,7 @@ impl Tui {
                             .map(|(i, v)| (offset + i as f64, sign * v as f64 / scale))
                             .collect()
                     };
-                let up = points(1.0, panel.scale.0, |d| d.0);
+                let up = points(1.0, panel.up_scale(), |d| d.0);
                 let down = points(-1.0, panel.scale.1, |d| d.1);
                 let floor = if panel.mirrored { -1.0 } else { 0.0 };
                 let dataset = |points, color| {
