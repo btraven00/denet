@@ -65,6 +65,9 @@ struct offcpu_event {
     u32 pid;            // Process ID (TGID)
     u32 tid;            // Thread ID
     u32 prev_state;     // Scheduler state when thread went off-CPU
+    u32 _pad;           // named, so the initializer zeroes it: kernels
+                        // before 6.4 reject uninitialized stack bytes
+                        // passed to bpf_perf_event_output
     u64 offcpu_time_ns; // Time spent off-CPU in nanoseconds
     u64 start_time_ns;  // Timestamp when thread went off-CPU
     u64 end_time_ns;    // Timestamp when thread came back on-CPU
