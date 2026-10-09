@@ -580,9 +580,15 @@ fn execute_monitoring_with_output(
 
     // Child still running means we stopped early: 130 on Ctrl-C, 124 on
     // --duration timeout (as timeout(1)). Attach has no child: 0.
-    Ok(match (&args.command, monitor.exit_code()) {
+    let stopped = !running.load(Ordering::SeqCst);
+    let exit_code = monitor.exit_code();
+    // The TUI hid the command's output: if it failed on its own, show why.
+    if let (true, false, Some(code @ 1..)) = (args.tui, stopped, exit_code) {
+        tui::print_log_tail(code);
+    }
+    Ok(match (&args.command, exit_code) {
         (_, Some(code)) => code,
-        (Commands::Run { .. }, None) if !running.load(Ordering::SeqCst) => 130,
+        (Commands::Run { .. }, None) if stopped => 130,
         (Commands::Run { .. }, None) => 124,
         _ => 0,
     })

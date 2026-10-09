@@ -34,6 +34,12 @@ const MARKERS: [(Marker, &str, usize); 5] = [
     (Marker::HalfBlock, "half-block", 1),
 ];
 
+/// Lines of the log shown when the command fails.
+const LOG_TAIL_LINES: usize = 20;
+
+/// The log file, once [`stderr_to_log`] has made one.
+static LOG_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
 #[cfg(target_os = "linux")]
 static SAVED_STDERR: std::sync::Mutex<Option<(std::os::fd::OwnedFd, std::path::PathBuf)>> =
     std::sync::Mutex::new(None);
@@ -49,7 +55,8 @@ pub fn stderr_to_log() -> io::Result<()> {
     if unsafe { libc::dup2(log.as_raw_fd(), 2) } < 0 {
         return Err(io::Error::last_os_error());
     }
-    *SAVED_STDERR.lock().unwrap() = Some((saved, path));
+    *SAVED_STDERR.lock().unwrap() = Some((saved, path.clone()));
+    let _ = LOG_PATH.set(path);
     Ok(())
 }
 
@@ -60,6 +67,34 @@ pub fn restore_stderr() {
     if let Some((saved, path)) = SAVED_STDERR.lock().unwrap().take() {
         unsafe { libc::dup2(saved.as_raw_fd(), 2) };
         eprintln!("Command output and warnings: {}", path.display());
+    }
+}
+
+/// Print the last lines of the log to stderr, after the command exited with
+/// `code`. Reads only the end of the file, however large it grew.
+pub fn print_log_tail(code: i32) {
+    use std::io::{Read, Seek, SeekFrom};
+    let Some(path) = LOG_PATH.get() else { return };
+    let Ok(mut log) = std::fs::File::open(path) else {
+        return;
+    };
+    let len = log.metadata().map(|m| m.len()).unwrap_or(0);
+    let mut tail = Vec::new();
+    if log
+        .seek(SeekFrom::Start(len.saturating_sub(64 * 1024)))
+        .is_err()
+        || log.read_to_end(&mut tail).is_err()
+    {
+        return;
+    }
+    let tail = String::from_utf8_lossy(&tail);
+    let lines: Vec<&str> = tail.lines().collect();
+    if lines.is_empty() {
+        return;
+    }
+    eprintln!("\nCommand exited with status {code}; last lines of its output:");
+    for line in &lines[lines.len().saturating_sub(LOG_TAIL_LINES)..] {
+        eprintln!("  {line}");
     }
 }
 
