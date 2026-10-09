@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.11.0](https://github.com/btraven00/denet/compare/v0.10.3...v0.11.0) (2026-10-09)
+
+
+### Features
+
+* **cli:** add --tui live view of the process tree ([f59b2b2](https://github.com/btraven00/denet/commit/f59b2b291cd5f2939057323f64eca86fba5802e6))
+* **cli:** scale the --tui CPU graph to whole cores ([bdb4e4a](https://github.com/btraven00/denet/commit/bdb4e4a4f225f7bb569f436e1fcd15efcbb8b846))
+* **cli:** show the end of the log when a --tui command fails ([1fb6b90](https://github.com/btraven00/denet/commit/1fb6b90da3bdc30888bdeeac0ea924abe9c78b26))
+* **ebpf:** report off-CPU waits with the kernel stack they waited in ([883634a](https://github.com/btraven00/denet/commit/883634a2f51b48ac41424a3cfa6c637a8a9ca951))
+* **gpu:** report PCIe TX/RX throughput per device ([ea31e83](https://github.com/btraven00/denet/commit/ea31e83b2269a87aa87d10412e9dd25b79a04a29))
+* per-tree TCP bytes without eBPF (tcp_rx_bytes/tcp_tx_bytes) ([b0f38a2](https://github.com/btraven00/denet/commit/b0f38a23533649a264ee9325f544568cfeb51b62))
+
+
+### Bug Fixes
+
+* **cli:** --quiet no longer suppresses --json records ([e0629ac](https://github.com/btraven00/denet/commit/e0629acccafd7086b867922512e7da104ca0f688))
+* count all of a spawned tree's TCP bytes; release check step 1b ([55b4544](https://github.com/btraven00/denet/commit/55b4544c4dbbe6f2379be128b132a0874af0629e))
+* **ebpf:** load the off-CPU profiler on kernels before 6.4 ([c5507af](https://github.com/btraven00/denet/commit/c5507af7dce5701ce08fb5607c541ee2f8a7b3e4))
+* pass the child's stdout/stderr through instead of discarding them ([970b5ab](https://github.com/btraven00/denet/commit/970b5abb8449fc215d3ac0724207125f0a84f93c))
+* **scripts:** stress_gpu.py failed to resolve torch on Python 3.14 ([25382cf](https://github.com/btraven00/denet/commit/25382cf2088da926238cd19824491643d07ea018))
+* **stats:** don't report unavailable perf counters as 0% ([c104f61](https://github.com/btraven00/denet/commit/c104f615ae5f477891671cf5c06544c1b6274386))
+* **symbolication:** stop reading /proc/&lt;pid&gt;/maps after a read error ([8841357](https://github.com/btraven00/denet/commit/8841357acea7206399c013d275b9b5d27edffebe))
+
 ## [0.10.3](https://github.com/btraven00/denet/compare/v0.10.2...v0.10.3) (2026-09-29)
 
 
