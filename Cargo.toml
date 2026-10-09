@@ -34,6 +34,7 @@ ctrlc = "3.4"
 crossterm = "0.29"
 log = "0.4"
 tabled = "0.16"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 
 # Add libc for sysconf and procfs for process information on Linux
 [target.'cfg(target_os = "linux")'.dependencies]

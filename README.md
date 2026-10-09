@@ -44,6 +44,9 @@ denet run python train.py
 # Attach to an existing process
 denet attach 1234
 
+# Watch it live: full-screen graphs of CPU, memory, disk and TCP (add --gpu for GPU)
+denet --tui run python train.py
+
 # Save metrics as JSONL
 denet --json --out metrics.jsonl run python train.py
 
