@@ -7,12 +7,12 @@
 #
 # [tool.uv.sources]
 # torch = [
-#   { index = "pytorch-cu121", marker = "sys_platform == 'linux'" },
+#   { index = "pytorch-cu126", marker = "sys_platform == 'linux'" },
 # ]
 #
 # [[tool.uv.index]]
-# name = "pytorch-cu121"
-# url = "https://download.pytorch.org/whl/cu121"
+# name = "pytorch-cu126"
+# url = "https://download.pytorch.org/whl/cu126"
 # explicit = true
 # ///
 
@@ -24,7 +24,8 @@ Usage:
     uv run scripts/stress_gpu.py --size 16384   # larger matrices = more VRAM
 
 Profile with denet:
-    ./target/release/denet run uv -- run scripts/stress_gpu.py --duration 30
+    denet --gpu run uv run scripts/stress_gpu.py --duration 30
+    denet --tui --gpu run uv run scripts/stress_gpu.py   # live graphs
 """
 
 import argparse
