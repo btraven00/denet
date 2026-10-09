@@ -6,7 +6,7 @@ use denet::error::Result;
 use denet::monitor::{tagged_json, AggregatedMetrics, Metrics, Summary, SummaryGenerator};
 use denet::ProcessMonitor;
 use std::fs::File;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::{exit, ExitCode};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,6 +14,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use tabled::{builder::Builder, settings::Style};
+
+#[path = "denet/tui.rs"]
+mod tui;
 
 /// Dynamic Explorer of Nested Executions Tool (DENET)
 #[derive(Parser, Debug)]
@@ -76,6 +79,12 @@ struct Args {
     #[clap(long)]
     write_env: bool,
 
+    /// Live full-screen graphs of the process tree: CPU, memory, disk, TCP
+    /// (and GPU with --gpu). Samples every --max-interval; q stops, m changes
+    /// the graph style. The command's output goes to a log file, named on exit
+    #[clap(long, conflicts_with_all = ["json", "quiet", "no_update", "exclude_children", "no_polling"])]
+    tui: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -124,6 +133,13 @@ fn handle_stats_command(file: &PathBuf, args: &Args) -> Result<()> {
 /// Handle monitoring commands (run and attach); returns the process exit code
 fn handle_monitoring_commands(args: &Args) -> Result<i32> {
     let file_handles = setup_output_files(args)?;
+    if args.tui {
+        if !io::stdout().is_terminal() {
+            eprintln!("Error: --tui needs stdout to be a terminal");
+            exit(1);
+        }
+        tui::stderr_to_log()?;
+    }
     let monitor = create_monitor_from_args(args)?;
     execute_monitoring_with_output(monitor, file_handles, args)
 }
@@ -162,8 +178,9 @@ fn create_monitor_for_command(command: &[String], args: &Args) -> Result<Process
     }
 
     // The child inherits stdout/stderr, like `time` or `perf stat`; under
-    // --json its stdout goes to stderr so ours stays parseable JSONL.
-    let child_stdout = if args.json {
+    // --json its stdout goes to stderr so ours stays parseable JSONL; under
+    // --tui stderr is the log file.
+    let child_stdout = if args.json || args.tui {
         io::stderr().into()
     } else {
         std::process::Stdio::inherit()
@@ -185,6 +202,7 @@ fn create_monitor_for_command(command: &[String], args: &Args) -> Result<Process
             Ok(monitor)
         }
         Err(err) => {
+            tui::restore_stderr();
             eprintln!("Error starting command: {err}");
             exit(1);
         }
@@ -209,6 +227,7 @@ fn create_monitor_for_pid(pid: usize, args: &Args) -> Result<ProcessMonitor> {
             Ok(monitor)
         }
         Err(err) => {
+            tui::restore_stderr();
             eprintln!("Error attaching to process {pid}: {err}");
             exit(1);
         }
@@ -273,10 +292,11 @@ fn execute_monitoring_with_output(
     // Setup signal handling for clean shutdown
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
+    let announce_ctrlc = !ui_quiet && !args.tui;
 
     ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);
-        if !ui_quiet {
+        if announce_ctrlc {
             println!("\nReceived Ctrl-C, finishing...");
         }
     })
@@ -370,6 +390,12 @@ fn execute_monitoring_with_output(
             metrics_count = 1;
         }
     } else {
+        let mut tui = args.tui.then(|| {
+            tui::Tui::new(match &args.command {
+                Commands::Run { command } => command.join(" "),
+                _ => format!("pid {}", monitor.get_pid()),
+            })
+        });
         // Regular adaptive polling mode. The sample after exit is detected is
         // the last one: it still reads the exited process's final counters.
         let mut exited = false;
@@ -378,7 +404,7 @@ fn execute_monitoring_with_output(
             // Check timeout
             if let Some(timeout_duration) = timeout {
                 if start_time.elapsed() >= timeout_duration {
-                    if !ui_quiet {
+                    if !ui_quiet && tui.is_none() {
                         println!("\nTimeout reached after {} seconds", args.duration);
                     }
                     break;
@@ -464,7 +490,9 @@ fn execute_monitoring_with_output(
                         if let Some(file) = &mut file_handles.out_file {
                             writeln!(file, "{}", tagged_json("tree", &tree_metrics).unwrap())?;
                         }
-                        if !args.quiet {
+                        if let Some(tui) = tui.as_mut() {
+                            tui.update(agg_metrics)?;
+                        } else if !args.quiet {
                             if update_in_place {
                                 // Use compact format for in-place updates
                                 let formatted_compact =
@@ -490,10 +518,20 @@ fn execute_monitoring_with_output(
             }
 
             if !exited {
-                let interval = monitor.adaptive_interval();
-                monitor.wait_next_sample(interval);
+                // The TUI scrolls one dot per sample, so adaptive back-off would
+                // slow the scrolling down; it samples at a fixed --max-interval
+                // (cheap, like btop's 2 s default; lower it to scroll faster).
+                let interval = match tui {
+                    Some(_) => Duration::from_millis(args.max_interval),
+                    None => monitor.adaptive_interval(),
+                };
+                match tui.as_mut() {
+                    Some(tui) => tui.wait(&mut monitor, interval, &running)?,
+                    None => monitor.wait_next_sample(interval),
+                }
             }
         }
+        drop(tui); // restore the terminal before the summary
     } // End of polling mode else block
 
     if let Some(exit) = monitor.finish() {

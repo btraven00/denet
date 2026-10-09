@@ -530,3 +530,15 @@ fn test_cli_signal_handling() {
     // Should have terminated - check that we can get status
     assert!(output.status.code().is_some() || !output.status.success());
 }
+
+#[test]
+fn test_tui_refuses_without_terminal() {
+    let output = Command::new(env!("CARGO_BIN_EXE_denet"))
+        .args(["--tui", "run", "echo", "should-not-run"])
+        .output()
+        .expect("Failed to execute command");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--tui needs stdout to be a terminal"));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("should-not-run"));
+}
