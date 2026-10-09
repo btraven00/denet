@@ -44,10 +44,11 @@ pub fn get_memory_maps(pid: u32) -> Vec<MemoryRegion> {
     for (line_no, line_result) in reader.lines().enumerate() {
         let line = match line_result {
             Ok(l) => l,
+            // A read error doesn't advance the reader: once the process has
+            // exited every read fails (ESRCH) and `continue` spun forever.
             Err(e) => {
                 eprintln!("Error reading line {line_no} from maps for PID {pid}: {e}");
-                skipped_lines += 1;
-                continue;
+                break;
             }
         };
 
