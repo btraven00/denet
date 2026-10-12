@@ -55,7 +55,7 @@ tree), so derive the rates from one snapshot per emitted sample.
 - [x] Manual check on macmini: 1278/1278 MHz under a Metal burn, ~707 MHz when waking from idle, absent when off
 
 ### Alongside
-- [ ] `scripts/stress_gpu.py`: `mps` fallback
+- [x] `scripts/stress_gpu.py`: `mps` fallback (6.87 s GPU time over 8 s of MPS matmuls on macmini)
 - [x] `docs/gpu.md`: Apple Silicon section, marked experimental
 - [x] Summary: total process GPU-seconds (`process_gpu_seconds`, CLI `Process GPU Time`)
 - [x] Temperature: hottest `GPU MTR Temp Sensor*` via sysinfo (already a dependency); 30 °C floor when the GPU is off; 34.8 °C under a 6 s burn, 41 °C under 8 s of MPS matmuls
