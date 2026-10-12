@@ -196,8 +196,14 @@ What it reports:
 - `gpu_energy`: GPU energy over the interval and the monitored processes' share
   of it by GPU time, as for NVIDIA (see [Energy](#energy-gpu_energy)). The
   energy covers the GPU only, not the whole SoC.
+- `system_metrics[0].freq_mhz`: mean GPU clock over the part of the interval
+  the GPU was clocked, from IOReport's P-state residency. Absent when the GPU
+  was off the whole interval. `max_freq_mhz` is the top of the chip's P-state
+  table (1278 MHz on an M1). A busy GPU (`system_utilization_gpu` near 100)
+  running well under `max_freq_mhz` is being throttled, by heat or by power
+  limits, or another process is holding the clock down.
 
-Not yet: frequency and temperature (`null`). Caveats:
+Not yet: temperature (`null`). Caveats:
 
 - GPU time is credited when a command buffer completes, so one long kernel
   shows up in a burst rather than spread across the samples it spans.

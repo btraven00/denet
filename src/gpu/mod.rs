@@ -112,6 +112,13 @@ pub struct SystemGpuMetrics {
     /// PCIe receive (host → GPU) in KB/s over NVML's 20 ms window, device-wide.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pcie_rx_kbps: Option<u32>,
+    /// Mean GPU clock (MHz) over the interval's clocked time (Apple Silicon).
+    /// Well under `max_freq_mhz` while the GPU is busy suggests throttling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freq_mhz: Option<u32>,
+    /// Highest GPU clock (MHz) the chip's P-state table offers (Apple Silicon).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_freq_mhz: Option<u32>,
 }
 
 /// GPU energy over one sample interval, in joules.
@@ -227,9 +234,9 @@ pub struct GpuMonitor {
     /// advanced once per tick by [`GpuMonitor::refresh`].
     #[cfg(apple_gpu)]
     apple: Mutex<AppleSnapshots>,
-    /// IOReport GPU energy subscription; `None` if IOReport refused.
+    /// IOReport energy/frequency subscription; `None` if IOReport refused.
     #[cfg(apple_gpu)]
-    apple_energy: Mutex<Option<apple::GpuEnergyReader>>,
+    apple_report: Mutex<Option<apple::IoReportReader>>,
 }
 
 #[cfg(apple_gpu)]
@@ -257,7 +264,7 @@ impl GpuMonitor {
             #[cfg(apple_gpu)]
             apple: Default::default(),
             #[cfg(apple_gpu)]
-            apple_energy: Default::default(),
+            apple_report: Default::default(),
         }
     }
 
@@ -272,7 +279,7 @@ impl GpuMonitor {
                 let m = Self {
                     device_count: 1,
                     enabled: true,
-                    apple_energy: Mutex::new(apple::GpuEnergyReader::new()),
+                    apple_report: Mutex::new(apple::IoReportReader::new()),
                     ..Self::disabled()
                 };
                 *lock(&m.apple) = [None, Some((std::time::Instant::now(), snap))];
@@ -321,9 +328,10 @@ impl GpuMonitor {
         #[cfg(apple_gpu)]
         if self.enabled {
             if let Some(mut snap) = apple::snapshot() {
-                snap.energy_j = lock(&self.apple_energy)
-                    .as_mut()
-                    .and_then(|r| r.delta_joules());
+                if let Some(r) = lock(&self.apple_report).as_mut() {
+                    snap.report = r.read();
+                    snap.max_freq_mhz = r.max_mhz();
+                }
                 let mut s = lock(&self.apple);
                 s[0] = s[1].take();
                 s[1] = Some((std::time::Instant::now(), snap));
@@ -361,7 +369,7 @@ impl GpuMonitor {
         #[cfg(apple_gpu)]
         {
             let s = lock(&self.apple);
-            s[1].as_ref()?.1.energy_j
+            s[1].as_ref()?.1.report.energy_j
         }
         #[cfg(nvml)]
         {
@@ -447,6 +455,8 @@ impl GpuMonitor {
                             // Filled once per tick by `fill_pcie_throughput` (blocks ~40 ms).
                             pcie_tx_kbps: None,
                             pcie_rx_kbps: None,
+                            freq_mhz: None,
+                            max_freq_mhz: None,
                         };
                         system_metrics.push(system_gpu_metrics);
                     }
@@ -528,15 +538,16 @@ impl GpuMonitor {
                     memory_free: None,
                     temperature: None,
                     // Milliwatts, like NVML's `power_usage`.
-                    power_usage: snaps[0]
-                        .as_ref()
-                        .zip(cur.energy_j)
-                        .and_then(|((then, _), j)| {
+                    power_usage: snaps[0].as_ref().zip(cur.report.energy_j).and_then(
+                        |((then, _), j)| {
                             let secs = now.duration_since(*then).as_secs_f64();
                             (secs > 0.0).then(|| (j / secs * 1000.0).round() as u32)
-                        }),
+                        },
+                    ),
                     pcie_tx_kbps: None,
                     pcie_rx_kbps: None,
+                    freq_mhz: cur.report.freq_mhz,
+                    max_freq_mhz: cur.max_freq_mhz,
                 }],
                 has_process_data: !process_data.is_empty(),
                 process_data,
@@ -769,6 +780,8 @@ mod tests {
                 power_usage: Some(120),
                 pcie_tx_kbps: Some(900),
                 pcie_rx_kbps: None,
+                freq_mhz: None,
+                max_freq_mhz: None,
             }],
             process_data: vec![],
             has_process_data: false,

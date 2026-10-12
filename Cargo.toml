@@ -51,7 +51,7 @@ nvml-wrapper = { version = "0.10.0", optional = true }
 
 # Apple Silicon GPU (`gpu` feature on macOS). Both already come in via sysinfo.
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFArray", "CFBase", "CFDictionary", "CFNumber", "CFString"], optional = true }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFArray", "CFBase", "CFDictionary", "CFData", "CFNumber", "CFString"], optional = true }
 objc2-io-kit = { version = "0.3", default-features = false, features = ["std", "libc"], optional = true }
 
 [lib]
