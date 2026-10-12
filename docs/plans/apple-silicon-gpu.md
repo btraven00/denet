@@ -63,9 +63,9 @@ tree), so derive the rates from one snapshot per emitted sample.
   sampling is single-threaded). Checked on macmini: `enable_gpu=True` from
   Python returns Apple GPU data. The PyPI wheels still build with `python`
   only, so wheel users get no GPU data until the wheel build adds `gpu`.
-- [ ] `SystemGpuMetrics.power_usage` is documented as watts, but NVML returns
+- [x] `SystemGpuMetrics.power_usage` was documented as watts, but NVML returns
   milliwatts and real records carry mW (e.g. 34993). The Apple backend emits mW
-  to match; fix the comment and the `docs/gpu.md` example.
+  to match. Comment and `docs/gpu.md` now say milliwatts.
 - [x] PyPI wheels now build with `gpu` (`publish.yml`, `[tool.maturin]`, pixi
   `build`/`publish-pypi`). No new runtime dependency: Linux `.so` has no
   `libnvidia-ml` NEEDED (NVML is dlopen'd on `enable_gpu`); macOS arm64 links

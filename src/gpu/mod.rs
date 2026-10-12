@@ -104,7 +104,7 @@ pub struct SystemGpuMetrics {
     pub memory_free: Option<u64>,
     /// GPU temperature in Celsius
     pub temperature: Option<u32>,
-    /// Power usage in watts
+    /// Power draw in milliwatts (NVML reports mW; the Apple backend matches).
     pub power_usage: Option<u32>,
     /// PCIe transmit (GPU → host) in KB/s over NVML's 20 ms window, device-wide.
     #[serde(default, skip_serializing_if = "Option::is_none")]
