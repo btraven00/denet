@@ -15,7 +15,7 @@ Apple Silicon Macs are also supported, **experimentally**: see
 - **GPU Utilization**: Real-time GPU compute utilization percentage
 - **Memory Monitoring**: GPU memory usage, both total and per-process when available
 - **Temperature Tracking**: GPU temperature monitoring
-- **Power Consumption**: GPU power usage in watts
+- **Power Consumption**: GPU power draw (`power_usage`, in milliwatts)
 - **Multi-GPU Support**: Monitor all NVIDIA GPUs in the system
 - **Process-Specific**: Track GPU memory usage per monitored process
 - **Graceful Fallback**: With `--gpu` but no usable GPU/NVML, denet warns and carries on
@@ -101,7 +101,7 @@ GPU metrics are included in the JSON output:
         "memory_total": 25757220864,
         "memory_used": 3221225472,
         "temperature": 65,
-        "power_usage": 320,
+        "power_usage": 320000,
         "process_memory_usage": 1073741824
       }
     ],
@@ -191,7 +191,7 @@ What it reports:
 - `system_metrics[0].memory_used`: GPU-driver memory in use. Memory is unified,
   so there is no `memory_total` and no per-process GPU memory.
 - `system_metrics[0].power_usage`: average GPU power over the sample interval,
-  in milliwatts (the unit NVML records carry too), from IOReport's
+  in milliwatts like NVIDIA's, from IOReport's
   `GPU Energy` counter, a private macOS framework.
 - `gpu_energy`: GPU energy over the interval and the monitored processes' share
   of it by GPU time, as for NVIDIA (see [Energy](#energy-gpu_energy)). The
