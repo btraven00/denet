@@ -66,3 +66,10 @@ tree), so derive the rates from one snapshot per emitted sample.
 - [ ] `SystemGpuMetrics.power_usage` is documented as watts, but NVML returns
   milliwatts and real records carry mW (e.g. 34993). The Apple backend emits mW
   to match; fix the comment and the `docs/gpu.md` example.
+- [x] PyPI wheels now build with `gpu` (`publish.yml`, `[tool.maturin]`, pixi
+  `build`/`publish-pypi`). No new runtime dependency: Linux `.so` has no
+  `libnvidia-ml` NEEDED (NVML is dlopen'd on `enable_gpu`); macOS arm64 links
+  system `/usr/lib/libIOReport.dylib`; the Apple backend is aarch64-only so
+  the x86_64 wheel doesn't link it. Smoke-tested the arm64 wheel in a clean
+  venv on macmini. Not yet tested: the arm64 wheel on macOS 11/12 (wheel
+  floor is 11.0; libIOReport is long-standing but unverified there).

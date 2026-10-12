@@ -24,7 +24,7 @@ Apple Silicon Macs are also supported, **experimentally**: see
 
 - NVIDIA GPU with driver support
 - NVIDIA CUDA toolkit or driver with NVML support
-- A build with the `gpu` feature: the conda package's CLI and `cargo install denet --features gpu`. The PyPI wheels are built without it.
+- A build with the `gpu` feature: the PyPI wheels, the conda package's CLI, and `cargo install denet --features gpu`. The feature adds no runtime dependency: without `--gpu` / `enable_gpu=True`, no GPU library is loaded.
 
 ## Installation
 
