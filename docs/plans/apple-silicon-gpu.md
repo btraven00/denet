@@ -10,7 +10,7 @@ Status: in progress. Behind the `gpu` feature, opt-in at runtime (`--gpu`,
 | `AGXDeviceUserClient.AppUsage[].accumulatedGPUTime` (IORegistry) | Cumulative GPU time per Metal client, **ns** | Owner pid in `IOUserClientCreator = "pid N, name"`. A 5 s Metal burn read 4.92 s against Metal's own 5.01 s. |
 | `AGXAccelerator.PerformanceStatistics` (IORegistry) | `Device Utilization %`, `In use system memory` | Public IOKit, device-wide. |
 | IOReport `Energy Model / GPU Energy` | GPU energy, nJ | Private framework (`libIOReport`), works unprivileged. About 8 W under full load on M1. |
-| IOReport `GPU Stats / GPU Performance States` (`GPUPH`) | Residency per P-state, 24 MHz ticks | Needs a P-state→MHz table, probably `voltage-states9` on `pmgr` (unverified). |
+| IOReport `GPU Stats / GPU Performance States` (`GPUPH`) | Residency per P-state, 24 MHz ticks | P-state→MHz table: `voltage-states9` on `pmgr` (verified on M1). |
 
 Pitfall: the user clients are `!registered`, so `IOServiceGetMatchingServices`
 finds none. Walk the `AGXAccelerator`'s children in the `IOService` plane.
@@ -49,8 +49,9 @@ tree), so derive the rates from one snapshot per emitted sample.
 - [x] Brittleness note in `apple.rs`: M1-only verification; add overrides per hardware model if names or units drift
 
 ### Phase 3: frequency (optional, for throttling)
-- [ ] Verify the P-state→MHz table source
-- [ ] Residency-weighted MHz per sample
+- [x] Verify the P-state→MHz table source: `pmgr` `voltage-states9`, (Hz, mV) u32 LE pairs; entry n = P-state n (M1: 0, 396, 528, 720, 924, 1128, 1278 MHz)
+- [x] Residency-weighted MHz per sample (`freq_mhz`), plus `max_freq_mhz`; same IOReport subscription as energy (`GPUPH` merged in)
+- [x] Manual check on macmini: 1278/1278 MHz under a Metal burn, ~707 MHz when waking from idle, absent when off
 
 ### Alongside
 - [ ] `scripts/stress_gpu.py`: `mps` fallback

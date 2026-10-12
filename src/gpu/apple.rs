@@ -11,15 +11,19 @@
 //! The user clients are not registered, so `IOServiceGetMatchingServices`
 //! never finds them: we walk the accelerator's children instead.
 //!
-//! GPU energy comes from IOReport, a private framework (`libIOReport`):
-//! the `GPU Energy` channel of the `Energy Model` group, also unprivileged.
+//! GPU energy and frequency come from IOReport, a private framework
+//! (`libIOReport`), also unprivileged: the `GPU Energy` channel of the
+//! `Energy Model` group, and the `GPUPH` residency channel of `GPU Stats` /
+//! `GPU Performance States`. Residency is per P-state; `pmgr`'s
+//! `voltage-states9` property maps P-state n to a frequency.
 //!
 //! # Expect this to be brittle
 //!
 //! None of this is public API. Everything here was verified only on an M1
 //! (`AGXAcceleratorG13G_B0`, macOS 26.2): the class names, the property keys
 //! (`AppUsage`, `accumulatedGPUTime`, `Device Utilization %`), the IOReport
-//! group and channel names, and their units. Other chips (M2/M3/M4, Pro/Max/
+//! group and channel names and their units, and `voltage-states9` being the
+//! GPU's table (its frequency unit is guessed by magnitude). Other chips (M2/M3/M4, Pro/Max/
 //! Ultra with several GPU dies) and later macOS releases may rename or drop
 //! any of them. Everything degrades to `None` rather than failing, but a
 //! renamed key reads as "no data", not as an error. If that starts happening,
@@ -28,12 +32,12 @@
 //! rather than more guessing in the code.
 
 use objc2_core_foundation::{
-    CFArray, CFDictionary, CFMutableDictionary, CFNumber, CFRetained, CFString, CFType,
+    CFArray, CFData, CFDictionary, CFMutableDictionary, CFNumber, CFRetained, CFString, CFType,
 };
 use objc2_io_kit::{
     io_registry_entry_t, kIOMainPortDefault, IOIteratorNext, IOObjectRelease,
     IORegistryEntryCreateCFProperty, IORegistryEntryGetChildIterator, IOServiceGetMatchingService,
-    IOServiceMatching,
+    IOServiceMatching, IOServiceNameMatching,
 };
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -47,8 +51,10 @@ pub(crate) struct Snapshot {
     pub device_utilization: Option<u32>,
     pub memory_used: Option<u64>,
     pub name: String,
-    /// GPU energy (J) since the previous snapshot, set by [`GpuEnergyReader`].
-    pub energy_j: Option<f64>,
+    /// Since the previous snapshot, from [`IoReportReader`].
+    pub report: Reading,
+    /// Top of the GPU's P-state table (MHz).
+    pub max_freq_mhz: Option<u32>,
 }
 
 /// Pid from `IOUserClientCreator`, e.g. `"pid 185, WindowServer"`.
@@ -170,7 +176,11 @@ extern "C" {
         cur: &CFDictionary,
         e: *const c_void,
     ) -> *mut CFDictionary;
+    fn IOReportMergeChannels(a: &CFDictionary, b: &CFDictionary, nil: *const c_void);
     fn IOReportChannelGetChannelName(channel: &CFDictionary) -> *const CFString;
+    fn IOReportStateGetCount(channel: &CFDictionary) -> i32;
+    fn IOReportStateGetNameForIndex(channel: &CFDictionary, index: i32) -> *const CFString;
+    fn IOReportStateGetResidency(channel: &CFDictionary, index: i32) -> i64;
     fn IOReportChannelGetUnitLabel(channel: &CFDictionary) -> *const CFString;
     fn IOReportSimpleGetIntegerValue(channel: &CFDictionary, index: i32) -> i64;
 }
@@ -187,23 +197,98 @@ fn borrowed_str(p: *const CFString) -> Option<String> {
     unsafe { p.as_ref() }.map(|s| s.to_string())
 }
 
-/// IOReport subscription to the GPU's energy counter.
+/// GPU P-state frequencies in MHz, indexed by P-state (0 = off), from the
+/// `pmgr` node's `voltage-states9`. Empty if the node or property is missing.
+fn gpu_pstate_mhz() -> Vec<u32> {
+    let Some(matching) = (unsafe { IOServiceNameMatching(c"pmgr".as_ptr()) }) else {
+        return Vec::new();
+    };
+    let pmgr = unsafe {
+        IOServiceGetMatchingService(
+            kIOMainPortDefault,
+            Some(CFRetained::<CFDictionary>::from(&matching)),
+        )
+    };
+    if pmgr == 0 {
+        return Vec::new();
+    }
+    let data = prop(pmgr, "voltage-states9").and_then(|v| v.downcast::<CFData>().ok());
+    IOObjectRelease(pmgr);
+    data.map(|d| parse_dvfs(&d.to_vec())).unwrap_or_default()
+}
+
+/// A DVFS table, (frequency, voltage) little-endian u32 pairs, to MHz.
+/// Frequencies are Hz on M1 and reportedly kHz on M4. ponytail: unit chosen by
+/// magnitude (GPU clocks are 0.1–3 GHz, so anything over 1e7 is Hz); move to
+/// the per-model overrides (see module docs) if a chip breaks this.
+fn parse_dvfs(bytes: &[u8]) -> Vec<u32> {
+    let hz: Vec<u32> = bytes
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    let div = if hz.iter().any(|&f| f > 10_000_000) {
+        1_000_000
+    } else {
+        1_000
+    };
+    hz.iter().map(|f| f / div).collect()
+}
+
+/// Mean frequency over the time the GPU was clocked (`Pn` states), weighted
+/// by residency. `None` if it spent the whole interval off.
+fn weighted_mhz(states: &[(String, i64)], mhz: &[u32]) -> Option<u32> {
+    let (mut num, mut den) = (0.0, 0.0);
+    for (name, res) in states {
+        let Some(&f) = name
+            .strip_prefix('P')
+            .and_then(|n| n.parse::<usize>().ok())
+            .and_then(|i| mhz.get(i))
+        else {
+            continue;
+        };
+        num += *res as f64 * f as f64;
+        den += *res as f64;
+    }
+    (den > 0.0).then(|| (num / den).round() as u32)
+}
+
+/// What IOReport saw over one interval.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Reading {
+    pub energy_j: Option<f64>,
+    pub freq_mhz: Option<u32>,
+}
+
+/// IOReport subscription to the GPU's energy and P-state residency.
 #[derive(Debug)]
-pub(crate) struct GpuEnergyReader {
+pub(crate) struct IoReportReader {
     subscription: CFRetained<CFType>,
     subscribed: CFRetained<CFMutableDictionary>,
     prev: CFRetained<CFDictionary>,
+    /// MHz by P-state; empty means no frequency.
+    mhz: Vec<u32>,
 }
 
 // SAFETY: only touched through its `GpuMonitor`'s `Mutex`, one thread at a
 // time, and CF objects may be used from any thread.
-unsafe impl Send for GpuEnergyReader {}
+unsafe impl Send for IoReportReader {}
 
-impl GpuEnergyReader {
+impl IoReportReader {
     /// Subscribe and take the baseline sample. `None` if IOReport refuses.
     pub fn new() -> Option<Self> {
-        let group = CFString::from_static_str("Energy Model");
-        let channels = owned(unsafe { IOReportCopyChannelsInGroup(&group, ptr::null(), 0, 0, 0) })?;
+        let group = |g: &'static str, sub: Option<&'static str>| {
+            let sub = sub.map(CFString::from_static_str);
+            let sub_ptr = sub.as_deref().map_or(ptr::null(), |s| s as *const CFString);
+            owned(unsafe {
+                IOReportCopyChannelsInGroup(&CFString::from_static_str(g), sub_ptr, 0, 0, 0)
+            })
+        };
+        let channels = group("Energy Model", None)?;
+        if let Some(perf) = group("GPU Stats", Some("GPU Performance States")) {
+            unsafe { IOReportMergeChannels(&channels, &perf, ptr::null()) };
+        }
         let channels = unsafe { CFMutableDictionary::new_copy(None, 0, Some(&channels)) }?;
         let mut subscribed = ptr::null_mut();
         let subscription = owned(unsafe {
@@ -216,41 +301,63 @@ impl GpuEnergyReader {
             subscription,
             subscribed,
             prev,
+            mhz: gpu_pstate_mhz(),
         })
     }
 
-    /// GPU energy in joules since the previous call (or since `new`).
-    pub fn delta_joules(&mut self) -> Option<f64> {
-        let cur = owned(unsafe {
+    pub fn max_mhz(&self) -> Option<u32> {
+        self.mhz.iter().copied().max().filter(|&m| m > 0)
+    }
+
+    /// GPU energy and mean frequency since the previous call (or since `new`).
+    pub fn read(&mut self) -> Reading {
+        let mut r = Reading::default();
+        let Some(cur) = owned(unsafe {
             IOReportCreateSamples(&self.subscription, &self.subscribed, ptr::null())
-        })?;
-        let delta = owned(unsafe { IOReportCreateSamplesDelta(&self.prev, &cur, ptr::null()) })?;
+        }) else {
+            return r;
+        };
+        let delta = owned(unsafe { IOReportCreateSamplesDelta(&self.prev, &cur, ptr::null()) });
         self.prev = cur;
         // SAFETY: an IOReport sample is a string-keyed CF dictionary.
-        let delta: CFRetained<CFDictionary<CFString, CFType>> =
-            unsafe { CFRetained::cast_unchecked(delta) };
-        let channels = as_array(delta.get(&CFString::from_static_str("IOReportChannels"))?)?;
-        let mut joules = None;
+        let Some(channels) = delta
+            .map(|d| unsafe { CFRetained::cast_unchecked::<CFDictionary<CFString, CFType>>(d) })
+            .and_then(|d| d.get(&CFString::from_static_str("IOReportChannels")))
+            .and_then(as_array)
+        else {
+            return r;
+        };
         for ch in channels.iter() {
             let Ok(ch) = ch.downcast::<CFDictionary>() else {
                 continue;
             };
-            // Brittle: channel name and unit verified on M1 only (see module docs).
-            if borrowed_str(unsafe { IOReportChannelGetChannelName(&ch) }).as_deref()
-                != Some("GPU Energy")
-            {
-                continue;
+            // Brittle: names and units verified on M1 only (see module docs).
+            match borrowed_str(unsafe { IOReportChannelGetChannelName(&ch) }).as_deref() {
+                Some("GPU Energy") => {
+                    let unit = borrowed_str(unsafe { IOReportChannelGetUnitLabel(&ch) });
+                    let scale = match unit.as_deref() {
+                        Some("nJ") => 1e-9,
+                        Some("uJ") | Some("µJ") => 1e-6,
+                        Some("mJ") => 1e-3,
+                        _ => continue,
+                    };
+                    let v = unsafe { IOReportSimpleGetIntegerValue(&ch, 0) };
+                    *r.energy_j.get_or_insert(0.0) += v.max(0) as f64 * scale;
+                }
+                Some("GPUPH") if !self.mhz.is_empty() => {
+                    let states: Vec<(String, i64)> = (0..unsafe { IOReportStateGetCount(&ch) })
+                        .filter_map(|i| {
+                            let name =
+                                borrowed_str(unsafe { IOReportStateGetNameForIndex(&ch, i) })?;
+                            Some((name, unsafe { IOReportStateGetResidency(&ch, i) }))
+                        })
+                        .collect();
+                    r.freq_mhz = weighted_mhz(&states, &self.mhz);
+                }
+                _ => {}
             }
-            let scale = match borrowed_str(unsafe { IOReportChannelGetUnitLabel(&ch) }).as_deref() {
-                Some("nJ") => 1e-9,
-                Some("uJ") | Some("µJ") => 1e-6,
-                Some("mJ") => 1e-3,
-                _ => continue,
-            };
-            let v = unsafe { IOReportSimpleGetIntegerValue(&ch, 0) };
-            *joules.get_or_insert(0.0) += v.max(0) as f64 * scale;
         }
-        joules
+        r
     }
 }
 
@@ -308,15 +415,57 @@ mod tests {
         assert!(!s.gpu_ns.is_empty(), "no Metal clients found: {s:?}");
     }
 
-    /// The GPU always draws something, so a second read sees energy.
+    /// Energy always has a channel; the P-state table must look like GPU clocks.
     #[test]
-    fn energy_reader_reads_gpu_energy() {
+    fn ioreport_reads_energy_and_pstate_table() {
         if snapshot().is_none() {
             return;
         }
-        let mut r = GpuEnergyReader::new().expect("IOReport subscription");
+        let mut r = IoReportReader::new().expect("IOReport subscription");
+        let max = r.max_mhz().expect("no GPU P-state table");
+        assert!((300..4000).contains(&max), "max {max} MHz");
         std::thread::sleep(std::time::Duration::from_millis(200));
-        let j = r.delta_joules().expect("no `GPU Energy` channel");
+        let j = r.read().energy_j.expect("no `GPU Energy` channel");
         assert!((0.0..100.0).contains(&j), "{j} J in 200 ms");
+    }
+
+    #[test]
+    fn parses_m1_dvfs_table() {
+        // `voltage-states9` from an M1 Mac mini (macOS 26.2).
+        let hex = "0000000090010000007b9a176a02000000a4781f8d0200000054ea2aaf02000000\
+                   1f13370a03000000ea3b436403000080bb2c4ca0030000";
+        let hex: String = hex.split_whitespace().collect();
+        let bytes: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        assert_eq!(parse_dvfs(&bytes), [0, 396, 528, 720, 924, 1128, 1278]);
+        // The same table in kHz (as on M4) gives the same MHz.
+        let khz: Vec<u8> = [0u32, 396_000, 1_278_000]
+            .iter()
+            .flat_map(|f| [f.to_le_bytes(), [0; 4]].concat())
+            .collect();
+        assert_eq!(parse_dvfs(&khz), [0, 396, 1278]);
+    }
+
+    #[test]
+    fn weights_frequency_by_residency() {
+        let mhz = [0, 396, 528, 720];
+        let st = |v: &[(&str, i64)]| {
+            v.iter()
+                .map(|&(n, r)| (n.to_string(), r))
+                .collect::<Vec<_>>()
+        };
+        // Idle M1 residency: mostly OFF, some P1 and P3. OFF doesn't count.
+        let idle = st(&[
+            ("OFF", 23_764_010),
+            ("P1", 10_341),
+            ("P2", 0),
+            ("P3", 543_650),
+        ]);
+        assert_eq!(weighted_mhz(&idle, &mhz), Some(714));
+        assert_eq!(weighted_mhz(&st(&[("P3", 5)]), &mhz), Some(720));
+        assert_eq!(weighted_mhz(&st(&[("OFF", 100), ("P1", 0)]), &mhz), None);
+        assert_eq!(weighted_mhz(&st(&[("P9", 100)]), &mhz), None); // beyond the table
     }
 }
