@@ -16,7 +16,7 @@
 # explicit = true
 # ///
 
-"""GPU stress script — runs matrix multiplications on CUDA to saturate the GPU.
+"""GPU stress script — runs matrix multiplications on CUDA (or Apple MPS) to saturate the GPU.
 
 Usage:
     uv run scripts/stress_gpu.py               # run until Ctrl-C
@@ -53,16 +53,31 @@ def main():
         print("torch not available — run via: uv run scripts/stress_gpu.py", file=sys.stderr)
         sys.exit(1)
 
-    if not torch.cuda.is_available():
-        print("No CUDA device found. Is the NVIDIA driver loaded?", file=sys.stderr)
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        sync = torch.cuda.synchronize
+        name = torch.cuda.get_device_name(0)
+        memory = f"{torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB VRAM"
+        def peak_mb():
+            return torch.cuda.max_memory_allocated() / 1024**2
+    elif torch.backends.mps.is_available():
+        # Apple Silicon: unified memory, and MPS tracks no peak, so report
+        # what the Metal driver currently holds.
+        device = torch.device("mps")
+        sync = torch.mps.synchronize
+        name = "Apple GPU (MPS)"
+        memory = "unified with system RAM"
+        def peak_mb():
+            return torch.mps.driver_allocated_memory() / 1024**2
+    else:
+        print("No CUDA or Apple MPS device found. Is the NVIDIA driver loaded?", file=sys.stderr)
         sys.exit(1)
 
-    device = torch.device("cuda")
     dtype = torch.float16 if args.dtype == "float16" else torch.float32
     n = args.size
 
-    print(f"Device  : {torch.cuda.get_device_name(0)}")
-    print(f"VRAM    : {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB total")
+    print(f"Device  : {name}")
+    print(f"Memory  : {memory}")
     print(f"Matrix  : {n}x{n} {args.dtype}")
     print(f"Duration: {'until Ctrl-C' if args.duration == 0 else f'{args.duration}s'}")
     print()
@@ -70,8 +85,7 @@ def main():
     a = torch.randn(n, n, dtype=dtype, device=device)
     b = torch.randn(n, n, dtype=dtype, device=device)
 
-    vram_used = torch.cuda.memory_allocated() / 1024**2
-    print(f"VRAM allocated for matrices: {vram_used:.0f} MB")
+    print(f"GPU memory after allocating matrices: {peak_mb():.0f} MB")
     print("Stressing... (Ctrl-C to stop)\n")
 
     start = time.monotonic()
@@ -82,7 +96,7 @@ def main():
     try:
         while True:
             c = torch.matmul(a, b)
-            torch.cuda.synchronize()
+            sync()
             iterations += 1
 
             now = time.monotonic()
@@ -90,8 +104,7 @@ def main():
 
             if now - last_report >= report_every:
                 rate = iterations / elapsed
-                peak_mb = torch.cuda.max_memory_allocated() / 1024**2
-                print(f"  [{elapsed:6.1f}s] {iterations} iters | {rate:.1f} iters/s | peak VRAM {peak_mb:.0f} MB")
+                print(f"  [{elapsed:6.1f}s] {iterations} iters | {rate:.1f} iters/s | GPU memory {peak_mb():.0f} MB")
                 last_report = now
 
             if args.duration > 0 and elapsed >= args.duration:
@@ -101,9 +114,8 @@ def main():
         print("\nInterrupted.")
 
     elapsed = time.monotonic() - start
-    peak_mb = torch.cuda.max_memory_allocated() / 1024**2
     print(f"\nDone: {iterations} iterations in {elapsed:.1f}s ({iterations/elapsed:.1f} iters/s)")
-    print(f"Peak VRAM used: {peak_mb:.0f} MB")
+    print(f"GPU memory: {peak_mb():.0f} MB")
 
 
 if __name__ == "__main__":
