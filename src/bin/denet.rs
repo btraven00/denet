@@ -263,8 +263,15 @@ fn execute_monitoring_with_output(
         }
     }
 
-    if args.gpu && !monitor.enable_gpu() && !args.quiet {
-        eprintln!("Warning: --gpu given, but no NVIDIA GPU could be monitored (driver library missing, no device, or built without the `gpu` feature)");
+    if args.gpu && !args.quiet {
+        match (monitor.enable_gpu(), cfg!(target_os = "macos")) {
+            (true, true) => eprintln!("Note: Apple Silicon GPU monitoring is experimental"),
+            (true, false) => {}
+            (false, true) => eprintln!("Warning: --gpu given, but no Apple Silicon GPU could be monitored (no AGXAccelerator, or built without the `gpu` feature)"),
+            (false, false) => eprintln!("Warning: --gpu given, but no NVIDIA GPU could be monitored (driver library missing, no device, or built without the `gpu` feature)"),
+        }
+    } else if args.gpu {
+        monitor.enable_gpu();
     }
 
     // Enable eBPF profiling if requested

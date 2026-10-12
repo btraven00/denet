@@ -12,6 +12,21 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
+    // GPU backend for the `gpu` feature: NVML on Linux, the IORegistry on macOS.
+    println!("cargo:rustc-check-cfg=cfg(nvml)");
+    println!("cargo:rustc-check-cfg=cfg(apple_gpu)");
+    if env::var("CARGO_FEATURE_GPU").is_ok() {
+        match env::var("CARGO_CFG_TARGET_OS").as_deref() {
+            Ok("linux") => println!("cargo:rustc-cfg=nvml"),
+            // Apple Silicon only: Intel Macs have no AGX GPU, and this keeps
+            // the x86_64 wheel from linking the private libIOReport.
+            Ok("macos") if env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64") => {
+                println!("cargo:rustc-cfg=apple_gpu")
+            }
+            _ => {}
+        }
+    }
+
     // Only compile eBPF when the feature is enabled
     if env::var("CARGO_FEATURE_EBPF").is_ok() {
         // Check if clang is available

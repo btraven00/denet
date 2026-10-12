@@ -7,6 +7,9 @@ Loading the NVIDIA driver library maps tens of MB of driver state into denet
 (about 19 MB extra peak memory on a laptop RTX 2000), so denet doesn't load it
 unless asked. All data comes from NVML directly; denet never runs `nvidia-smi`.
 
+Apple Silicon Macs are also supported, **experimentally**: see
+[Apple Silicon (experimental)](#apple-silicon-experimental).
+
 ## Features
 
 - **GPU Utilization**: Real-time GPU compute utilization percentage
@@ -168,6 +171,44 @@ Each device in `system_metrics` carries the PCIe bus traffic NVML reports
   child-aggregated record. At very short `--interval` on multi-GPU hosts this
   sets the floor on the sampling period.
 - `denet stats` reports the peak TX/RX seen as `Peak GPU PCIe TX/RX`.
+
+## Apple Silicon (experimental)
+
+On macOS, a build with the `gpu` feature reads the GPU from the IORegistry
+instead of NVML. It needs no root and loads no driver library. This backend is
+**experimental**: its sources are undocumented Apple internals that can change
+between macOS releases. `--gpu` prints a note saying so, and each record has
+`collection_method: "apple-ioregistry (experimental)"`.
+
+What it reports:
+
+- `process_data[].gpu_time_ns`: cumulative GPU time per process, summed over
+  its Metal command queues. This is the GPU counterpart of CPU time and is
+  probably what Activity Monitor's "GPU Time" column shows.
+- `process_data[].gpu_utilization`: the change in `gpu_time_ns` over the sample
+  interval, as a percentage (clamped to 100).
+- `system_metrics[0].system_utilization_gpu`: device-wide utilisation.
+- `system_metrics[0].memory_used`: GPU-driver memory in use. Memory is unified,
+  so there is no `memory_total` and no per-process GPU memory.
+- `system_metrics[0].power_usage`: average GPU power over the sample interval,
+  in milliwatts (the unit NVML records carry too), from IOReport's
+  `GPU Energy` counter, a private macOS framework.
+- `gpu_energy`: GPU energy over the interval and the monitored processes' share
+  of it by GPU time, as for NVIDIA (see [Energy](#energy-gpu_energy)). The
+  energy covers the GPU only, not the whole SoC.
+
+Not yet: frequency and temperature (`null`). Caveats:
+
+- GPU time is credited when a command buffer completes, so one long kernel
+  shows up in a burst rather than spread across the samples it spans.
+- If a process closes its Metal device, its time can step backwards; that
+  interval reads 0%.
+- GPU time in the last interval before a process exits is lost, as with CPU
+  time.
+- These sources were verified on an M1 only. Other chips or macOS releases may
+  rename them; the fields then read `null` rather than failing.
+- macOS VMs (including GitHub's macOS runners) have no Apple GPU to read;
+  `--gpu` warns and carries on.
 
 ## Notes
 

@@ -460,6 +460,8 @@ dependencies = [
  "libc",
  "log",
  "nvml-wrapper",
+ "objc2-core-foundation",
+ "objc2-io-kit",
  "once_cell",
  "procfs",
  "pyo3",

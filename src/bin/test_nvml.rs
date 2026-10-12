@@ -1,10 +1,10 @@
-#[cfg(feature = "gpu")]
+#[cfg(nvml)]
 use nvml_wrapper::Nvml;
 
 fn main() {
     println!("🔍 Testing NVML per-process utilization capabilities");
 
-    #[cfg(feature = "gpu")]
+    #[cfg(nvml)]
     {
         match Nvml::init() {
             Ok(nvml) => {
@@ -126,7 +126,7 @@ fn main() {
         println!("   d) Estimate process utilization from memory usage ratio");
     }
 
-    #[cfg(not(feature = "gpu"))]
+    #[cfg(not(nvml))]
     {
         println!("❌ GPU feature not enabled. Compile with --features gpu to test NVML.");
     }
