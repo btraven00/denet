@@ -39,7 +39,7 @@ jobs:
         with:
           target: x86_64
           manylinux: "2_28"
-          args: --release --features python,ebpf
+          args: --release --features python,ebpf,gpu
           # manylinux_2_28 is AlmaLinux 8; clang compiles the BPF programs baked
           # into the Linux wheel (libbpf headers are vendored). Runtime needs no
           # clang — only CAP_BPF to actually attach.
@@ -93,7 +93,7 @@ jobs:
         with:
           target: ${{ matrix.target }}
           # No eBPF on macOS: the backend is Linux-only.
-          args: --release --features python
+          args: --release --features python,gpu
 
       - uses: actions/upload-artifact@v4
         with:
@@ -119,7 +119,7 @@ jobs:
           command: sdist
           # sdist stays eBPF-free: it's the fallback other platforms build from,
           # where the BPF toolchain isn't assumed. Features come from pyproject
-          # ([tool.maturin] features = ["python"]) at build time.
+          # ([tool.maturin] features = ["python", "gpu"]) at build time.
           args: --out dist
 
       - uses: actions/upload-artifact@v4
