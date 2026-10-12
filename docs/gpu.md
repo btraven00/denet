@@ -203,12 +203,23 @@ What it reports:
   running well under `max_freq_mhz` is being throttled, by heat or by power
   limits, or another process is holding the clock down.
 
-Not yet: temperature (`null`). Caveats:
+- `system_metrics[0].temperature`: the hottest GPU die sensor (`GPU MTR Temp
+  Sensor*`), in °C, via sysinfo. These sensors sit at a 30 °C floor while the
+  GPU is powered down, so 30 at idle means "off", not a measurement.
+- Summary: `process_gpu_seconds` (`Process GPU Time` in the CLI) is the
+  monitored processes' total GPU time. It counts from each process's start, so
+  an attached process includes time from before denet attached.
 
-- GPU time is credited when a command buffer completes, so one long kernel
-  shows up in a burst rather than spread across the samples it spans.
+Caveats:
+
+- GPU time seems to be credited in arrears, roughly one command buffer behind
+  (the counter didn't advance after a process's last submission). The work
+  after a process's last submission can go uncounted: on a 4 s Metal burn with
+  ~0.5 s command buffers, three runs read 1%, 1% and 10% low. Workloads with
+  short command buffers lose little. For the same reason, one long kernel
+  shows up in bursts rather than spread across the samples it spans.
 - If a process closes its Metal device, its time can step backwards; that
-  interval reads 0%.
+  interval reads 0%, and `process_gpu_seconds` keeps the highest value seen.
 - GPU time in the last interval before a process exits is lost, as with CPU
   time.
 - These sources were verified on an M1 only. Other chips or macOS releases may

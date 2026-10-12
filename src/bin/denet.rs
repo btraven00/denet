@@ -884,19 +884,25 @@ fn summary_rows(summary: &Summary) -> Vec<(&'static str, String)> {
     if let Some(ref gpu) = summary.gpu {
         if gpu.enabled {
             rows.push(("GPU Devices", format!("{}", gpu.device_count)));
-            rows.push((
-                "Peak GPU VRAM Used",
+            // Apple Silicon has unified memory: no total to show.
+            let vram = if gpu.total_memory_gb > 0.0 {
                 format!(
                     "{:.2} GB / {:.1} GB",
                     gpu.peak_used_memory_gb, gpu.total_memory_gb
-                ),
-            ));
+                )
+            } else {
+                format!("{:.2} GB", gpu.peak_used_memory_gb)
+            };
+            rows.push(("Peak GPU VRAM Used", vram));
             rows.push((
                 "Peak GPU Utilization",
                 format!("{}%", gpu.max_system_gpu_utilization),
             ));
             if let Some(proc_util) = gpu.max_process_gpu_utilization {
                 rows.push(("Peak Process GPU", format!("{}%", proc_util)));
+            }
+            if let Some(secs) = gpu.process_gpu_seconds {
+                rows.push(("Process GPU Time", format!("{secs:.2} s")));
             }
             if let Some(temp) = gpu.max_temperature_c {
                 rows.push(("Peak GPU Temperature", format!("{temp} C")));

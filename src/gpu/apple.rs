@@ -3,7 +3,9 @@
 //! Every Metal client is an `AGXDeviceUserClient` under the `AGXAccelerator`,
 //! with `IOUserClientCreator = "pid N, name"` and
 //! `AppUsage = ({API, lastSubmittedTime, accumulatedGPUTime}, ...)`, one entry
-//! per command queue, GPU time in nanoseconds. The accelerator's
+//! per command queue, GPU time in nanoseconds, credited about one command
+//! buffer late (it doesn't advance after a process's last submission, so that
+//! work can go uncounted). The accelerator's
 //! `PerformanceStatistics` holds device-wide `Device Utilization %` and
 //! `In use system memory`. All readable without root. See
 //! `docs/plans/apple-silicon-gpu.md`.
@@ -55,6 +57,8 @@ pub(crate) struct Snapshot {
     pub report: Reading,
     /// Top of the GPU's P-state table (MHz).
     pub max_freq_mhz: Option<u32>,
+    /// Hottest GPU die sensor (°C).
+    pub temperature_c: Option<u32>,
 }
 
 /// Pid from `IOUserClientCreator`, e.g. `"pid 185, WindowServer"`.
