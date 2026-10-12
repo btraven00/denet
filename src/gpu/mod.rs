@@ -37,13 +37,37 @@
 //! ([`GpuMonitor::fill_pcie_throughput`]), never from `sample_metrics`. It is a
 //! point-in-time snapshot, not an interval average, and NVML has no per-process
 //! split: other processes' transfers are included.
+//!
+//! # Apple Silicon (experimental)
+//!
+//! On macOS the `gpu` feature reads the IORegistry instead of NVML: per-process
+//! cumulative GPU time and device-wide utilisation, plus GPU energy and power
+//! from the private IOReport framework. Undocumented Apple internals, so
+//! expect breakage on other chips or macOS releases. See `apple.rs` and
+//! `docs/plans/apple-silicon-gpu.md`.
 
-#[cfg(feature = "gpu")]
+#[cfg(apple_gpu)]
+mod apple;
+
+/// `collection_method` for the Apple backend; also tells users it is experimental.
+pub const APPLE_COLLECTION_METHOD: &str = "apple-ioregistry (experimental)";
+
+#[cfg(nvml)]
 use nvml_wrapper::enums::device::UsedGpuMemory;
-#[cfg(feature = "gpu")]
+#[cfg(nvml)]
 use nvml_wrapper::Nvml;
 use serde::{Deserialize, Serialize};
+#[cfg(nvml)]
 use std::collections::HashMap;
+#[cfg(any(nvml, apple_gpu))]
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
+/// Lock, ignoring poisoning: the state is plain counters, valid even if a
+/// previous holder panicked.
+#[cfg(any(nvml, apple_gpu))]
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Per-process GPU utilization data
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -56,6 +80,9 @@ pub struct ProcessGpuData {
     pub memory_usage: Option<u64>,
     /// GPU memory utilization percentage (0-100) for this process
     pub memory_utilization_pct: Option<u32>,
+    /// Cumulative GPU time in nanoseconds (Apple Silicon only, experimental).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_time_ns: Option<u64>,
 }
 
 /// System-wide GPU device metrics
@@ -180,23 +207,33 @@ impl Default for GpuSummary {
 /// Main GPU monitoring interface
 #[derive(Debug)]
 pub struct GpuMonitor {
-    #[cfg(feature = "gpu")]
+    #[cfg(nvml)]
     nvml: Option<Nvml>,
     #[cfg(feature = "gpu")]
     device_count: u32,
     enabled: bool,
     /// Last per-process utilization timestamp seen per device (NVML µs), so each
-    /// sample only reads samples newer than the previous one. Same `RefCell`
+    /// sample only reads samples newer than the previous one. Same `Mutex`
     /// rationale as `prev_energy_mj`.
-    #[cfg(feature = "gpu")]
-    last_util_ts: std::cell::RefCell<HashMap<u32, u64>>,
+    #[cfg(nvml)]
+    last_util_ts: Mutex<HashMap<u32, u64>>,
     /// Previous cumulative energy per device (millijoules) for delta computation.
-    /// `RefCell` because `sample_metrics` takes `&self`; single-threaded sampling
-    /// so no contention. ponytail: RefCell over threading the state through every
-    /// caller — swap to `&mut self` only if sampling ever goes concurrent.
-    #[cfg(feature = "gpu")]
-    prev_energy_mj: std::cell::RefCell<std::collections::HashMap<u32, u64>>,
+    /// Interior mutability because `sample_metrics` takes `&self`; a `Mutex`
+    /// rather than a `RefCell` because the Python class must be `Sync`.
+    /// Sampling is single-threaded, so the lock is never contended.
+    #[cfg(nvml)]
+    prev_energy_mj: Mutex<HashMap<u32, u64>>,
+    /// Previous and current IORegistry snapshots with when they were taken,
+    /// advanced once per tick by [`GpuMonitor::refresh`].
+    #[cfg(apple_gpu)]
+    apple: Mutex<AppleSnapshots>,
+    /// IOReport GPU energy subscription; `None` if IOReport refused.
+    #[cfg(apple_gpu)]
+    apple_energy: Mutex<Option<apple::GpuEnergyReader>>,
 }
+
+#[cfg(apple_gpu)]
+type AppleSnapshots = [Option<(std::time::Instant, apple::Snapshot)>; 2];
 
 impl Default for GpuMonitor {
     fn default() -> Self {
@@ -208,15 +245,19 @@ impl GpuMonitor {
     /// A monitor that collects nothing and loads no NVIDIA library.
     pub fn disabled() -> Self {
         Self {
-            #[cfg(feature = "gpu")]
+            #[cfg(nvml)]
             nvml: None,
             #[cfg(feature = "gpu")]
             device_count: 0,
             enabled: false,
-            #[cfg(feature = "gpu")]
+            #[cfg(nvml)]
             last_util_ts: Default::default(),
-            #[cfg(feature = "gpu")]
+            #[cfg(nvml)]
             prev_energy_mj: Default::default(),
+            #[cfg(apple_gpu)]
+            apple: Default::default(),
+            #[cfg(apple_gpu)]
+            apple_energy: Default::default(),
         }
     }
 
@@ -224,7 +265,22 @@ impl GpuMonitor {
     /// to [`Self::disabled`] (logged) when the build lacks the `gpu` feature,
     /// the driver library is missing, or no device is found.
     pub fn new() -> Self {
-        #[cfg(feature = "gpu")]
+        #[cfg(apple_gpu)]
+        match apple::snapshot() {
+            Some(snap) => {
+                log::info!("GPU monitoring enabled (experimental): {}", snap.name);
+                let m = Self {
+                    device_count: 1,
+                    enabled: true,
+                    apple_energy: Mutex::new(apple::GpuEnergyReader::new()),
+                    ..Self::disabled()
+                };
+                *lock(&m.apple) = [None, Some((std::time::Instant::now(), snap))];
+                return m;
+            }
+            None => log::info!("GPU monitoring disabled: no AGXAccelerator in the IORegistry"),
+        }
+        #[cfg(nvml)]
         match Self::initialize_nvml() {
             Ok((nvml, device_count)) => {
                 log::info!("GPU monitoring enabled: {} device(s)", device_count);
@@ -241,7 +297,7 @@ impl GpuMonitor {
     }
 
     /// Initialize NVML and get device count
-    #[cfg(feature = "gpu")]
+    #[cfg(nvml)]
     fn initialize_nvml() -> Result<(Nvml, u32), String> {
         let nvml = Nvml::init().map_err(|e| format!("NVML initialization failed: {:?}", e))?;
 
@@ -254,6 +310,25 @@ impl GpuMonitor {
         }
 
         Ok((nvml, device_count))
+    }
+
+    /// Take the per-tick reading that `sample_metrics` derives rates from.
+    /// Call **once per emitted sample**, before `sample_metrics`: that method
+    /// runs for the parent and again for the tree within one tick, and a fresh
+    /// read each time would give the second call a near-zero interval. A no-op
+    /// on NVML, which keeps its own sampling window.
+    pub fn refresh(&self) {
+        #[cfg(apple_gpu)]
+        if self.enabled {
+            if let Some(mut snap) = apple::snapshot() {
+                snap.energy_j = lock(&self.apple_energy)
+                    .as_mut()
+                    .and_then(|r| r.delta_joules());
+                let mut s = lock(&self.apple);
+                s[0] = s[1].take();
+                s[1] = Some((std::time::Instant::now(), snap));
+            }
+        }
     }
 
     /// Check if GPU monitoring is enabled
@@ -279,13 +354,21 @@ impl GpuMonitor {
     /// sample** (`sample_metrics` may run several times per tick and must not
     /// touch the counter). Returns `None` if no device exposes the counter
     /// (pre-Volta) or the GPU is disabled.
+    ///
+    /// On Apple Silicon the energy is read by [`Self::refresh`]; this returns
+    /// the value from the latest refresh.
     pub fn board_energy_delta_joules(&self) -> Option<f64> {
-        #[cfg(feature = "gpu")]
+        #[cfg(apple_gpu)]
+        {
+            let s = lock(&self.apple);
+            s[1].as_ref()?.1.energy_j
+        }
+        #[cfg(nvml)]
         {
             let nvml = self.nvml.as_ref()?;
             let mut delta_mj: u64 = 0;
             let mut seen = false;
-            let mut prev = self.prev_energy_mj.borrow_mut();
+            let mut prev = lock(&self.prev_energy_mj);
             for device_index in 0..self.device_count {
                 if let Ok(device) = nvml.device_by_index(device_index) {
                     if let Ok(cur_mj) = device.total_energy_consumption() {
@@ -301,7 +384,7 @@ impl GpuMonitor {
             }
             seen.then(|| delta_mj as f64 / 1000.0)
         }
-        #[cfg(not(feature = "gpu"))]
+        #[cfg(not(any(nvml, apple_gpu)))]
         {
             None
         }
@@ -311,7 +394,7 @@ impl GpuMonitor {
     /// device inside NVML, so call it **once per emitted sample** (like
     /// `board_energy_delta_joules`). Unsupported devices stay `None`.
     pub fn fill_pcie_throughput(&self, gm: &mut GpuMetrics) {
-        #[cfg(feature = "gpu")]
+        #[cfg(nvml)]
         if let Some(ref nvml) = self.nvml {
             use nvml_wrapper::enum_wrappers::device::PcieUtilCounter;
             for sm in &mut gm.system_metrics {
@@ -321,13 +404,13 @@ impl GpuMonitor {
                 }
             }
         }
-        #[cfg(not(feature = "gpu"))]
+        #[cfg(not(nvml))]
         let _ = gm;
     }
 
     /// Sample GPU metrics for specific processes
     pub fn sample_metrics(&self, process_pids: &[u32]) -> GpuMetrics {
-        #[cfg(feature = "gpu")]
+        #[cfg(nvml)]
         {
             if !self.enabled {
                 return GpuMetrics::default();
@@ -390,6 +473,7 @@ impl GpuMonitor {
                         gpu_utilization: util.map(|(sm, _)| sm),
                         memory_usage,
                         memory_utilization_pct: util.map(|(_, mem)| mem),
+                        gpu_time_ns: None,
                     });
                 }
             }
@@ -406,7 +490,62 @@ impl GpuMonitor {
             }
         }
 
-        #[cfg(not(feature = "gpu"))]
+        #[cfg(apple_gpu)]
+        {
+            let snaps = lock(&self.apple);
+            let Some((now, cur)) = snaps[1].as_ref().filter(|_| self.enabled) else {
+                return GpuMetrics::default();
+            };
+            let process_data: Vec<ProcessGpuData> = process_pids
+                .iter()
+                .filter_map(|&pid| {
+                    let ns = *cur.gpu_ns.get(&pid)?;
+                    let util = snaps[0].as_ref().and_then(|(then, prev)| {
+                        apple::utilization(
+                            prev,
+                            cur,
+                            pid,
+                            now.duration_since(*then).as_nanos() as u64,
+                        )
+                    });
+                    Some(ProcessGpuData {
+                        pid,
+                        gpu_utilization: util,
+                        memory_usage: None,
+                        memory_utilization_pct: None,
+                        gpu_time_ns: Some(ns),
+                    })
+                })
+                .collect();
+            GpuMetrics {
+                system_metrics: vec![SystemGpuMetrics {
+                    device_index: 0,
+                    name: cur.name.clone(),
+                    system_utilization_gpu: cur.device_utilization,
+                    system_utilization_memory: None,
+                    memory_total: None,
+                    memory_used: cur.memory_used,
+                    memory_free: None,
+                    temperature: None,
+                    // Milliwatts, like NVML's `power_usage`.
+                    power_usage: snaps[0]
+                        .as_ref()
+                        .zip(cur.energy_j)
+                        .and_then(|((then, _), j)| {
+                            let secs = now.duration_since(*then).as_secs_f64();
+                            (secs > 0.0).then(|| (j / secs * 1000.0).round() as u32)
+                        }),
+                    pcie_tx_kbps: None,
+                    pcie_rx_kbps: None,
+                }],
+                has_process_data: !process_data.is_empty(),
+                process_data,
+                collection_method: APPLE_COLLECTION_METHOD.to_string(),
+                gpu_energy: None,
+            }
+        }
+
+        #[cfg(not(any(nvml, apple_gpu)))]
         {
             let _ = process_pids; // Suppress unused warning
             GpuMetrics::default()
@@ -417,13 +556,13 @@ impl GpuMonitor {
     /// pid since the previous call: pid -> (sm, mem). Pids with no new sample
     /// (idle on the GPU since last time) are absent. Needs Maxwell or newer;
     /// older devices simply return nothing.
-    #[cfg(feature = "gpu")]
+    #[cfg(nvml)]
     fn get_process_utilizations(&self, process_pids: &[u32]) -> HashMap<u32, (u32, u32)> {
         let mut newest: HashMap<u32, (u64, u32, u32)> = HashMap::new();
         let Some(ref nvml) = self.nvml else {
             return HashMap::new();
         };
-        let mut last_ts = self.last_util_ts.borrow_mut();
+        let mut last_ts = lock(&self.last_util_ts);
         for device_index in 0..self.device_count {
             let Ok(device) = nvml.device_by_index(device_index) else {
                 continue;
@@ -452,7 +591,7 @@ impl GpuMonitor {
     }
 
     /// Get process GPU memory usage from NVML (compute + graphics contexts)
-    #[cfg(feature = "gpu")]
+    #[cfg(nvml)]
     fn get_process_memory_usage(&self, process_pids: &[u32]) -> HashMap<u32, u64> {
         let mut result = HashMap::new();
 

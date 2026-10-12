@@ -954,6 +954,8 @@ impl ProcessMonitor {
         // Sample GPU metrics if available
         #[cfg(feature = "gpu")]
         let gpu_metrics = if self.gpu_monitor.is_enabled() {
+            // One registry read per tick (Apple); the tree sample below reuses it.
+            self.gpu_monitor.refresh();
             let mut gm = self.gpu_monitor.sample_metrics(&[self.pid as u32]);
             // Board energy is read here — exactly once per tick — then attributed
             // to this pid by its GPU-util share. `sample_metrics` deliberately

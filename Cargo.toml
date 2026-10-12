@@ -16,7 +16,7 @@ authors = ["ben <ben.uzh@proton.me>"]
 default = []
 python = ["dep:pyo3"]
 ebpf = ["dep:aya", "dep:aya-log", "dep:bytes"]
-gpu = ["dep:nvml-wrapper"]
+gpu = ["dep:nvml-wrapper", "dep:objc2-core-foundation", "dep:objc2-io-kit"]
 
 [dependencies]
 sysinfo = { version = "0.35.2" }
@@ -48,6 +48,11 @@ bytes = { version = "1.4", optional = true }
 
 # GPU dependencies (optional)
 nvml-wrapper = { version = "0.10.0", optional = true }
+
+# Apple Silicon GPU (`gpu` feature on macOS). Both already come in via sysinfo.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFArray", "CFBase", "CFDictionary", "CFNumber", "CFString"], optional = true }
+objc2-io-kit = { version = "0.3", default-features = false, features = ["std", "libc"], optional = true }
 
 [lib]
 # Only build cdylib when python feature is enabled
