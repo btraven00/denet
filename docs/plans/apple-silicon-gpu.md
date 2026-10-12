@@ -25,8 +25,9 @@ finds none. Walk the `AGXAccelerator`'s children in the `IOService` plane.
 - `collection_method = "apple-ioregistry (experimental)"`.
 
 Counter quirks to document: a client vanishes when its process drops its Metal
-device (keep a per-pid max); the counter advances when a command buffer
-completes, so one long kernel shows up lumpy; the last interval before exit is
+device (keep a per-pid max); the counter is credited about one command buffer
+late, so one long kernel shows up lumpy and the work after the last
+submission can go uncounted; the last interval before exit is
 lost, like CPU time. `sample_metrics` runs more than once per tick (parent and
 tree), so derive the rates from one snapshot per emitted sample.
 
@@ -56,7 +57,9 @@ tree), so derive the rates from one snapshot per emitted sample.
 ### Alongside
 - [ ] `scripts/stress_gpu.py`: `mps` fallback
 - [x] `docs/gpu.md`: Apple Silicon section, marked experimental
-- [ ] Summary: total process GPU-seconds
+- [x] Summary: total process GPU-seconds (`process_gpu_seconds`, CLI `Process GPU Time`)
+- [x] Temperature: hottest `GPU MTR Temp Sensor*` via sysinfo (already a dependency); 30 °C floor when the GPU is off; 34.8 °C under a 6 s burn, 41 °C under 8 s of MPS matmuls
+- [x] Counter accuracy: GPU time credited about one command buffer late; 3 runs of a 4 s burn read 1%, 1% and 10% low. Documented in `docs/gpu.md`
 
 ### Found along the way (not Apple-specific)
 - [x] `--features python,gpu` didn't build on any OS: `PyProcessMonitor` must be

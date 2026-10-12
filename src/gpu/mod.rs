@@ -41,8 +41,8 @@
 //! # Apple Silicon (experimental)
 //!
 //! On macOS the `gpu` feature reads the IORegistry instead of NVML: per-process
-//! cumulative GPU time and device-wide utilisation, plus GPU energy and power
-//! from the private IOReport framework. Undocumented Apple internals, so
+//! cumulative GPU time and device-wide utilisation; GPU energy, power and
+//! frequency from the private IOReport framework; temperature via sysinfo. Undocumented Apple internals, so
 //! expect breakage on other chips or macOS releases. See `apple.rs` and
 //! `docs/plans/apple-silicon-gpu.md`.
 
@@ -192,6 +192,12 @@ pub struct GpuSummary {
     pub max_pcie_tx_kbps: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_pcie_rx_kbps: Option<u32>,
+    /// GPU time of the monitored processes, in seconds: each pid's cumulative
+    /// GPU time at its last sample, summed. Counts from process start, so an
+    /// attached process includes time from before denet attached. Apple
+    /// Silicon only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_gpu_seconds: Option<f64>,
 }
 
 impl Default for GpuSummary {
@@ -207,6 +213,7 @@ impl Default for GpuSummary {
             max_temperature_c: None,
             max_pcie_tx_kbps: None,
             max_pcie_rx_kbps: None,
+            process_gpu_seconds: None,
         }
     }
 }
@@ -237,7 +244,21 @@ pub struct GpuMonitor {
     /// IOReport energy/frequency subscription; `None` if IOReport refused.
     #[cfg(apple_gpu)]
     apple_report: Mutex<Option<apple::IoReportReader>>,
+    /// The GPU's die sensors (`GPU MTR Temp Sensor*`), via sysinfo's IOHID
+    /// reader. Brittle like the rest: names verified on M1 only.
+    #[cfg(apple_gpu)]
+    apple_temps: Mutex<Option<GpuSensors>>,
 }
+
+/// sysinfo's sensor list, made `Send` so the Python class stays `Sync`.
+#[cfg(apple_gpu)]
+#[derive(Debug)]
+struct GpuSensors(sysinfo::Components);
+
+// SAFETY: only touched under `GpuMonitor::apple_temps`' lock, one thread at a
+// time; the IOHID client inside is a CF object, usable from any thread.
+#[cfg(apple_gpu)]
+unsafe impl Send for GpuSensors {}
 
 #[cfg(apple_gpu)]
 type AppleSnapshots = [Option<(std::time::Instant, apple::Snapshot)>; 2];
@@ -265,6 +286,8 @@ impl GpuMonitor {
             apple: Default::default(),
             #[cfg(apple_gpu)]
             apple_report: Default::default(),
+            #[cfg(apple_gpu)]
+            apple_temps: Default::default(),
         }
     }
 
@@ -280,6 +303,9 @@ impl GpuMonitor {
                     device_count: 1,
                     enabled: true,
                     apple_report: Mutex::new(apple::IoReportReader::new()),
+                    apple_temps: Mutex::new(Some(GpuSensors(
+                        sysinfo::Components::new_with_refreshed_list(),
+                    ))),
                     ..Self::disabled()
                 };
                 *lock(&m.apple) = [None, Some((std::time::Instant::now(), snap))];
@@ -332,6 +358,19 @@ impl GpuMonitor {
                     snap.report = r.read();
                     snap.max_freq_mhz = r.max_mhz();
                 }
+                // Hottest GPU sensor. They sit at a 30 °C floor while the GPU
+                // is powered down.
+                snap.temperature_c = lock(&self.apple_temps)
+                    .as_mut()
+                    .into_iter()
+                    .flat_map(|cs| cs.0.list_mut())
+                    .filter(|c| c.label().starts_with("GPU MTR Temp Sensor"))
+                    .filter_map(|c| {
+                        c.refresh();
+                        c.temperature()
+                    })
+                    .reduce(f32::max)
+                    .map(|t| t.round() as u32);
                 let mut s = lock(&self.apple);
                 s[0] = s[1].take();
                 s[1] = Some((std::time::Instant::now(), snap));
@@ -536,7 +575,7 @@ impl GpuMonitor {
                     memory_total: None,
                     memory_used: cur.memory_used,
                     memory_free: None,
-                    temperature: None,
+                    temperature: cur.temperature_c,
                     // Milliwatts, like NVML's `power_usage`.
                     power_usage: snaps[0].as_ref().zip(cur.report.energy_j).and_then(
                         |((then, _), j)| {
@@ -673,6 +712,8 @@ pub fn summarize_samples(metrics_history: &[GpuMetrics]) -> GpuSummary {
         let mut max_pcie_tx_kbps: Option<u32> = None;
         let mut max_pcie_rx_kbps: Option<u32> = None;
         let mut device_count = 0u32;
+        // pid -> highest cumulative GPU time seen (ns); the counter only grows.
+        let mut gpu_ns: std::collections::HashMap<u32, u64> = Default::default();
 
         for metrics in metrics_history {
             device_count = device_count.max(metrics.system_metrics.len() as u32);
@@ -706,6 +747,10 @@ pub fn summarize_samples(metrics_history: &[GpuMetrics]) -> GpuSummary {
                 if let Some(mem) = process_data.memory_usage {
                     max_process_memory = max_process_memory.max(mem);
                 }
+                if let Some(ns) = process_data.gpu_time_ns {
+                    let e = gpu_ns.entry(process_data.pid).or_default();
+                    *e = (*e).max(ns);
+                }
             }
         }
 
@@ -720,6 +765,8 @@ pub fn summarize_samples(metrics_history: &[GpuMetrics]) -> GpuSummary {
             max_temperature_c,
             max_pcie_tx_kbps,
             max_pcie_rx_kbps,
+            process_gpu_seconds: (!gpu_ns.is_empty())
+                .then(|| gpu_ns.values().sum::<u64>() as f64 / 1e9),
         }
     }
 }
@@ -805,6 +852,30 @@ mod tests {
         assert_eq!(summary.max_pcie_rx_kbps, None);
         assert!((summary.peak_used_memory_gb - 2.0).abs() < 1e-6);
         assert!((summary.total_memory_gb - 8.0).abs() < 1e-6);
+        assert_eq!(summary.process_gpu_seconds, None, "NVML has no GPU time");
+    }
+
+    #[test]
+    fn summary_sums_each_pids_latest_gpu_time() {
+        let sample = |procs: &[(u32, u64)]| GpuMetrics {
+            process_data: procs
+                .iter()
+                .map(|&(pid, ns)| ProcessGpuData {
+                    pid,
+                    gpu_utilization: None,
+                    memory_usage: None,
+                    memory_utilization_pct: None,
+                    gpu_time_ns: Some(ns),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        // pid 2 exits after the first sample; pid 1 keeps running.
+        let samples = [
+            sample(&[(1, 1_000_000_000), (2, 500_000_000)]),
+            sample(&[(1, 3_000_000_000)]),
+        ];
+        assert_eq!(summarize_samples(&samples).process_gpu_seconds, Some(3.5));
     }
 
     #[test]
