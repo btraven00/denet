@@ -31,7 +31,7 @@ conda install -c https://prefix.dev/almost-conductor denet
 Optional features for the Rust binary:
 
 ```bash
-cargo install denet --features gpu   # NVIDIA GPU monitoring (requires drivers; enable per run with --gpu)
+cargo install denet --features gpu   # GPU monitoring: NVIDIA (requires drivers) or Apple Silicon (experimental); enable per run with --gpu
 cargo install denet --features ebpf  # eBPF profiling (Linux only, requires clang)
 ```
 

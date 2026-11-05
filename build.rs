@@ -27,6 +27,17 @@ fn main() {
         }
     }
 
+    // pyo3's `extension-module` leaves Python symbols for the interpreter to
+    // provide. maturin passes the macOS linker flags for that; plain `cargo
+    // build --features python` must do it itself or the cdylib fails to link.
+    // Only the cdylib: the `denet` binary never links Python.
+    if env::var("CARGO_FEATURE_PYTHON").is_ok()
+        && env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos")
+    {
+        println!("cargo:rustc-cdylib-link-arg=-undefined");
+        println!("cargo:rustc-cdylib-link-arg=dynamic_lookup");
+    }
+
     // Only compile eBPF when the feature is enabled
     if env::var("CARGO_FEATURE_EBPF").is_ok() {
         // Check if clang is available

@@ -139,7 +139,8 @@ jobs:
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         run: |
-          # Linux wheels ship eBPF; macOS wheels stay python-only (no BPF toolchain).
+          # Linux wheels ship eBPF; macOS wheels get only pyproject's features
+          # (python, gpu): no BPF toolchain there.
           if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
             maturin build --release --features python,ebpf
           else
