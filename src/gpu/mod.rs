@@ -244,11 +244,32 @@ pub struct GpuMonitor {
     /// IOReport energy/frequency subscription; `None` if IOReport refused.
     #[cfg(apple_gpu)]
     apple_report: Mutex<Option<apple::IoReportReader>>,
-    /// The GPU's die sensors (`GPU MTR Temp Sensor*`), via sysinfo's IOHID
-    /// reader. Brittle like the rest: names verified on M1 only.
+    /// IOHID temperature sensors via sysinfo; see [`hid_max_temp`].
     #[cfg(apple_gpu)]
     apple_temps: Mutex<Option<GpuSensors>>,
 }
+
+/// Hottest sensor whose label starts with `prefix`, after a refresh.
+#[cfg(apple_gpu)]
+fn hid_max_temp(cs: &mut sysinfo::Components, prefix: &str) -> Option<f32> {
+    cs.list_mut()
+        .iter_mut()
+        .filter(|c| c.label().starts_with(prefix))
+        .filter_map(|c| {
+            c.refresh();
+            c.temperature()
+        })
+        .reduce(f32::max)
+}
+
+/// IOHID sensor labels, in order of preference. The M1 has `GPU MTR Temp
+/// Sensor*` (they sit at a 30 °C floor while the GPU is powered down). M1
+/// Pro/Max expose no GPU sensor, only SoC die sensors (`PMU tdie*`); the
+/// hottest of those is what the GPU heats under load (on an M1, two of them
+/// rise as much as the GPU sensors in a GPU burn). The SMC is no alternative:
+/// on macOS 26 its `Tg*` keys read 0.
+#[cfg(apple_gpu)]
+const TEMP_SENSOR_PREFIXES: [&str; 2] = ["GPU MTR Temp Sensor", "PMU tdie"];
 
 /// sysinfo's sensor list, made `Send` so the Python class stays `Sync`.
 #[cfg(apple_gpu)]
@@ -358,18 +379,13 @@ impl GpuMonitor {
                     snap.report = r.read();
                     snap.max_freq_mhz = r.max_mhz();
                 }
-                // Hottest GPU sensor. They sit at a 30 °C floor while the GPU
-                // is powered down.
                 snap.temperature_c = lock(&self.apple_temps)
                     .as_mut()
-                    .into_iter()
-                    .flat_map(|cs| cs.0.list_mut())
-                    .filter(|c| c.label().starts_with("GPU MTR Temp Sensor"))
-                    .filter_map(|c| {
-                        c.refresh();
-                        c.temperature()
+                    .and_then(|cs| {
+                        TEMP_SENSOR_PREFIXES
+                            .iter()
+                            .find_map(|p| hid_max_temp(&mut cs.0, p))
                     })
-                    .reduce(f32::max)
                     .map(|t| t.round() as u32);
                 let mut s = lock(&self.apple);
                 s[0] = s[1].take();
@@ -807,6 +823,17 @@ impl GpuMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Both sensor families exist on an M1, so the Pro/Max fallback is exercised here too.
+    #[cfg(apple_gpu)]
+    #[test]
+    fn hid_sensors_read_on_apple_silicon() {
+        let mut cs = sysinfo::Components::new_with_refreshed_list();
+        for p in TEMP_SENSOR_PREFIXES {
+            let t = hid_max_temp(&mut cs, p).unwrap_or_else(|| panic!("no `{p}*` sensor"));
+            assert!((10.0..110.0).contains(&t), "{p}: {t} °C");
+        }
+    }
 
     /// Regression test: rebuilding a summary from stored samples must not
     /// depend on a live NVML handle. `denet stats run.jsonl` is routinely run
