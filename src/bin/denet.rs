@@ -62,8 +62,9 @@ struct Args {
     #[clap(long)]
     enable_ebpf: bool,
 
-    /// Monitor NVIDIA GPUs (off by default: loading the driver library costs
-    /// tens of MB of memory, so it is only loaded when asked for)
+    /// Monitor the GPU: NVIDIA via NVML, or Apple Silicon (experimental).
+    /// Off by default: loading the NVIDIA driver library costs tens of MB of
+    /// memory, so it is only loaded when asked for
     #[clap(long)]
     gpu: bool,
 

@@ -22,3 +22,6 @@ scripts/*.png
 
 # scanpy example downloads its dataset here
 python/examples/data/
+
+# Local Claude Code settings
+.claude/
