@@ -1,6 +1,6 @@
 # Plan: Apple Silicon GPU monitoring (experimental)
 
-Status: in progress. Behind the `gpu` feature, opt-in at runtime (`--gpu`,
+Status: done (all phases below shipped on `feat/apple-silicon-gpu`). Behind the `gpu` feature, opt-in at runtime (`--gpu`,
 `enable_gpu=True`), and reported as **experimental** everywhere it surfaces.
 
 ## Data sources (verified on an M1 Mac mini, macOS 26.2, no root)
@@ -77,3 +77,8 @@ tree), so derive the rates from one snapshot per emitted sample.
   the x86_64 wheel doesn't link it. Smoke-tested the arm64 wheel in a clean
   venv on macmini. Not yet tested: the arm64 wheel on macOS 11/12 (wheel
   floor is 11.0; libIOReport is long-standing but unverified there).
+
+### M1 Max (Mac Studio) report, 2026-11-05
+- [x] Everything reads as on the M1 except temperature (`null`: no `GPU MTR Temp Sensor*`; its IOHID names are `PMU tdie*`, `PMU tdev*`, `PMU TP*s`, `PMU TP*g`). Now falls back to the hottest `PMU tdie*`.
+- [x] GPU time reads 15–35% low on light grids there, within 3% when saturated; the M1 agrees within 2% in all five modes (`scripts/metal_burn.swift`, table in `docs/gpu.md`). Documented, not fixable from user space.
+- [x] SMC ruled out as a temperature source: on macOS 26.2 the M1 exposes only `Tg1b`/`Tg4b`, both 0 under load; the `Tg05`-style keys other tools read are gone. `PMU TP*g` unconfirmed (all M1 Max sensors rose ~1 °C under 24 W; the Studio's cooling).

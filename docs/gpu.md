@@ -205,7 +205,10 @@ What it reports:
 
 - `system_metrics[0].temperature`: the hottest GPU die sensor (`GPU MTR Temp
   Sensor*`), in °C, via sysinfo. These sensors sit at a 30 °C floor while the
-  GPU is powered down, so 30 at idle means "off", not a measurement.
+  GPU is powered down, so 30 at idle means "off", not a measurement. Chips
+  without that sensor (M1 Pro/Max) report the hottest SoC die sensor (`PMU
+  tdie*`) instead: not GPU-specific, but under GPU load that is the sensor
+  next to the GPU.
 - Summary: `process_gpu_seconds` (`Process GPU Time` in the CLI) is the
   monitored processes' total GPU time. It counts from each process's start, so
   an attached process includes time from before denet attached.
@@ -218,12 +221,30 @@ Caveats:
   ~0.5 s command buffers, three runs read 1%, 1% and 10% low. Workloads with
   short command buffers lose little. For the same reason, one long kernel
   shows up in bursts rather than spread across the samples it spans.
+- On a big GPU the counter undercounts light work. Against Metal's own
+  per-command-buffer GPU time (`scripts/metal_burn.swift`), an M1 (8 cores)
+  agrees within 2% in every mode tried, but an M1 Max (32 cores) reads 15–35%
+  low on grids too small to fill the GPU, and within 3% only when it is
+  saturated (a typical ML workload):
+
+  | workload | M1 | M1 Max |
+  |---|---|---|
+  | 16M threads, 20 ms buffers | 1.00 | 0.97 |
+  | 1M threads, 20 ms buffers | 1.00 | 0.81 |
+  | 1M threads, 500 ms buffers | 1.07 | 0.64 |
+  | 1M threads, 50% duty cycle | 1.02 | 0.67 |
+  | 64K threads, 20 ms buffers | 1.01 | 0.85 |
+
+  The likely reading is that the counter credits actual core activity while
+  Metal's timestamps span the whole command buffer, idle cores included.
+  `system_utilization_gpu` errs the other way: the 50% duty-cycle run read
+  70% on the M1 and 87% on the M1 Max.
 - If a process closes its Metal device, its time can step backwards; that
   interval reads 0%, and `process_gpu_seconds` keeps the highest value seen.
 - GPU time in the last interval before a process exits is lost, as with CPU
   time.
-- These sources were verified on an M1 only. Other chips or macOS releases may
-  rename them; the fields then read `null` rather than failing.
+- These sources were verified on an M1 and an M1 Max. Other chips or macOS
+  releases may rename them; the fields then read `null` rather than failing.
 - macOS VMs (including GitHub's macOS runners) have no Apple GPU to read;
   `--gpu` warns and carries on.
 
