@@ -31,6 +31,7 @@
 # Internal: --as-root NAME GPU RAPL [NET_TEST_BIN] is what steps 3 and 4 run
 # as root (on the host via sudo, in each guest via vng).
 
+{ # bash reads this whole block before running it, so editing the script mid-run cannot break the run
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
@@ -38,8 +39,11 @@ DENET=${DENET:-target/release/denet}
 MUSL=x86_64-unknown-linux-musl
 OUT_DIR=$(mktemp -d)
 FAILED=0
-pass() { echo "PASS  $1"; }
-fail() { echo "FAIL  $1"; FAILED=1; }
+# Colours are on even when piped: the VM stages' output isn't a tty. NO_COLOR=1 turns them off.
+GREEN=$'\e[32m' RED=$'\e[31m' OFF=$'\e[0m'
+[[ -n "${NO_COLOR:-}" ]] && GREEN="" RED="" OFF=""
+pass() { echo "${GREEN}PASS${OFF}  $1"; }
+fail() { echo "${RED}FAIL${OFF}  $1"; FAILED=1; }
 step() { # title, what it proves
     printf '\n== %s\n' "$1"
     printf '   %s\n' "$2" | fold -s -w 76 | sed '2,$s/^/   /'
@@ -338,5 +342,6 @@ fi
 
 rm -rf "$OUT_DIR"
 echo
-[[ $FAILED -eq 0 ]] && echo "ALL CHECKS PASSED" || echo "SOME CHECKS FAILED"
+[[ $FAILED -eq 0 ]] && echo "${GREEN}ALL CHECKS PASSED${OFF}" || echo "${RED}SOME CHECKS FAILED${OFF}"
 exit $FAILED
+}
