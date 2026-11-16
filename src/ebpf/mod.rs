@@ -9,8 +9,6 @@ pub mod debug;
 #[cfg(target_os = "linux")]
 pub mod kallsyms;
 #[cfg(target_os = "linux")]
-pub mod memory_map_cache;
-#[cfg(target_os = "linux")]
 pub mod metrics;
 #[cfg(target_os = "linux")]
 pub mod net_monitor;
@@ -101,8 +99,6 @@ pub(crate) fn attach_proctree(bpf: &mut aya::Ebpf) -> crate::error::Result<()> {
 
 #[cfg(target_os = "linux")]
 pub use debug::debug_println;
-#[cfg(target_os = "linux")]
-pub use memory_map_cache::MemoryMapCache;
 #[cfg(target_os = "linux")]
 pub use net_monitor::NetMonitor;
 #[cfg(target_os = "linux")]

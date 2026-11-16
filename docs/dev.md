@@ -170,8 +170,7 @@ denet/
 │   ├── monitor/      # Metrics, Summary, JSONL records, env capture
 │   ├── cpu_sampler.rs, perf/, psi/, rapl/   # Linux collectors
 │   ├── gpu/          # NVML collector (feature: gpu)
-│   ├── ebpf/         # eBPF collectors and BPF programs (feature: ebpf)
-│   └── symbolication/  # Stack symbolication for off-CPU profiling
+│   └── ebpf/         # eBPF collectors and BPF programs (feature: ebpf)
 ├── python/denet/     # Python package
 │   ├── __init__.py   # Python API (ProcessMonitor, execute_with_monitoring)
 │   ├── analysis.py   # Analysis utilities
@@ -202,15 +201,9 @@ Releases are driven by [release-please](https://github.com/googleapis/release-pl
 
 To rebuild a release by hand, run `gh workflow run publish.yml --ref main`.
 
-## Stack Traces and Symbolication
+## Off-CPU Stacks
 
-When eBPF off-CPU profiling is enabled, denet captures user-space stack IDs via `bpf_get_stackid()` and resolves them to symbol names in userspace. Symbolication reads `/proc/{pid}/maps` to find loaded shared libraries and executables, then invokes `addr2line` to map instruction addresses to function names and source locations.
-
-For best results:
-
-- Build monitored programs with debug symbols (`-g`). Without DWARF info, symbolication falls back to raw hex addresses.
-- JIT-compiled languages (Python, Java, Node.js) show JIT trampolines rather than source-level frames. Use frame pointer compilation flags or language-specific debug packages for better results.
-- Kernel stacks require `CONFIG_BPF_STACK_TRACE` and are not collected by default.
+With eBPF off-CPU profiling, denet records the kernel stack each thread waits in and names its frames from `/proc/kallsyms`. User-space stacks are not captured, so there is no symbolication of the monitored program and no need to build it with debug symbols.
 
 See `docs/offcpu.md` for the full off-CPU architecture and known limitations.
 

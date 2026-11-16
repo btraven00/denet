@@ -44,10 +44,6 @@ pub mod tcp_diag;
 #[cfg(feature = "ebpf")]
 pub mod ebpf;
 
-// Symbolication (eBPF stack traces, optional feature)
-#[cfg(feature = "ebpf")]
-pub mod symbolication;
-
 // GPU monitoring (optional feature)
 #[cfg(feature = "gpu")]
 pub mod gpu;
