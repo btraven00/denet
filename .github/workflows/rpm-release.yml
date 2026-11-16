@@ -1,0 +1,46 @@
+name: RPM package
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release to attach the .rpm to. It is built from the ref this runs on, not from the tag. Empty: keep it as a workflow artifact only"
+        required: false
+        default: ""
+
+permissions:
+  contents: write # attach the .rpm to the release
+
+jobs:
+  rpm:
+    name: Build and attach the .rpm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build (inside AlmaLinux 8, gpu + ebpf)
+        run: ./scripts/build_rpm.sh
+
+      - name: Test install on AlmaLinux 8 and Rocky Linux 9
+        # The oldest RHEL family it should install on, and the one most clusters run.
+        run: |
+          for image in almalinux:8 rockylinux:9; do
+            docker run --rm -v "$PWD/target/rpm:/r:ro" "$image" sh -euc '
+              dnf install -y -q /r/*.rpm >/dev/null
+              denet --version
+              denet -q --json run -- sleep 1 | tail -1'
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rpm
+          path: target/rpm/*.rpm
+
+      - name: Attach to the release
+        if: github.event_name == 'release' || inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: gh release upload "$RELEASE_TAG" target/rpm/*.rpm --clobber
