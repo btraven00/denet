@@ -18,9 +18,29 @@ use tabled::{builder::Builder, settings::Style};
 #[path = "denet/tui.rs"]
 mod tui;
 
+/// What `--version` prints after the name: the version, then the optional
+/// features this binary was built with, e.g. `0.11.1 (features: gpu, ebpf)`.
+/// The version stays the second word, for scripts that read it.
+fn version() -> &'static str {
+    let features: Vec<&str> = [
+        cfg!(feature = "gpu").then_some("gpu"),
+        cfg!(feature = "ebpf").then_some("ebpf"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let features = if features.is_empty() {
+        "none".to_string()
+    } else {
+        features.join(", ")
+    };
+    // leaked once per run: clap wants a &'static str
+    Box::leak(format!("{} (features: {features})", env!("CARGO_PKG_VERSION")).into_boxed_str())
+}
+
 /// Dynamic Explorer of Nested Executions Tool (DENET)
 #[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
+#[clap(author, version = version(), about, long_about = None)]
 struct Args {
     /// Output in JSON format
     #[clap(short, long)]
