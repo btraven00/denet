@@ -90,4 +90,15 @@ needs root or CAP_BPF)."""
 assets = [
     ["target/release/denet", "usr/bin/", "755"],
     ["README.md", "usr/share/doc/denet/", "644"],
+    ["docs/denet.1", "usr/share/man/man1/", "644"],
+]
+
+# `cargo generate-rpm` (cargo install cargo-generate-rpm); scripts/build_rpm.sh builds the released one
+[package.metadata.generate-rpm]
+# only the CLI, as in the .deb
+assets = [
+    { source = "target/release/denet", dest = "/usr/bin/denet", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/denet/README.md", mode = "644", doc = true },
+    { source = "docs/denet.1", dest = "/usr/share/man/man1/denet.1", mode = "644", doc = true },
+    { source = "LICENSE", dest = "/usr/share/licenses/denet/LICENSE", mode = "644" },
 ]

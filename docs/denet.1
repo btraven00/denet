@@ -1,0 +1,174 @@
+.TH DENET 1 "November 2026" "denet" "User Commands"
+.SH NAME
+denet \- a streaming process monitor
+.SH SYNOPSIS
+.B denet
+[\fIOPTIONS\fR]
+.B run
+\fICOMMAND\fR...
+.br
+.B denet
+[\fIOPTIONS\fR]
+.B attach
+\fIPID\fR
+.br
+.B denet stats
+\fIFILE\fR
+.SH DESCRIPTION
+.B denet
+tracks the CPU, memory, disk I/O, threads and network bytes of a process and
+its children while it runs, and reports them as a live line, as JSON records,
+or as full-screen graphs. Sampling is adaptive: it starts at
+.B \-\-interval
+and backs off to
+.BR \-\-max\-interval .
+.SH COMMANDS
+.TP
+.BI run " COMMAND" ...
+Run
+.I COMMAND
+and monitor it until it exits. Put
+.B \-\-
+before a command that has options of its own.
+.TP
+.BI attach " PID"
+Monitor a process that is already running.
+.TP
+.BI stats " FILE"
+Print summary statistics from a metrics file written with
+.BR \-\-out .
+.SH OPTIONS
+Options go before the command.
+.TP
+.BR \-j ", " \-\-json
+Output JSON records, one per line.
+.TP
+.BR \-o ", " \-\-out " \fIFILE\fR"
+Write the records to
+.IR FILE .
+.TP
+.BR \-i ", " \-\-interval " \fIMS\fR"
+Base sampling interval in milliseconds (default 100).
+.TP
+.BR \-m ", " \-\-max\-interval " \fIMS\fR"
+Maximum sampling interval in milliseconds (default 1000).
+.TP
+.BR \-d ", " \-\-duration " \fISECONDS\fR"
+Stop monitoring after this many seconds (default 0, unlimited).
+.TP
+.BR \-n ", " \-\-no\-update
+Print a new line per sample instead of updating in place.
+.TP
+.BR \-q ", " \-\-quiet
+Print nothing to standard output, except with
+.BR \-\-json .
+.TP
+.B \-\-tui
+Live full-screen graphs of the process tree: CPU, memory, disk, TCP, and GPU
+with
+.BR \-\-gpu .
+Press
+.B q
+to stop and
+.B m
+to change the graph style. The command's own output goes to a log file, named
+on exit.
+.TP
+.B \-\-gpu
+Monitor the GPU: NVIDIA through the driver's NVML library, or Apple Silicon
+(experimental). Off by default.
+.TP
+.B \-\-enable\-ebpf
+Enable eBPF profiling: syscall counts, off-CPU waits, per-process network
+bytes. Needs root or capabilities; see
+.BR CAPABILITIES .
+.TP
+.B \-\-exclude\-children
+Monitor only the main process, not its children.
+.TP
+.B \-\-since\-process\-start
+Report I/O since the process started instead of since monitoring started.
+.TP
+.B \-\-no\-polling
+Do not sample; collect only at process completion.
+.TP
+.B \-\-write\-env
+Write a host, NUMA and CPU-affinity record before the metadata.
+.TP
+.B \-\-debug
+Verbose diagnostics, mostly for eBPF.
+.TP
+.BR \-h ", " \-\-help
+Print help.
+.TP
+.BR \-V ", " \-\-version
+Print the version.
+.SH CAPABILITIES
+Everything except
+.B \-\-enable\-ebpf
+works as an ordinary user.
+.B \-\-enable\-ebpf
+needs either root
+.RB ( "sudo denet \-\-enable\-ebpf" " ...)"
+or these capabilities on the binary:
+.TP
+.B cap_bpf
+load the eBPF programs and create their maps
+.TP
+.B cap_perfmon
+attach them to tracepoints
+.TP
+.B cap_dac_read_search
+read the root-only tracepoint ids under /sys/kernel/tracing, and the RAPL energy counters
+.PP
+Packages do not set them. To set them once, as root:
+.PP
+.RS
+.nf
+sudo setcap cap_bpf,cap_perfmon,cap_dac_read_search=ep "$(command \-v denet)"
+.fi
+.RE
+.PP
+To check, and to remove them again:
+.PP
+.RS
+.nf
+getcap "$(command \-v denet)"
+sudo setcap \-r "$(command \-v denet)"
+.fi
+.RE
+.PP
+Capabilities belong to the file: they are lost when the binary is replaced,
+for example by a package upgrade, and must be set again. A binary with these
+capabilities gives them to every user who can run it.
+.B cap_bpf
+and
+.B cap_perfmon
+exist since Linux 5.8; on older kernels use root.
+.SH EXAMPLES
+Monitor a command and save the records:
+.PP
+.RS
+.nf
+denet \-o run.jsonl run \-\- python train.py
+denet stats run.jsonl
+.fi
+.RE
+.PP
+Watch a running process with the GPU, in full-screen graphs:
+.PP
+.RS
+.nf
+denet \-\-gpu \-\-tui attach 12345
+.fi
+.RE
+.PP
+JSON records on standard output, with eBPF:
+.PP
+.RS
+.nf
+sudo denet \-\-enable\-ebpf \-\-json run \-\- ./job.sh
+.fi
+.RE
+.SH SEE ALSO
+Documentation and source: https://github.com/btraven00/denet

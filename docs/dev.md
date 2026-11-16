@@ -115,6 +115,7 @@ The project uses GitHub Actions for CI/CD. The workflows are defined in `.github
 - **publish.yml:** Builds wheels (Linux manylinux_2_28 with eBPF, macOS) and the sdist, then publishes to PyPI when a release is created
 - **conda-release.yml:** Publishes the conda package to prefix.dev on `v*` tags
 - **deb-release.yml:** Builds the `.deb` (`scripts/build_deb.sh`, gpu + ebpf, inside Ubuntu 22.04 so it installs on Ubuntu 22.04+ and Debian 12+) and attaches it to the release
+- **rpm-release.yml:** Builds the `.rpm` (`scripts/build_rpm.sh`, gpu + ebpf, inside AlmaLinux 8 so it installs on RHEL/Rocky/Alma 8+ and Fedora) and attaches it to the release
 - **static-release.yml:** Builds static musl binaries with eBPF (no GPU) for x86_64 and aarch64 and attaches them to the release
 
 ### Testing GitHub Actions Locally
@@ -197,7 +198,7 @@ Releases are driven by [release-please](https://github.com/googleapis/release-pl
 
 3. Merge the release PR. release-please tags `vX.Y.Z` and creates the GitHub release.
 
-4. The release triggers `publish.yml` (PyPI) and `deb-release.yml` and `static-release.yml` (a `.deb` and static binaries attached to the release), and the tag triggers `conda-release.yml` (prefix.dev).
+4. The release triggers `publish.yml` (PyPI) and `deb-release.yml`, `rpm-release.yml` and `static-release.yml` (a `.deb`, an `.rpm` and static binaries attached to the release), and the tag triggers `conda-release.yml` (prefix.dev).
 
 To rebuild a release by hand, run `gh workflow run publish.yml --ref main`.
 
