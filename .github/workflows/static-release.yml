@@ -29,8 +29,8 @@ jobs:
           - { os: ubuntu-24.04-arm, arch: aarch64 }
     env:
       TARGET: ${{ matrix.arch }}-unknown-linux-musl
-      # matches `uname -m`, so the README's download command works on both
-      ASSET: denet-${{ matrix.arch }}-linux-musl
+      # the arch matches `uname -m`, so the README's download command works on both
+      ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v7
 
@@ -48,6 +48,9 @@ jobs:
 
       - name: Check it is static and runs on Alpine
         run: |
+          # denet-<version>-<arch>-linux-musl, the version as the binary reports it
+          ASSET="denet-$("target/$TARGET/release/denet" --version | cut -d" " -f2)-$ARCH-linux-musl"
+          echo "ASSET=$ASSET" >> "$GITHUB_ENV"
           cp "target/$TARGET/release/denet" "$ASSET"
           file "$ASSET"
           file "$ASSET" | grep -q 'static'
