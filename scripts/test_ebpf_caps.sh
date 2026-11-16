@@ -44,13 +44,16 @@ echo "test binary: $BIN"
 cleanup() { sudo setcap -r "$BIN" 2>/dev/null || true; }
 trap cleanup EXIT
 
+# Colours are on even when piped: the VM stages' output isn't a tty. NO_COLOR=1 turns them off.
+GREEN=$'\e[32m' RED=$'\e[31m' OFF=$'\e[0m'
+[[ -n "${NO_COLOR:-}" ]] && GREEN="" RED="" OFF=""
 FAILED=0
 LOG=$(mktemp)
 report() { # name, exit_code — on failure, show the test output
     if [[ $2 -eq 0 ]]; then
-        echo "PASS  $1"
+        echo "${GREEN}PASS${OFF}  $1"
     else
-        echo "FAIL  $1"
+        echo "${RED}FAIL${OFF}  $1"
         sed 's/^/      /' "$LOG"
         FAILED=1
     fi
@@ -67,7 +70,7 @@ if sudo setcap "$CAPS" "$BIN"; then
     DENET_EXPECT_EBPF=1 "$BIN" --include-ignored >"$LOG" 2>&1
     report "Phase B: caps without root, all tests incl. privileged" $?
 else
-    echo "FAIL  Phase B: setcap failed"; FAILED=1
+    echo "${RED}FAIL${OFF}  Phase B: setcap failed"; FAILED=1
 fi
 
 # --- Phase C: root (optional) -------------------------------------------------
