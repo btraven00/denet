@@ -1,0 +1,68 @@
+name: Static binaries
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release to attach the binaries to. They are built from the ref this runs on, not from the tag. Empty: keep them as workflow artifacts only"
+        required: false
+        default: ""
+  # Build (without attaching) when this workflow changes: arm64 can't be tried locally
+  pull_request:
+    paths:
+      - .github/workflows/static-release.yml
+
+permissions:
+  contents: write # attach the binaries to the release
+
+jobs:
+  musl:
+    name: denet (${{ matrix.arch }}, static musl)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, arch: x86_64 }
+          - { os: ubuntu-24.04-arm, arch: aarch64 }
+    env:
+      TARGET: ${{ matrix.arch }}-unknown-linux-musl
+      # matches `uname -m`, so the README's download command works on both
+      ASSET: denet-${{ matrix.arch }}-linux-musl
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch }}-unknown-linux-musl
+
+      - name: Install build tools
+        # clang compiles the BPF programs; the libbpf headers are vendored
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq clang llvm musl-tools
+
+      - name: Build
+        # eBPF but no GPU: NVIDIA's library is glibc-only and a static binary can't load it
+        run: cargo build --release --locked --target "$TARGET" --features ebpf --bin denet
+
+      - name: Check it is static and runs on Alpine
+        run: |
+          cp "target/$TARGET/release/denet" "$ASSET"
+          file "$ASSET"
+          file "$ASSET" | grep -q 'static'
+          docker run --rm -v "$PWD/$ASSET:/usr/bin/denet:ro" alpine sh -euc '
+            denet --version
+            denet -q --json run -- sleep 1 | tail -1'
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ASSET }}
+          path: ${{ env.ASSET }}
+
+      - name: Attach to the release
+        if: github.event_name == 'release' || inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: gh release upload "$RELEASE_TAG" "$ASSET" --clobber

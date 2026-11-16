@@ -35,6 +35,13 @@ conda install -c conda-forge denet    # conda
 
 On Debian 12+ and Ubuntu 22.04+, download the `.deb` from the [latest release](https://github.com/btraven00/denet/releases/latest) and `sudo apt install ./denet_*_amd64.deb`. It includes GPU and eBPF support.
 
+On any other Linux (x86_64 or aarch64), there is a static binary with eBPF support but no GPU support:
+
+```bash
+curl -L -o denet https://github.com/btraven00/denet/releases/latest/download/denet-$(uname -m)-linux-musl
+chmod +x denet
+```
+
 With Nix, run a release straight from the flake: `nix run github:btraven00/denet/v0.11.1 -- --help`. <!-- x-release-please-version -->
 
 Optional features for the Rust binary:
