@@ -16,20 +16,16 @@ typedef __u32 u32;
 typedef __u64 u64;
 typedef __u8 u8;
 
-// Maximum stack depth for stack traces
-#define PERF_MAX_STACK_DEPTH 127
-
 // What a monitored thread left the CPU with, keyed by its initial-namespace
 // tid (from the tracepoint). Filled when it is switched out, because only
-// then is it the current task: its IDs and stacks can't be read when it is
+// then is it the current task: its IDs and stack can't be read when it is
 // switched back in, when the current task is the one being switched out.
 struct offcpu_start {
     u64 ts;              // when it went off-CPU (ns)
     u32 tgid;            // IDs in denet's PID namespace
     u32 tid;
     u32 prev_state;      // scheduler state it left in (e.g. sleeping)
-    u32 user_stack_id;   // stacks it was waiting in; negative on error
-    u32 kernel_stack_id;
+    u32 kernel_stack_id; // stack it was waiting in; negative on error
 };
 
 struct {
@@ -39,19 +35,17 @@ struct {
     __uint(max_entries, 10240);
 } offcpu_start SEC(".maps");
 
-// Event sent to userspace via the perf ring buffer
+// Event sent to userspace via the perf ring buffer. Four u32 then three u64:
+// no padding, which matters because kernels before 6.4 reject uninitialized
+// stack bytes passed to bpf_perf_event_output. Mirrored by OffCpuEvent.
 struct offcpu_event {
-    u32 pid;            // Process ID (TGID)
-    u32 tid;            // Thread ID
-    u32 prev_state;     // Scheduler state when thread went off-CPU
-    u32 _pad;           // named, so the initializer zeroes it: kernels
-                        // before 6.4 reject uninitialized stack bytes
-                        // passed to bpf_perf_event_output
-    u64 offcpu_time_ns; // Time spent off-CPU in nanoseconds
-    u64 start_time_ns;  // Timestamp when thread went off-CPU
-    u64 end_time_ns;    // Timestamp when thread came back on-CPU
-    u32 user_stack_id;  // User-space stack trace ID (may be negative on error)
-    u32 kernel_stack_id; // Kernel-space stack trace ID
+    u32 pid;             // Process ID (TGID)
+    u32 tid;             // Thread ID
+    u32 prev_state;      // Scheduler state when thread went off-CPU
+    u32 kernel_stack_id; // Kernel stack it waited in; negative on error
+    u64 offcpu_time_ns;  // Time spent off-CPU in nanoseconds
+    u64 start_time_ns;   // Timestamp when thread went off-CPU
+    u64 end_time_ns;     // Timestamp when thread came back on-CPU
 };
 
 struct {
@@ -59,14 +53,6 @@ struct {
     __uint(key_size, sizeof(u32));
     __uint(value_size, sizeof(u32));
 } events SEC(".maps");
-
-// Stack trace maps
-struct {
-    __uint(type, BPF_MAP_TYPE_STACK_TRACE);
-    __uint(key_size, sizeof(u32));
-    __uint(value_size, PERF_MAX_STACK_DEPTH * sizeof(u64));
-    __uint(max_entries, 1024);
-} user_stackmap SEC(".maps");
 
 // Kernel stacks: 32 frames reach from schedule() to the syscall entry. A
 // stack whose hash slot holds a different stack gets -EEXIST (FAST_STACK_CMP),
@@ -131,8 +117,6 @@ int trace_sched_switch(struct sched_switch_args *ctx) {
         start.ts = now;
         start.prev_state = (u32)ctx->prev_state;
         start.kernel_stack_id = kernel_stack_id(ctx);
-        start.user_stack_id = bpf_get_stackid(ctx, &user_stackmap,
-                                              BPF_F_USER_STACK | BPF_F_FAST_STACK_CMP);
         bpf_map_update_elem(&offcpu_start, &prev_tid, &start, BPF_ANY);
     }
 
@@ -157,7 +141,6 @@ int trace_sched_switch(struct sched_switch_args *ctx) {
         .offcpu_time_ns  = off_cpu_time,
         .start_time_ns   = left.ts,
         .end_time_ns     = now,
-        .user_stack_id   = left.user_stack_id,
         .kernel_stack_id = left.kernel_stack_id,
     };
 

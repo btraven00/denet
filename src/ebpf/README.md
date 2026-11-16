@@ -8,7 +8,7 @@ This module provides fine-grained profiling capabilities using eBPF (Extended Be
 - **Purpose**: Measure time threads spend waiting (blocked on I/O, locks, sleep, scheduling)
 - **Mechanism**: `tracepoint/sched/sched_switch` captures every context switch
 - **Output**: Per-thread blocked time, event counts, top blocking threads
-- **Symbolication**: User-space stack frames resolved via `/proc/pid/maps` + `addr2line`
+- **Stacks**: the kernel stack of each wait, named from `/proc/kallsyms`; no user-space stacks
 - **Overhead**: Low — event-driven, only fires on context switches
 
 ### Syscall Tracking
@@ -24,7 +24,6 @@ src/ebpf/
 ├── mod.rs                # Module interface, re-exports, non-Linux stubs
 ├── metrics.rs            # EbpfMetrics, OffCpuMetrics, SyscallMetrics types
 ├── offcpu_profiler.rs    # Off-CPU profiler (sched_switch tracepoint)
-├── memory_map_cache.rs   # /proc/pid/maps caching for symbolication
 ├── syscall_tracker.rs    # Syscall frequency tracking
 ├── debug.rs              # Debug logging utilities
 └── programs/
@@ -39,7 +38,7 @@ sched_switch tracepoint
   └─▶ offcpu_profiler.c (kernel)
         └─▶ PerfEventArray (ring buffer)
               └─▶ OffCpuProfiler::poll_events() (userspace thread)
-                    └─▶ stats HashMap + symbolication
+                    └─▶ stats HashMap + time per kernel stack
                           └─▶ OffCpuMetrics → JSON output
 ```
 

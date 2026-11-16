@@ -30,7 +30,6 @@ const OFFCPU_PROFILER_BYTECODE: &[u8] =
 #[cfg(feature = "ebpf")]
 use crate::ebpf::kallsyms::KernelSymbols;
 #[cfg(feature = "ebpf")]
-use crate::ebpf::memory_map_cache::MemoryMapCache;
 #[cfg(feature = "ebpf")]
 use aya::maps::perf::PerfEventArray;
 #[cfg(feature = "ebpf")]
@@ -39,18 +38,7 @@ use aya::util::online_cpus;
 #[cfg(feature = "ebpf")]
 use bytes::BytesMut;
 
-/// Represents a single frame in a stack trace
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StackFrame {
-    /// Memory address of the instruction
-    pub address: u64,
-    /// Symbol name (if available through symbolication)
-    pub symbol: Option<String>,
-    /// Source file and line information (if available)
-    pub source_location: Option<String>,
-}
 
 /// The OffCpuEvent structure that matches the eBPF program's output
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
@@ -62,16 +50,14 @@ pub struct OffCpuEvent {
     pub tid: u32,
     /// Previous thread state when it was scheduled out
     pub prev_state: u32,
+    /// Kernel stack it waited in: a stack map id, or a negative errno
+    pub kernel_stack_id: u32,
     /// Time spent off-CPU in nanoseconds
     pub offcpu_time_ns: u64,
     /// Timestamp when the thread was scheduled out
     pub start_time_ns: u64,
     /// Timestamp when the thread was scheduled back in
     pub end_time_ns: u64,
-    /// User-space stack trace ID
-    pub user_stack_id: u32,
-    /// Kernel-space stack trace ID
-    pub kernel_stack_id: u32,
 }
 
 /// Aggregated off-CPU statistics for a thread
@@ -133,10 +119,6 @@ pub struct OffCpuProfiler {
 
     /// Debug mode flag
     debug_mode: bool,
-
-    /// Memory map cache for symbolication
-    #[cfg(feature = "ebpf")]
-    memory_map_cache: MemoryMapCache,
 }
 
 /// Global debug mode flag for the OffCpuProfiler
@@ -201,16 +183,8 @@ impl std::fmt::Debug for OffCpuProfiler {
 impl OffCpuProfiler {
     /// Create a new Off-CPU profiler
     pub fn new(pids: Vec<u32>) -> crate::error::Result<Self> {
-        // Create memory map cache with debug mode if enabled
         #[cfg(feature = "ebpf")]
         let debug_enabled = unsafe { debug::is_debug_mode() };
-
-        #[cfg(feature = "ebpf")]
-        let memory_map_cache = if DEBUG_MODE.load(Ordering::Relaxed) || debug_enabled {
-            MemoryMapCache::with_debug()
-        } else {
-            MemoryMapCache::new()
-        };
 
         let mut profiler = OffCpuProfiler {
             #[cfg(feature = "ebpf")]
@@ -230,20 +204,7 @@ impl OffCpuProfiler {
             #[cfg(feature = "ebpf")]
             _perf_readers: Vec::new(),
             debug_mode: debug_enabled,
-            #[cfg(feature = "ebpf")]
-            memory_map_cache,
         };
-
-        // Cache memory maps for all monitored PIDs immediately
-        #[cfg(feature = "ebpf")]
-        {
-            for pid in &pids {
-                profiler.memory_map_cache.refresh_maps_for_pid(*pid);
-                if profiler.debug_mode {
-                    debug::debug_println(&format!("Pre-cached memory maps for PID {}", pid));
-                }
-            }
-        }
 
         // Initialize eBPF if the feature is enabled
         #[cfg(feature = "ebpf")]
@@ -281,17 +242,6 @@ impl OffCpuProfiler {
     pub fn enable_debug_mode(&mut self) {
         self.debug_mode = true;
         debug::debug_println("Off-CPU profiler debug mode enabled");
-
-        #[cfg(feature = "ebpf")]
-        self.memory_map_cache.set_debug_mode(true);
-
-        if self.debug_mode {
-            #[cfg(feature = "ebpf")]
-            debug::debug_println(&format!(
-                "Memory map cache contains {} PIDs",
-                self.memory_map_cache.cache_size()
-            ));
-        }
     }
 
     /// Initialize the eBPF program for off-CPU profiling
@@ -655,43 +605,7 @@ impl OffCpuProfiler {
             let old = std::mem::take(&mut self.monitored_pids);
             self.sync_pid_filter(&old, &pids);
         }
-        self.monitored_pids = pids.clone();
-
-        #[cfg(feature = "ebpf")]
-        {
-            for pid in &pids {
-                self.memory_map_cache.refresh_maps_for_pid(*pid);
-            }
-        }
-    }
-
-    /// Add a single PID to the monitored list and cache its memory maps
-    /// This is useful when we discover new processes during profiling
-    #[cfg(feature = "ebpf")]
-    fn add_pid_to_monitor(&mut self, pid: u32) {
-        // Only add if it's not already being monitored
-        if !self.monitored_pids.contains(&pid) {
-            if self.debug_mode {
-                debug::debug_println(&format!("Adding PID {} to monitored processes", pid));
-            }
-
-            // Add to the monitored list
-            self.monitored_pids.push(pid);
-
-            // Cache memory maps immediately
-            let success = self.memory_map_cache.refresh_maps_for_pid(pid);
-
-            if self.debug_mode {
-                if success {
-                    debug::debug_println(&format!(
-                        "Successfully cached memory maps for PID {}",
-                        pid
-                    ));
-                } else {
-                    debug::debug_println(&format!("Failed to cache memory maps for PID {}", pid));
-                }
-            }
-        }
+        self.monitored_pids = pids;
     }
 
     /// Keep the in-kernel `pid_filter` equal to the monitored tree: only its
@@ -759,17 +673,38 @@ impl OffCpuProfiler {
         if stack_id == STACK_UNAVAILABLE {
             return vec!["[stack unavailable]".to_string()];
         }
-        let frames = self.get_symbolicated_stack_frames(stack_id, false, 0);
+        let addrs = self.kernel_stack_addrs(stack_id);
         let syms = self.kernel_syms.get_or_insert_with(KernelSymbols::load);
-        frames
-            .iter()
-            .map(|f| {
+        addrs
+            .into_iter()
+            .map(|addr| {
                 syms.as_ref()
-                    .and_then(|s| s.resolve(f.address))
+                    .and_then(|s| s.resolve(addr))
                     .map(str::to_string)
-                    .unwrap_or_else(|| format!("0x{:x}", f.address))
+                    .unwrap_or_else(|| format!("0x{addr:x}"))
             })
             .collect()
+    }
+
+    /// Instruction addresses of a kernel stack, innermost first, read from
+    /// the stack map the BPF program stored it in
+    #[cfg(feature = "ebpf")]
+    fn kernel_stack_addrs(&mut self, stack_id: u32) -> Vec<u64> {
+        let (map_name, key) = if stack_id & KSTACK_OVERFLOW != 0 {
+            ("kernel_stackmap2", stack_id & !KSTACK_OVERFLOW)
+        } else {
+            ("kernel_stackmap", stack_id)
+        };
+        let Some(map) = self.bpf.as_mut().and_then(|bpf| bpf.map_mut(map_name)) else {
+            return Vec::new();
+        };
+        let Ok(stacks) = StackTraceMap::try_from(map) else {
+            return Vec::new();
+        };
+        stacks
+            .get(&key, 0)
+            .map(|stack| stack.frames().iter().map(|f| f.ip).collect())
+            .unwrap_or_default()
     }
 
     /// Get the current off-CPU statistics
@@ -827,543 +762,6 @@ impl OffCpuProfiler {
         }
 
         stats
-    }
-
-    #[cfg(feature = "ebpf")]
-    fn get_symbolicated_stack_frames(
-        &mut self,
-        stack_id: u32,
-        is_user_stack: bool,
-        target_pid: u32,
-    ) -> Vec<StackFrame> {
-        #[cfg(feature = "ebpf")]
-        use crate::symbolication::{find_region_for_address, get_symbol_info_with_addr2line};
-
-        let mut frames = Vec::new();
-
-        #[cfg(feature = "ebpf")]
-        {
-            // Check for invalid stack IDs
-            // Note: BPF stack trace errors are returned as negative numbers, which appear as large u32 values
-            // Common error codes: -14 (EFAULT), -22 (EINVAL), -12 (ENOMEM)
-            // We now pass these through from eBPF for better diagnostics
-            if stack_id == 0 {
-                if self.debug_mode {
-                    debug::debug_println("Stack ID is 0 (empty stack)");
-                    debug::debug_println(
-                        "This might indicate a permission issue - check capabilities",
-                    );
-                }
-                return frames;
-            }
-
-            // Handle potential error codes (large u32 values that are negative when interpreted as i32)
-            if stack_id >= 0xFFFFFFF0 {
-                let err_code = -(stack_id as i32);
-
-                if self.debug_mode {
-                    debug::debug_println(&format!(
-                        "Stack ID {} is likely an error code ({})",
-                        stack_id, err_code
-                    ));
-
-                    // Provide more specific error information
-                    match err_code {
-                        -14 => debug::debug_println(
-                            "EFAULT: Failed to access memory during stack unwinding. This is common with:
-                             - JIT-compiled code (like Python, Java)
-                             - Complex stack frames
-                             - Insufficient permissions"
-                        ),
-                        -22 => debug::debug_println(
-                            "EINVAL: Invalid argument passed to BPF function"
-                        ),
-                        -12 => debug::debug_println(
-                            "ENOMEM: Out of memory in BPF stack map"
-                        ),
-                        -1 => debug::debug_println(
-                            "EPERM: Permission denied. Check capabilities."
-                        ),
-                        -2 => debug::debug_println(
-                            "ENOENT: No such file or directory"
-                        ),
-                        _ => debug::debug_println(&format!(
-                            "Unknown error code: {}", err_code
-                        )),
-                    }
-
-                    // For EFAULT specifically, provide more diagnostics
-                    if err_code == -14 && is_user_stack {
-                        // This is likely a JIT/interpreter issue
-                        if let Some(process_name) = self.get_process_name(target_pid) {
-                            if process_name.contains("python")
-                                || process_name.contains("java")
-                                || process_name.contains("node")
-                                || process_name.contains("ruby")
-                            {
-                                debug::debug_println(
-                                    "Detected interpreted/JIT language process. Stack unwinding often fails for these."
-                                );
-                            }
-                        }
-
-                        // Check if process has debug symbols
-                        let proc_exe = format!("/proc/{}/exe", target_pid);
-                        if let Ok(output) = std::process::Command::new("readelf")
-                            .args(["-S", &proc_exe])
-                            .output()
-                        {
-                            let output_str = String::from_utf8_lossy(&output.stdout);
-                            if !output_str.contains(".debug_") {
-                                debug::debug_println("Process does not have debug symbols, which can cause stack trace failures");
-                            }
-                        }
-                    }
-                }
-
-                // Despite errors, try to proceed with stack tracing anyway
-                // In some cases we might get partial data even with errors
-            }
-
-            if self.debug_mode {
-                debug::debug_println(&format!(
-                    "Attempting to resolve {} stack ID: {}",
-                    if is_user_stack { "user" } else { "kernel" },
-                    stack_id
-                ));
-            }
-
-            // Choose the appropriate stack map based on stack type
-            let (map_name, stack_id) = if is_user_stack {
-                ("user_stackmap", stack_id)
-            } else if valid_stack_id(stack_id) && stack_id & KSTACK_OVERFLOW != 0 {
-                ("kernel_stackmap2", stack_id & !KSTACK_OVERFLOW)
-            } else {
-                ("kernel_stackmap", stack_id)
-            };
-
-            let stack_map = match self.bpf.as_mut() {
-                Some(bpf) => match bpf.map_mut(map_name) {
-                    Some(map) => {
-                        match StackTraceMap::try_from(map) {
-                            Ok(stack_map) => stack_map,
-                            Err(e) => {
-                                if self.debug_mode {
-                                    debug::debug_println(&format!(
-                                        "Failed to convert {} to StackTraceMap: {}",
-                                        map_name, e
-                                    ));
-                                    debug::debug_println("This may indicate BPF permission issues or improper map setup");
-                                }
-                                return frames;
-                            }
-                        }
-                    }
-                    None => {
-                        if self.debug_mode {
-                            debug::debug_println(&format!("Stack map '{}' not found", map_name));
-                            // List available maps for debugging
-                            let maps: Vec<String> =
-                                bpf.maps().map(|(name, _)| name.to_string()).collect();
-                            debug::debug_println(&format!("Available maps: {}", maps.join(", ")));
-                        }
-                        return frames;
-                    }
-                },
-                None => {
-                    if self.debug_mode {
-                        debug::debug_println("eBPF program not loaded");
-                    }
-                    return frames;
-                }
-            };
-
-            // Lookup stack addresses for this stack_id
-            match stack_map.get(&stack_id, 0) {
-                Ok(stack) => {
-                    let stack_frames = stack.frames();
-                    if self.debug_mode {
-                        debug::debug_println(&format!(
-                            "Retrieved {} stack frames for {} stack ID {}",
-                            stack_frames.len(),
-                            if is_user_stack { "user" } else { "kernel" },
-                            stack_id
-                        ));
-
-                        // Print first few addresses for debugging
-                        if !stack_frames.is_empty() {
-                            let preview: Vec<String> = stack_frames
-                                .iter()
-                                .take(3)
-                                .map(|f| format!("0x{:x}", f.ip))
-                                .collect();
-                            debug::debug_println(&format!(
-                                "First few addresses: {}",
-                                preview.join(", ")
-                            ));
-                        }
-                    }
-
-                    // Only symbolicate user stacks for now (kernel symbolication is more complex)
-                    if is_user_stack {
-                        // Use cached memory maps for the target process
-                        // Ensure we're monitoring this process
-                        if !self.monitored_pids.contains(&target_pid) {
-                            self.add_pid_to_monitor(target_pid);
-                        }
-                        // Refresh maps if they're empty (might have been added dynamically)
-                        else if self.memory_map_cache.get_memory_maps(target_pid).is_empty() {
-                            if self.debug_mode {
-                                debug::debug_println(&format!(
-                                    "No cached memory maps for PID {}. Attempting to refresh...",
-                                    target_pid
-                                ));
-                            }
-                            self.memory_map_cache.refresh_maps_for_pid(target_pid);
-                        }
-
-                        let regions = self.memory_map_cache.get_memory_maps(target_pid);
-
-                        if self.debug_mode {
-                            debug::debug_println(&format!(
-                                "Symbolicating stack for PID {}, found {} memory regions (from cache)",
-                                target_pid,
-                                regions.len()
-                            ));
-
-                            if regions.is_empty() {
-                                debug::debug_println(&format!(
-                                    "WARNING: No memory regions found for PID {}. Process may have exited.",
-                                    target_pid
-                                ));
-
-                                // Try one more time with /proc directly as a last resort
-                                let proc_path = format!("/proc/{}/maps", target_pid);
-                                match std::fs::File::open(&proc_path) {
-                                    Ok(_) => {
-                                        debug::debug_println(
-                                            "Maps file exists, trying to refresh cache again",
-                                        );
-                                        self.memory_map_cache.refresh_maps_for_pid(target_pid);
-                                        // Update regions variable with the latest attempt
-                                        let new_regions =
-                                            self.memory_map_cache.get_memory_maps(target_pid);
-                                        if !new_regions.is_empty() {
-                                            debug::debug_println(&format!(
-                                                "Successfully refreshed maps, found {} regions",
-                                                new_regions.len()
-                                            ));
-                                        }
-                                    }
-                                    Err(e) => {
-                                        debug::debug_println(&format!(
-                                            "Process {} likely exited, cannot access maps: {}",
-                                            target_pid, e
-                                        ));
-                                    }
-                                }
-                            } else {
-                                // Log some executable regions for debugging
-                                let exec_regions: Vec<_> = regions
-                                    .iter()
-                                    .filter(|r| r.permissions.contains('x'))
-                                    .take(3)
-                                    .collect();
-
-                                if !exec_regions.is_empty() {
-                                    debug::debug_println("Sample executable regions:");
-                                    for (i, region) in exec_regions.iter().enumerate() {
-                                        debug::debug_println(&format!(
-                                            "  Region {}: 0x{:x}-0x{:x} {} {:?}",
-                                            i,
-                                            region.start_addr,
-                                            region.end_addr,
-                                            region.permissions,
-                                            region.pathname
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-
-                        let total_frames = stack_frames.len();
-
-                        if self.debug_mode {
-                            debug::debug_println(&format!(
-                                "Processing {} stack frames for PID {}",
-                                total_frames, target_pid
-                            ));
-
-                            if total_frames == 0 && is_user_stack {
-                                debug::debug_println("WARNING: Empty user stack - this may indicate a permission issue");
-                                debug::debug_println(
-                                    "Check capabilities with: getcap ./target/debug/denet",
-                                );
-                                debug::debug_println(
-                                    "Make sure the process has CAP_BPF and CAP_PERFMON",
-                                );
-                            }
-                        }
-
-                        for frame in stack_frames {
-                            let addr = frame.ip;
-
-                            // Skip invalid addresses (0 or near max value can indicate errors)
-                            if addr == 0 || addr > 0xFFFFFFFF00000000 {
-                                if self.debug_mode {
-                                    debug::debug_println(&format!(
-                                        "Skipping invalid address: 0x{:x}",
-                                        addr
-                                    ));
-                                }
-                                continue;
-                            }
-
-                            let mut stack_frame = StackFrame {
-                                address: addr,
-                                symbol: None,
-                                source_location: None,
-                            };
-
-                            if let Some(region) = find_region_for_address(addr, &regions) {
-                                if let Some(path) = &region.pathname {
-                                    let offset = addr - region.start_addr + region.offset;
-                                    if self.debug_mode {
-                                        debug::debug_println(&format!(
-                                            "Trying to symbolicate addr {:x} in {} (offset {:x})",
-                                            addr, path, offset
-                                        ));
-                                    }
-                                    if let Some(sym) = get_symbol_info_with_addr2line(path, offset)
-                                    {
-                                        stack_frame.symbol = sym.function;
-                                        if let (Some(file), Some(line)) = (sym.file, sym.line) {
-                                            stack_frame.source_location =
-                                                Some(format!("{}:{}", file, line));
-                                        }
-                                        if self.debug_mode {
-                                            debug::debug_println(&format!(
-                                                "Symbolicated: addr 0x{:x} -> {:?} at {:?}",
-                                                addr,
-                                                stack_frame.symbol,
-                                                stack_frame.source_location
-                                            ));
-                                        }
-                                    } else if self.debug_mode {
-                                        debug::debug_println(&format!(
-                                            "No symbol found for addr 0x{:x} (offset 0x{:x}) in {}",
-                                            addr, offset, path
-                                        ));
-
-                                        // Try alternate address calculation methods
-                                        let alt_offset = addr - region.start_addr;
-                                        debug::debug_println(&format!(
-                                            "Trying alternate offset calculation: 0x{:x}",
-                                            alt_offset
-                                        ));
-
-                                        if let Some(sym) =
-                                            get_symbol_info_with_addr2line(path, alt_offset)
-                                        {
-                                            debug::debug_println(&format!(
-                                                    "Symbol found with alternate offset: function={:?}, file={:?}, line={:?}",
-                                                    sym.function, sym.file, sym.line
-                                                ));
-                                            stack_frame.symbol = sym.function;
-                                            if let (Some(file), Some(line)) = (sym.file, sym.line) {
-                                                stack_frame.source_location =
-                                                    Some(format!("{}:{}", file, line));
-                                            }
-                                        } else {
-                                            // Try to check if the binary has debug info
-                                            let _ = std::process::Command::new("readelf")
-                                                    .args(["-S", path])
-                                                    .output()
-                                                    .map(|output| {
-                                                        if std::str::from_utf8(&output.stdout)
-                                                            .unwrap_or("")
-                                                            .contains(".debug_info")
-                                                        {
-                                                            debug::debug_println(&format!(
-                                                                "Binary {} has debug info but symbol lookup failed",
-                                                                path
-                                                            ));
-                                                            debug::debug_println(
-                                                                "This could be due to address mapping issues or incomplete debug info"
-                                                            );
-                                                        } else {
-                                                            debug::debug_println(&format!(
-                                                                "Binary {} does not have debug info",
-                                                                path
-                                                            ));
-                                                            debug::debug_println(
-                                                                "Consider compiling with debug symbols (-g flag) for better symbolication"
-                                                            );
-                                                        }
-                                                    });
-                                        }
-                                    }
-                                } else if self.debug_mode {
-                                    debug::debug_println(&format!(
-                                        "No memory region found for addr 0x{:x} in PID {}",
-                                        addr, target_pid
-                                    ));
-
-                                    // Dump first few memory regions for debugging
-                                    if !regions.is_empty() {
-                                        debug::debug_println("First few memory regions:");
-                                        for (i, region) in regions.iter().take(3).enumerate() {
-                                            debug::debug_println(&format!(
-                                                "  Region {}: 0x{:x}-0x{:x} {} {:?}",
-                                                i,
-                                                region.start_addr,
-                                                region.end_addr,
-                                                region.permissions,
-                                                region.pathname
-                                            ));
-                                        }
-                                    }
-                                }
-                            } else if self.debug_mode {
-                                debug::debug_println(&format!(
-                                    "No memory region found for addr 0x{:x} in PID {}",
-                                    addr, target_pid
-                                ));
-
-                                // Dump first few memory regions for debugging
-                                if !regions.is_empty() {
-                                    debug::debug_println("First few memory regions:");
-                                    for (i, region) in regions.iter().take(3).enumerate() {
-                                        debug::debug_println(&format!(
-                                            "  Region {}: 0x{:x}-0x{:x} {} {:?}",
-                                            i,
-                                            region.start_addr,
-                                            region.end_addr,
-                                            region.permissions,
-                                            region.pathname
-                                        ));
-                                    }
-                                }
-                            }
-                            frames.push(stack_frame);
-                        }
-                    } else {
-                        // For kernel stacks, just capture the addresses without symbolication
-                        for frame in stack_frames {
-                            let stack_frame = StackFrame {
-                                address: frame.ip,
-                                symbol: None,
-                                source_location: None,
-                            };
-                            frames.push(stack_frame);
-                        }
-
-                        // Log summary of symbolication results
-                        if self.debug_mode && is_user_stack {
-                            debug::debug_println(&format!(
-                                "Stack trace symbolication completed for PID {}",
-                                target_pid
-                            ));
-                        }
-                    }
-                }
-                Err(e) => {
-                    if self.debug_mode {
-                        debug::debug_println(&format!(
-                            "Failed to get stack trace for {} stack ID {}: {}",
-                            if is_user_stack { "user" } else { "kernel" },
-                            stack_id,
-                            e
-                        ));
-
-                        // Check if this is a special ID that might need different handling
-                        if stack_id == u32::MAX - 13 || stack_id == u32::MAX - 14 {
-                            debug::debug_println(
-                                "This is likely an EFAULT error - access to user memory failed",
-                            );
-                            debug::debug_println(
-                                "This commonly happens with:
-                                 - Interpreted languages (Python, Java, JavaScript)
-                                 - JIT-compiled code with unusual stack layouts
-                                 - Applications without frame pointers
-                                 - Processes with different memory layouts",
-                            );
-
-                            // Check for language-specific issues
-                            let is_interpreter = match self.get_process_name(target_pid) {
-                                Some(name) => {
-                                    name.contains("python")
-                                        || name.contains("java")
-                                        || name.contains("node")
-                                        || name.contains("ruby")
-                                        || name.contains("perl")
-                                }
-                                None => false,
-                            };
-
-                            if is_interpreter {
-                                debug::debug_println(
-                                    "This process appears to be an interpreter. Consider using language-specific
-                                     profiling tools instead, as BPF stack traces are limited for interpreters."
-                                );
-                            }
-                        } else if stack_id == u32::MAX - 22 {
-                            debug::debug_println(
-                                "This is likely an EINVAL error - invalid argument passed to BPF function"
-                            );
-                        } else if stack_id == u32::MAX - 12 {
-                            debug::debug_println(
-                                "This is likely an ENOMEM error - out of memory in BPF stack map",
-                            );
-                        }
-                    }
-                }
-            }
-        }
-        frames
-    }
-
-    /// Get process name from /proc/{pid}/comm
-    fn get_process_name(&mut self, pid: u32) -> Option<String> {
-        use std::fs::File;
-        use std::io::Read;
-
-        // Check cache first (we might already have memory maps with executable paths)
-        #[cfg(feature = "ebpf")]
-        {
-            let regions = self.memory_map_cache.get_memory_maps(pid);
-            for region in &regions {
-                if let Some(path) = &region.pathname {
-                    if path.starts_with("/")
-                        && !path.contains("[")
-                        && region.permissions.contains('x')
-                    {
-                        // Extract the executable name from the path
-                        if let Some(exe_name) = path.split('/').next_back() {
-                            if !exe_name.is_empty() {
-                                return Some(exe_name.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Fallback to reading from /proc
-        let comm_path = format!("/proc/{}/comm", pid);
-
-        // Read the process name
-        match File::open(&comm_path) {
-            Ok(mut file) => {
-                let mut name = String::new();
-                if file.read_to_string(&mut name).is_ok() {
-                    Some(name.trim().to_string())
-                } else {
-                    None
-                }
-            }
-            Err(_) => None,
-        }
     }
 }
 

@@ -11,25 +11,30 @@ kernel tracepoint. Every context switch fires the program, which records:
 
 - the outgoing PID and TID
 - a timestamp (from `bpf_ktime_get_ns()`)
-- optionally, a user-space stack ID (from `bpf_get_stackid()`)
+- the id of the kernel stack the thread is about to wait in (from `bpf_get_stackid()`)
 
 When the same thread is scheduled back in, the difference in timestamps is the
 off-CPU duration. Events are streamed to userspace via a `PerfEventArray`
 (one ring buffer per CPU).
 
 The userspace `OffCpuProfiler` collects these events in a background thread,
-updates per-thread statistics, and optionally symbolicates stack frames using
-`/proc/{pid}/maps` and `addr2line`.
+updates per-thread statistics, and adds up the off-CPU time per process and
+kernel stack. The frames of each stack are named from `/proc/kallsyms`.
+
+User-space stacks are not captured: a wait is attributed to a process and to
+the kernel path it blocked in (`pipe_write`, `do_nanosleep`, ...), not to a
+function of the program.
 
 ## Data flow
 
 ```
 kernel: sched_switch tracepoint
   └─▶ offcpu_profiler.c
-        records: (pid, tid, ts_ns, stack_id)
+        records: (pid, tid, ts_ns, kernel_stack_id)
         └─▶ PerfEventArray (per-CPU ring buffer)
               └─▶ userspace polling thread
                     updates: HashMap<(pid, tid), OffCpuStats>
+                             and time per (pid, kernel stack)
                     └─▶ build_offcpu_metrics()
                           └─▶ EbpfMetrics.offcpu → JSON
 ```
@@ -47,15 +52,14 @@ sudo denet --enable-ebpf run <command>
 
 ## Known limitations
 
-- **JIT-compiled languages** (Python, Java, Node.js): user-space stacks show JIT
-  trampolines rather than source-level frames. Install language-specific debug
-  packages or use frame pointer compilation flags for better results.
-- **Kernel stacks**: require `CONFIG_BPF_STACK_TRACE` and additional capabilities.
-  Currently not collected by default.
-- **Minimum threshold**: events shorter than ~1 ms may be missed due to ring buffer
-  polling latency.
-- **Stripped binaries**: symbolication falls back to raw addresses when DWARF info
-  is absent. Compile with `-g` or install debuginfo packages.
+- **No user-space stacks.** Only the kernel side of a wait is recorded.
+- **Minimum threshold**: waits of 1 ms or less are dropped in the BPF program.
+- **Stack map slots**: kernel stacks are stored by hash, with an overflow map
+  for stacks whose slot is taken. A stack that finds both slots taken is
+  reported as `[stack unavailable]` (stack id 4294967295); its time is still
+  counted. Ids of stacks in the overflow map are above 2^30.
+- **Frame names** need a readable `/proc/kallsyms`; without it frames are
+  hexadecimal addresses.
 
 ## JSON output
 
@@ -84,6 +88,12 @@ Off-CPU data appears under `ebpf.offcpu` in each aggregated sample:
           "max_time_ns": 200000000,
           "min_time_ns": 5000000
         }
+      },
+      "waits": [
+        { "pid": 1234, "stack": 7914, "time_ns": 2083845198, "count": 2 }
+      ],
+      "kernel_stacks": {
+        "7914": ["__schedule", "schedule", "pipe_write", "vfs_write", "ksys_write"]
       }
     }
   }
@@ -102,6 +112,10 @@ Off-CPU data appears under `ebpf.offcpu` in each aggregated sample:
 | `top_blocking_threads[].percentage` | Thread's share of `total_time_ns` across all monitored threads — **not** a share of wall-clock time |
 | `thread_stats` | Full per-thread breakdown keyed by `"PID:TID"` |
 | `thread_stats[].count` | How many times this thread was scheduled out and back in |
+| `waits` | Off-CPU time credited since the previous sample, per process and kernel stack. A wait is credited when the thread wakes up |
+| `waits[].stack` | Key into `kernel_stacks` |
+| `waits[].time_ns` / `count` | Time waited in that stack, and number of waits |
+| `kernel_stacks` | Frames of each stack, innermost first. A stack is written once, in the first sample that refers to it |
 
 ## Aya-specific notes (v0.13+)
 
