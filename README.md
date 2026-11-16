@@ -33,7 +33,7 @@ pixi add denet                        # pixi
 conda install -c conda-forge denet    # conda
 ```
 
-With Nix, run it straight from the flake: `nix run github:btraven00/denet -- --help`.
+With Nix, run a release straight from the flake: `nix run github:btraven00/denet/v0.11.1 -- --help`. <!-- x-release-please-version -->
 
 Optional features for the Rust binary:
 

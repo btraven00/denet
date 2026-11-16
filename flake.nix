@@ -5,6 +5,9 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     naersk.url = "github:nmattia/naersk";
+    # naersk builds with its own nixpkgs unless told otherwise, and that one
+    # lags behind: its rustc was too old for ratatui (needs 1.88)
+    naersk.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = { self, nixpkgs, flake-utils, naersk, ... }:
