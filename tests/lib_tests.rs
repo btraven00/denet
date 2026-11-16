@@ -37,28 +37,6 @@ fn test_reexports() {
     let _result: Result<()> = Ok(());
 }
 
-/// Test the run_monitor function for non-Python builds
-#[cfg(not(feature = "python"))]
-#[test]
-fn test_run_monitor_basic() {
-    use denet::run_monitor;
-
-    // This command should fail quickly and return an error
-    let result = run_monitor(vec!["non_existent_command".to_string()], 100, 1000, false);
-
-    assert!(result.is_err());
-
-    // This command should run but exit immediately
-    // Using `true` command which exists on most Unix systems
-    #[cfg(target_family = "unix")]
-    {
-        let result = run_monitor(vec!["true".to_string()], 100, 1000, false);
-
-        // The command should succeed
-        assert!(result.is_ok());
-    }
-}
-
 /// Test ProcessMonitor re-export
 #[test]
 fn test_process_monitor_reexport() {

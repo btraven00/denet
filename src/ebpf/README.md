@@ -29,8 +29,7 @@ src/ebpf/
 ├── debug.rs              # Debug logging utilities
 └── programs/
     ├── offcpu_profiler.c # eBPF program: sched_switch → perf event ring buffer
-    ├── syscall_tracer.c  # eBPF program: syscall entry counting
-    └── simple_test.c     # Minimal tracepoint for smoke testing
+    └── syscall_tracer.c  # eBPF program: syscall entry counting
 ```
 
 Data flow for off-CPU:

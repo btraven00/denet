@@ -21,10 +21,6 @@ pub mod sampling {
     /// Used for less critical monitoring or to reduce system load
     pub const SLOW: Duration = Duration::from_millis(200);
 
-    /// Very slow sampling interval - 500ms
-    /// Used for background monitoring or system startup delays
-    pub const VERY_SLOW: Duration = Duration::from_millis(500);
-
     /// Maximum interval - 1000ms
     /// Default maximum adaptive interval
     pub const MAX_ADAPTIVE: Duration = Duration::from_millis(1000);
@@ -91,14 +87,6 @@ pub mod system {
     /// Process detection retry delay - 10ms
     /// Used when waiting for processes to appear in system tables
     pub const PROCESS_DETECTION: Duration = Duration::from_millis(10);
-
-    /// System refresh delay - 100ms
-    /// Used for system information refresh operations
-    pub const SYSTEM_REFRESH: Duration = Duration::from_millis(100);
-
-    /// eBPF initialization timeout - 5 seconds
-    /// Maximum time to wait for eBPF programs to load
-    pub const EBPF_INIT: Duration = Duration::from_secs(5);
 }
 
 /// Default configuration values
@@ -110,7 +98,4 @@ pub mod defaults {
 
     /// Default maximum adaptive interval
     pub const MAX_INTERVAL: Duration = Duration::from_millis(1000);
-
-    /// Default test ready timeout
-    pub const TEST_READY_TIMEOUT: Duration = Duration::from_secs(5);
 }

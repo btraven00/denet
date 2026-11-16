@@ -15,7 +15,7 @@ authors = ["ben <ben.uzh@proton.me>"]
 [features]
 default = []
 python = ["dep:pyo3"]
-ebpf = ["dep:aya", "dep:aya-log", "dep:bytes"]
+ebpf = ["dep:aya", "dep:bytes"]
 gpu = ["dep:nvml-wrapper", "dep:objc2-core-foundation", "dep:objc2-io-kit"]
 
 [dependencies]
@@ -27,7 +27,6 @@ pyo3 = { version = "0.29", features = [
     "auto-initialize",
     "abi3-py39",
 ], optional = true }
-tokio = { version = "1", features = ["full"], optional = true }
 clap = { version = "4.5", features = ["derive"] }
 colored = "2.1"
 ctrlc = "3.4"
@@ -43,7 +42,6 @@ procfs = "0.17"
 
 # eBPF dependencies (optional)
 aya = { version = "0.13.1", optional = true }
-aya-log = { version = "0.2", optional = true }
 bytes = { version = "1.4", optional = true }
 
 # GPU dependencies (optional)
@@ -86,7 +84,7 @@ Tracks CPU, memory, I/O, threads and network bytes of a running process and \
 its children, with adaptive sampling and JSON output. Includes NVIDIA GPU \
 monitoring (--gpu, needs the NVIDIA driver) and eBPF profiling (--enable-ebpf, \
 needs root or CAP_BPF)."""
-# only the CLI: ebpf_diag and test_nvml are developer tools
+# only the CLI: ebpf_diag is a developer tool
 assets = [
     ["target/release/denet", "usr/bin/", "755"],
     ["README.md", "usr/share/doc/denet/", "644"],
