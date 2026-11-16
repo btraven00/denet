@@ -1,0 +1,45 @@
+name: Debian package
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release to attach the .deb to. It is built from the ref this runs on, not from the tag. Empty: keep it as a workflow artifact only"
+        required: false
+        default: ""
+
+permissions:
+  contents: write # attach the .deb to the release
+
+jobs:
+  deb:
+    name: Build and attach the .deb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (inside Ubuntu 22.04, gpu + ebpf)
+        run: ./scripts/build_deb.sh
+
+      - name: Test install on Debian 12
+        # The oldest Debian it should install on; the runner itself proves nothing.
+        run: |
+          docker run --rm -v "$PWD/target/debian:/d:ro" debian:bookworm sh -euc '
+            apt-get update -qq
+            apt-get install -y -qq /d/*.deb >/dev/null
+            denet --version
+            denet -q --json run -- sleep 1 | tail -1'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: target/debian/*.deb
+
+      - name: Attach to the release
+        if: github.event_name == 'release' || inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: gh release upload "$TAG" target/debian/*.deb --clobber
