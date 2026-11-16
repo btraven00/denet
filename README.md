@@ -33,6 +33,8 @@ pixi add denet                        # pixi
 conda install -c conda-forge denet    # conda
 ```
 
+On Debian 12+ and Ubuntu 22.04+, download the `.deb` from the [latest release](https://github.com/btraven00/denet/releases/latest) and `sudo apt install ./denet_*_amd64.deb`. It includes GPU and eBPF support.
+
 With Nix, run a release straight from the flake: `nix run github:btraven00/denet/v0.11.1 -- --help`. <!-- x-release-please-version -->
 
 Optional features for the Rust binary:

@@ -76,3 +76,18 @@ required-features = ["ebpf"]
 [dev-dependencies]
 once_cell = "1.21"
 tempfile = "3.0"
+
+# `cargo deb` (cargo install cargo-deb); scripts/build_deb.sh builds the released one
+[package.metadata.deb]
+features = ["gpu", "ebpf"]
+section = "utils"
+extended-description = """\
+Tracks CPU, memory, I/O, threads and network bytes of a running process and \
+its children, with adaptive sampling and JSON output. Includes NVIDIA GPU \
+monitoring (--gpu, needs the NVIDIA driver) and eBPF profiling (--enable-ebpf, \
+needs root or CAP_BPF)."""
+# only the CLI: ebpf_diag and test_nvml are developer tools
+assets = [
+    ["target/release/denet", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/denet/", "644"],
+]
