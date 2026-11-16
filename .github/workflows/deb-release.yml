@@ -18,7 +18,7 @@ jobs:
     name: Build and attach the .deb
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build (inside Ubuntu 22.04, gpu + ebpf)
         run: ./scripts/build_deb.sh
@@ -32,7 +32,7 @@ jobs:
             denet --version
             denet -q --json run -- sleep 1 | tail -1'
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: deb
           path: target/debian/*.deb
