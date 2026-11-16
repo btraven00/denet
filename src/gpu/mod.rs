@@ -353,7 +353,15 @@ impl GpuMonitor {
     /// Initialize NVML and get device count
     #[cfg(nvml)]
     fn initialize_nvml() -> Result<(Nvml, u32), String> {
-        let nvml = Nvml::init().map_err(|e| format!("NVML initialization failed: {:?}", e))?;
+        // The unversioned libnvidia-ml.so is a dev symlink that driver-only
+        // installs (e.g. Rocky 9) don't ship; the runtime soname is .so.1.
+        let nvml = Nvml::init()
+            .or_else(|_| {
+                Nvml::builder()
+                    .lib_path(std::ffi::OsStr::new("libnvidia-ml.so.1"))
+                    .init()
+            })
+            .map_err(|e| format!("NVML initialization failed: {:?}", e))?;
 
         let device_count = nvml
             .device_count()
