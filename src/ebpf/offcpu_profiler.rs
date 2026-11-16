@@ -256,6 +256,10 @@ fn valid_stack_id(id: u32) -> bool {
     (id as i32) >= 0
 }
 
+/// Set by the BPF program in the ids of kernel stacks it stored in
+/// `kernel_stackmap2` because their slot in `kernel_stackmap` was taken
+const KSTACK_OVERFLOW: u32 = 1 << 30;
+
 /// Stack id under which waits whose kernel stack couldn't be captured are
 /// reported, so that no off-CPU time goes missing from `waits`
 pub const STACK_UNAVAILABLE: u32 = u32::MAX;
@@ -1354,10 +1358,12 @@ impl OffCpuProfiler {
             }
 
             // Choose the appropriate stack map based on stack type
-            let map_name = if is_user_stack {
-                "user_stackmap"
+            let (map_name, stack_id) = if is_user_stack {
+                ("user_stackmap", stack_id)
+            } else if valid_stack_id(stack_id) && stack_id & KSTACK_OVERFLOW != 0 {
+                ("kernel_stackmap2", stack_id & !KSTACK_OVERFLOW)
             } else {
-                "kernel_stackmap"
+                ("kernel_stackmap", stack_id)
             };
 
             let stack_map = match self.bpf.as_mut() {

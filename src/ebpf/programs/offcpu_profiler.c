@@ -100,6 +100,30 @@ struct {
     __uint(max_entries, 8192);
 } kernel_stackmap SEC(".maps");
 
+// Where a stack goes when its slot in kernel_stackmap is taken. One run
+// captures ~50 distinct kernel stacks (every switch-out, not only the reported
+// waits), so about 1 boot in 100 put a wait's stack in a used slot and lost
+// its name; a stack is now lost only if its slot is taken in both maps.
+struct {
+    __uint(type, BPF_MAP_TYPE_STACK_TRACE);
+    __uint(key_size, sizeof(u32));
+    __uint(value_size, KERNEL_STACK_DEPTH * sizeof(u64));
+    __uint(max_entries, 8192);
+} kernel_stackmap2 SEC(".maps");
+
+// Set in the ids of stacks stored in kernel_stackmap2 (userspace: KSTACK_OVERFLOW)
+#define KSTACK_OVERFLOW (1u << 30)
+#define EEXIST 17
+
+static __always_inline u32 kernel_stack_id(void *ctx)
+{
+    long id = bpf_get_stackid(ctx, &kernel_stackmap, BPF_F_FAST_STACK_CMP);
+    if (id != -EEXIST)
+        return id;
+    id = bpf_get_stackid(ctx, &kernel_stackmap2, BPF_F_FAST_STACK_CMP);
+    return id < 0 ? id : id | KSTACK_OVERFLOW;
+}
+
 // Minimum off-CPU duration to report (1ms)
 #define MIN_OFFCPU_TIME_NS 1000000ULL
 
@@ -174,7 +198,7 @@ int trace_sched_switch(struct sched_switch_args *ctx) {
         is_tracked(start.tgid)) {
         start.ts = now;
         start.prev_state = (u32)ctx->prev_state;
-        start.kernel_stack_id = bpf_get_stackid(ctx, &kernel_stackmap, BPF_F_FAST_STACK_CMP);
+        start.kernel_stack_id = kernel_stack_id(ctx);
         start.user_stack_id = bpf_get_stackid(ctx, &user_stackmap,
                                               BPF_F_USER_STACK | BPF_F_FAST_STACK_CMP);
         bpf_map_update_elem(&offcpu_start, &prev_tid, &start, BPF_ANY);
