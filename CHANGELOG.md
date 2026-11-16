@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.2](https://github.com/btraven00/denet/compare/v0.11.1...v0.11.2) (2026-11-16)
+
+
+### Features
+
+* **cli:** --version lists the features the binary was built with ([ba8162c](https://github.com/btraven00/denet/commit/ba8162c032d5b0d67b422632efd5103161f19d2e))
+
+
+### Documentation
+
+* **readme:** one section per install method ([dc9a316](https://github.com/btraven00/denet/commit/dc9a31685946f6afe0444fffd2907da93b8b5587))
+
 ## [0.11.1](https://github.com/btraven00/denet/compare/v0.11.0...v0.11.1) (2026-11-16)
 
 

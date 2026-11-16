@@ -45,14 +45,14 @@ On RHEL, Rocky and AlmaLinux 8+ and Fedora, download the `.rpm` from the [latest
 On any other Linux (x86_64 or aarch64), there is a static binary with eBPF support but no GPU support:
 
 ```bash
-VERSION=0.11.1 # x-release-please-version
+VERSION=0.11.2 # x-release-please-version
 curl -L -o denet "https://github.com/btraven00/denet/releases/download/v$VERSION/denet-$VERSION-$(uname -m)-linux-musl"
 chmod +x denet
 ```
 
 ### Nix
 
-With Nix, run a release straight from the flake: `nix run github:btraven00/denet/v0.11.1 -- --help`. <!-- x-release-please-version -->
+With Nix, run a release straight from the flake: `nix run github:btraven00/denet/v0.11.2 -- --help`. <!-- x-release-please-version -->
 
 ### Conda
 
