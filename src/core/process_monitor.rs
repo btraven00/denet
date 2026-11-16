@@ -1828,8 +1828,6 @@ fn build_offcpu_metrics(
         thread_stats,
         top_blocking_threads,
         bottlenecks: vec![],
-        stack_traces: vec![],
-        stacks: None,
         waits: vec![],
         kernel_stacks: Default::default(),
     }

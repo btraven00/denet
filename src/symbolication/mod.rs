@@ -1,7 +1,6 @@
 /// Minimal MVP for memory map parsing and addr2line-based symbolication.
 /// This module provides basic functionality to parse `/proc/{pid}/maps`
 /// and resolve addresses to symbols using the external `addr2line` tool.
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::process::Command;
@@ -283,81 +282,4 @@ pub fn get_symbol_info_with_addr2line(binary_path: &str, offset: u64) -> Option<
     }
 
     None
-}
-
-/// Minimal cache for memory maps and symbol lookups.
-pub struct SymbolicationCache {
-    pub pid_maps: HashMap<u32, Vec<MemoryRegion>>,
-    pub symbol_cache: HashMap<(String, u64), SymbolInfo>,
-    pub last_refresh: HashMap<u32, std::time::Instant>,
-    pub max_age_secs: u64,
-}
-
-impl Default for SymbolicationCache {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SymbolicationCache {
-    pub fn new() -> Self {
-        Self {
-            pid_maps: HashMap::new(),
-            symbol_cache: HashMap::new(),
-            last_refresh: HashMap::new(),
-            max_age_secs: 30, // Default refresh interval in seconds
-        }
-    }
-
-    /// Get memory maps for a PID, refreshing if necessary
-    pub fn get_memory_maps_for_pid(&mut self, pid: u32) -> &Vec<MemoryRegion> {
-        // Check if we need to refresh the maps
-        let should_refresh = match self.last_refresh.get(&pid) {
-            Some(instant) => {
-                instant.elapsed() > std::time::Duration::from_secs(self.max_age_secs)
-                    || self.pid_maps.get(&pid).is_none_or(|maps| maps.is_empty())
-            }
-            None => true,
-        };
-
-        if should_refresh {
-            let maps = get_memory_maps(pid);
-            self.pid_maps.insert(pid, maps);
-            self.last_refresh.insert(pid, std::time::Instant::now());
-        }
-
-        self.pid_maps.entry(pid).or_default()
-    }
-
-    /// Get symbol info for an address, using the cache when possible
-    pub fn get_symbol_info(&mut self, binary_path: &str, offset: u64) -> Option<SymbolInfo> {
-        let cache_key = (binary_path.to_string(), offset);
-
-        if let Some(symbol) = self.symbol_cache.get(&cache_key) {
-            return Some(symbol.clone());
-        }
-
-        // Not in cache, look it up
-        if let Some(symbol) = get_symbol_info_with_addr2line(binary_path, offset) {
-            self.symbol_cache.insert(cache_key, symbol.clone());
-            return Some(symbol);
-        }
-
-        None
-    }
-
-    /// Clear cache for a specific PID
-    pub fn clear_pid(&mut self, pid: u32) {
-        self.pid_maps.remove(&pid);
-        self.last_refresh.remove(&pid);
-    }
-
-    /// Get cache statistics
-    pub fn stats(&self) -> (usize, usize, usize) {
-        (
-            self.pid_maps.len(),
-            self.symbol_cache.len(),
-            self.last_refresh.len(),
-        )
-    }
 }

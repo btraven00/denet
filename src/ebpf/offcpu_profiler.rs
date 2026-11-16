@@ -74,74 +74,6 @@ pub struct OffCpuEvent {
     pub kernel_stack_id: u32,
 }
 
-/// Processed off-CPU event with stack trace information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessedOffCpuEvent {
-    /// Raw off-CPU event
-    pub event: OffCpuEvent,
-    /// User-space stack frames (if available)
-    pub user_stack: Option<Vec<StackFrame>>,
-    /// Kernel-space stack frames (if available)
-    pub kernel_stack: Option<Vec<StackFrame>>,
-    /// Process name
-    pub process_name: Option<String>,
-    /// Thread name
-    pub thread_name: Option<String>,
-    /// Error information for user stack trace (if an error occurred)
-    pub user_stack_error: Option<String>,
-    /// Error information for kernel stack trace (if an error occurred)
-    pub kernel_stack_error: Option<String>,
-    /// List of threads that experienced this stack trace
-    pub threads: Vec<(u32, u32)>,
-}
-
-/// Summary statistics for a stack trace
-#[derive(Debug, Clone)]
-pub struct StackTraceSummary {
-    /// User-space stack trace ID
-    pub user_stack_id: u32,
-    /// Kernel-space stack trace ID
-    pub kernel_stack_id: u32,
-    /// Total time spent off-CPU with this stack trace (ns)
-    pub total_time_ns: u64,
-    /// Number of occurrences of this stack trace
-    pub count: u64,
-    /// User-space stack frames (if available)
-    pub user_stack: Option<Vec<StackFrame>>,
-    /// Kernel-space stack frames (if available)
-    pub kernel_stack: Option<Vec<StackFrame>>,
-    /// List of (pid, tid) pairs that experienced this stack trace
-    pub threads: Vec<(u32, u32)>,
-}
-
-/// Thread-specific stack trace statistics
-#[derive(Debug, Clone)]
-pub struct ThreadStackStats {
-    /// Process ID
-    pub pid: u32,
-    /// Thread ID
-    pub tid: u32,
-    /// Total time spent off-CPU with this stack trace (ns)
-    pub total_time_ns: u64,
-    /// Number of occurrences of this stack trace
-    pub count: u64,
-}
-
-impl From<OffCpuEvent> for ProcessedOffCpuEvent {
-    fn from(event: OffCpuEvent) -> Self {
-        Self {
-            event,
-            user_stack: None,
-            kernel_stack: None,
-            process_name: None,
-            thread_name: None,
-            user_stack_error: None,
-            kernel_stack_error: None,
-            threads: Vec::new(),
-        }
-    }
-}
-
 /// Aggregated off-CPU statistics for a thread
 #[derive(Debug, Clone, Default)]
 pub struct OffCpuStats {
@@ -169,9 +101,6 @@ pub struct OffCpuProfiler {
 
     /// Off-CPU statistics by thread
     stats: Arc<Mutex<HashMap<(u32, u32), OffCpuStats>>>,
-
-    /// Collected events
-    events: Arc<Mutex<Vec<ProcessedOffCpuEvent>>>,
 
     /// Off-CPU time and count per (pid, kernel stack id), kept by the event
     /// threads; `take_waits` reports what accrued since its last call
@@ -245,12 +174,6 @@ fn fork_child_pid_offset() -> &'static u32 {
 /// Cumulative off-CPU (time, count) per (pid, kernel stack id)
 type WaitTotals = HashMap<(u32, u32), (u64, u64)>;
 
-/// Stored events (for `get_stack_traces`) are capped: every off-CPU event of
-/// the tree carries stacks, so an unbounded list grows for the whole run.
-/// Per-stack totals (`wait_totals`) are kept separately and stay bounded by the
-/// number of distinct stacks.
-const MAX_STORED_EVENTS: usize = 4096;
-
 /// A stack id from bpf_get_stackid: an index, or a negative errno cast to u32
 fn valid_stack_id(id: u32) -> bool {
     (id as i32) >= 0
@@ -321,7 +244,6 @@ impl OffCpuProfiler {
             bpf: None,
             monitored_pids: pids.clone(),
             stats: Arc::new(Mutex::new(HashMap::new())),
-            events: Arc::new(Mutex::new(Vec::new())),
             wait_totals: Arc::new(Mutex::new(HashMap::new())),
             last_waits: HashMap::new(),
             named_stacks: HashSet::new(),
@@ -592,7 +514,6 @@ impl OffCpuProfiler {
 
         // Get a copy of the stats mutex for the event handlers
         let stats = self.stats.clone();
-        let events = self.events.clone();
         let waits = self.wait_totals.clone();
         let polls = self.polls.clone();
         let running = self.running.clone();
@@ -614,7 +535,6 @@ impl OffCpuProfiler {
 
             // Clone resources for this CPU's handler
             let cpu_stats = stats.clone();
-            let cpu_events = events.clone();
             let cpu_waits = waits.clone();
             let cpu_polls = polls.clone();
             let cpu_running = running.clone();
@@ -676,28 +596,6 @@ impl OffCpuProfiler {
                                                         .or_insert((0, 0));
                                                     e.0 = e.0.saturating_add(event.offcpu_time_ns);
                                                     e.1 += 1;
-                                                }
-                                            }
-
-                                            // Store events with valid stack IDs, up to a cap
-                                            if event.user_stack_id != 0
-                                                || event.kernel_stack_id != 0
-                                            {
-                                                if let Some(mut events_guard) = cpu_events
-                                                    .lock()
-                                                    .ok()
-                                                    .filter(|g| g.len() < MAX_STORED_EVENTS)
-                                                {
-                                                    if cpu_debug {
-                                                        debug::debug_println(&format!(
-                                                            "Storing event with stack IDs: user={}, kernel={}",
-                                                            event.user_stack_id,
-                                                            event.kernel_stack_id
-                                                        ));
-                                                    }
-                                                    let processed_event =
-                                                        ProcessedOffCpuEvent::from(event);
-                                                    events_guard.push(processed_event);
                                                 }
                                             }
 
@@ -972,285 +870,6 @@ impl OffCpuProfiler {
         }
 
         stats
-    }
-
-    /// Get processed stack traces from collected events
-    #[cfg(feature = "ebpf")]
-    pub fn get_stack_traces(&mut self) -> Vec<ProcessedOffCpuEvent> {
-        // Clone all events out of the mutex before mutably borrowing self
-        let events = {
-            let events_result = self.events.lock();
-            match events_result {
-                Ok(guard) => guard.clone(),
-                Err(poisoned) => {
-                    debug::debug_println("Recovered from poisoned mutex in get_stack_traces");
-                    poisoned.into_inner().clone()
-                }
-            }
-        };
-
-        if self.debug_mode {
-            debug::debug_println(&format!(
-                "Processing {} events with stack traces",
-                events.len()
-            ));
-        }
-
-        // Process and symbolicate each event
-        let mut processed_events = Vec::new();
-
-        // Ensure we're monitoring all PIDs we encounter
-        let event_pids: Vec<u32> = events
-            .iter()
-            .map(|e| e.event.pid)
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-
-        // Pre-cache memory maps for all PIDs
-        for pid in &event_pids {
-            if !self.monitored_pids.contains(pid) {
-                self.add_pid_to_monitor(*pid);
-            }
-        }
-
-        if self.debug_mode && !events.is_empty() {
-            debug::debug_println(&format!(
-                "Pre-cached memory maps for {} PIDs before processing stack traces",
-                event_pids.len()
-            ));
-        }
-
-        for mut event in events {
-            // Check for error codes in stack IDs and record the error
-            // BPF stack trace error codes are returned as large u32 values (which are negative when cast to i32)
-            if event.event.user_stack_id > 0 {
-                // Check if it's actually an error code (large u32 value close to u32::MAX)
-                if event.event.user_stack_id > 0xfffffff0 {
-                    // Convert to error code (as negative i32)
-                    let error_code = -(event.event.user_stack_id as i32);
-                    let error_msg = match error_code {
-                        -1 => "EPERM: Operation not permitted",
-                        -2 => "ENOENT: No such file or directory",
-                        -4 => "EINTR: Interrupted system call",
-                        -9 => "EBADF: Bad file descriptor",
-                        -12 => "ENOMEM: Out of memory",
-                        -14 => "EFAULT: Bad address",
-                        -22 => "EINVAL: Invalid argument",
-                        -105 => "ENOBUFS: No buffer space available",
-                        _ => "Unknown error",
-                    };
-                    if self.debug_mode {
-                        debug::debug_println(&format!(
-                            "User stack error for PID={}, TID={}: {} (code: {})",
-                            event.event.pid, event.event.tid, error_msg, error_code
-                        ));
-
-                        // Additional diagnostic information for common errors
-                        if error_code == -1 {
-                            debug::debug_println(
-                                "EPERM usually indicates insufficient capabilities.",
-                            );
-                            debug::debug_println(
-                                "Ensure the process has CAP_BPF and CAP_PERFMON capabilities.",
-                            );
-                            debug::debug_println(
-                                "Try: sudo setcap cap_bpf,cap_perfmon=ep ./target/debug/denet",
-                            );
-                        } else if error_code == -14 {
-                            debug::debug_println(
-                                "EFAULT is common with interpreted languages (Python, Java, etc.)",
-                            );
-                            debug::debug_println("These processes have complex stack frames that eBPF may struggle with");
-                        }
-
-                        // For EFAULT, check if the process has debug symbols
-                        if error_code == -14 {
-                            // Try running 'file' on the executable to check for debug symbols
-                            let proc_exe = format!("/proc/{}/exe", event.event.pid);
-                            if let Ok(output) =
-                                std::process::Command::new("file").arg(&proc_exe).output()
-                            {
-                                let output_str = String::from_utf8_lossy(&output.stdout);
-                                debug::debug_println(&format!(
-                                    "Executable information: {}",
-                                    output_str
-                                ));
-
-                                if output_str.contains("with debug_info") {
-                                    debug::debug_println("Executable has debug symbols, which should help with stack traces");
-                                    debug::debug_println("However, EFAULT indicates memory access issues during stack unwinding");
-
-                                    // Check if this is an interpreter process
-                                    if let Some(process_name) =
-                                        self.get_process_name(event.event.pid)
-                                    {
-                                        if process_name.contains("python")
-                                            || process_name.contains("java")
-                                            || process_name.contains("node")
-                                        {
-                                            debug::debug_println("This appears to be an interpreter process, which often has complex stack frames");
-                                            debug::debug_println("Consider using language-specific profiling tools for better results");
-                                        }
-                                    }
-                                } else {
-                                    debug::debug_println(
-                                        "Executable does not appear to have debug symbols",
-                                    );
-                                    debug::debug_println(
-                                        "Compile with -g flag to include debug information for better stack traces"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    event.user_stack_error = Some(format!("{} (code: {})", error_msg, error_code));
-                } else {
-                    // Valid stack ID - symbolicate
-                    // Make sure memory maps are fresh before symbolicating
-                    if !self.monitored_pids.contains(&event.event.pid) {
-                        self.add_pid_to_monitor(event.event.pid);
-                    }
-
-                    event.user_stack = Some(self.get_symbolicated_stack_frames(
-                        event.event.user_stack_id,
-                        true,
-                        event.event.pid,
-                    ));
-                }
-            }
-
-            // Similar check for kernel stack ID
-            if event.event.kernel_stack_id > 0 {
-                if event.event.kernel_stack_id > 0xfffffff0 {
-                    // Convert to error code (as negative i32)
-                    let error_code = -(event.event.kernel_stack_id as i32);
-                    let error_msg = match error_code {
-                        -1 => "EPERM: Operation not permitted",
-                        -2 => "ENOENT: No such file or directory",
-                        -4 => "EINTR: Interrupted system call",
-                        -9 => "EBADF: Bad file descriptor",
-                        -12 => "ENOMEM: Out of memory",
-                        -14 => "EFAULT: Bad address",
-                        -22 => "EINVAL: Invalid argument",
-                        -105 => "ENOBUFS: No buffer space available",
-                        _ => "Unknown error",
-                    };
-                    if self.debug_mode {
-                        debug::debug_println(&format!(
-                            "Kernel stack error for PID={}, TID={}: {} (code: {})",
-                            event.event.pid, event.event.tid, error_msg, error_code
-                        ));
-                    }
-                    event.kernel_stack_error =
-                        Some(format!("{} (code: {})", error_msg, error_code));
-                } else {
-                    // Valid stack ID - symbolicate
-                    // Make sure memory maps are fresh before symbolicating
-                    if !self.monitored_pids.contains(&event.event.pid) {
-                        self.add_pid_to_monitor(event.event.pid);
-                    }
-
-                    event.kernel_stack = Some(self.get_symbolicated_stack_frames(
-                        event.event.kernel_stack_id,
-                        false,
-                        event.event.pid,
-                    ));
-                }
-            }
-
-            // Add thread/process names if available
-            if event.process_name.is_none() {
-                event.process_name = self.get_process_name(event.event.pid);
-            }
-            if event.thread_name.is_none() {
-                event.thread_name = self.get_thread_name(event.event.pid, event.event.tid);
-            }
-
-            // Add PID and TID to threads list
-            event.threads.push((event.event.pid, event.event.tid));
-
-            processed_events.push(event);
-        }
-        processed_events
-    }
-
-    /// Get a summary of stack traces grouped by their IDs
-    /// This provides aggregated off-CPU time for each unique stack trace
-    #[cfg(feature = "ebpf")]
-    pub fn get_stack_trace_summary(&mut self) -> HashMap<(u32, u32), Vec<ThreadStackStats>> {
-        // This maps (user_stack_id, kernel_stack_id) -> [ThreadStackStats, ...]
-        let mut summary = HashMap::new();
-
-        // Get all processed events
-        let events = self.get_stack_traces();
-
-        // Aggregate events by stack IDs
-        for event in events {
-            let user_stack_id = event.event.user_stack_id;
-            let kernel_stack_id = event.event.kernel_stack_id;
-            let time_ns = event.event.offcpu_time_ns;
-
-            // Skip invalid stack IDs
-            if user_stack_id == 0 && kernel_stack_id == 0 {
-                continue;
-            }
-
-            // Use the stack IDs as the key
-            let key = (user_stack_id, kernel_stack_id);
-
-            // Update the summary
-            let entry = summary
-                .entry(key)
-                .or_insert_with(Vec::<ThreadStackStats>::new);
-
-            // Check if we already have an entry for this (pid, tid)
-            let pid_tid = (event.event.pid, event.event.tid);
-            let mut found = false;
-
-            for stats in entry.iter_mut() {
-                if stats.pid == pid_tid.0 && stats.tid == pid_tid.1 {
-                    // Update existing entry
-                    stats.total_time_ns += time_ns;
-                    stats.count += 1;
-                    found = true;
-                    break;
-                }
-            }
-
-            if !found {
-                // Add new entry
-                entry.push(ThreadStackStats {
-                    pid: pid_tid.0,
-                    tid: pid_tid.1,
-                    total_time_ns: time_ns,
-                    count: 1,
-                });
-            }
-        }
-
-        if self.debug_mode {
-            debug::debug_println(&format!(
-                "Generated summary for {} unique stack traces",
-                summary.len()
-            ));
-
-            // Print some sample summary data
-            for ((user_id, kernel_id), stats) in summary.iter().take(5) {
-                let total_time: u64 = stats.iter().map(|s| s.total_time_ns).sum();
-                let total_count: u64 = stats.iter().map(|s| s.count).sum();
-
-                debug::debug_println(&format!(
-                    "Stack ID (user={}, kernel={}): {} events, {}ms total off-CPU time",
-                    user_id,
-                    kernel_id,
-                    total_count,
-                    total_time / 1_000_000
-                ));
-            }
-        }
-
-        summary
     }
 
     #[cfg(feature = "ebpf")]
@@ -1787,85 +1406,6 @@ impl OffCpuProfiler {
                 }
             }
             Err(_) => None,
-        }
-    }
-
-    /// Get thread name from /proc/{pid}/task/{tid}/comm
-    fn get_thread_name(&mut self, pid: u32, tid: u32) -> Option<String> {
-        use std::fs::File;
-        use std::io::Read;
-
-        // For main thread (pid == tid), try to reuse process name if available
-        if pid == tid {
-            if let Some(proc_name) = self.get_process_name(pid) {
-                return Some(proc_name);
-            }
-        }
-
-        // Build the path to the comm file
-        let comm_path = if pid == tid {
-            format!("/proc/{}/comm", pid)
-        } else {
-            format!("/proc/{}/task/{}/comm", pid, tid)
-        };
-
-        // Read the thread name
-        match File::open(&comm_path) {
-            Ok(mut file) => {
-                let mut name = String::new();
-                if file.read_to_string(&mut name).is_ok() {
-                    let trimmed = name.trim().to_string();
-                    if !trimmed.is_empty() {
-                        return Some(trimmed);
-                    }
-                }
-
-                // If name is empty, use tid as fallback
-                Some(format!("thread-{}", tid))
-            }
-            Err(_) => {
-                // Process or thread might no longer exist
-                // Return a synthetic name as fallback
-                Some(format!("thread-{}", tid))
-            }
-        }
-    }
-
-    /// Clear all collected statistics and events
-    /// Clear all collected statistics and events
-    pub fn clear_stats(&self) {
-        // Handle poisoned mutex gracefully
-        let stats_result = self.stats.lock();
-        match stats_result {
-            Ok(mut guard) => {
-                if self.debug_mode {
-                    debug::debug_println(&format!("Clearing {} stat entries", guard.len()));
-                }
-                guard.clear();
-            }
-            Err(poisoned) => {
-                debug::debug_println("Recovered from poisoned mutex in clear_stats");
-                poisoned.into_inner().clear();
-            }
-        };
-
-        // Also clear collected events with stack traces
-        let events_result = self.events.lock();
-        match events_result {
-            Ok(mut guard) => {
-                if self.debug_mode {
-                    debug::debug_println(&format!("Clearing {} event entries", guard.len()));
-                }
-                guard.clear();
-            }
-            Err(poisoned) => {
-                debug::debug_println("Recovered from poisoned mutex when clearing events");
-                poisoned.into_inner().clear();
-            }
-        };
-
-        if self.debug_mode {
-            debug::debug_println("Cleared all off-CPU stats and events");
         }
     }
 }
