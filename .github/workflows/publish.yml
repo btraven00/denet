@@ -23,7 +23,7 @@ jobs:
     name: Build Linux wheel (manylinux_2_28)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -64,7 +64,7 @@ jobs:
             /bin/bash -c '/opt/python/cp313-cp313/bin/python -m pip install /w/*.whl \
               && /opt/python/cp313-cp313/bin/python -c "import denet; print(denet.__version__)"'
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-linux-x86_64
           path: target/wheels/*.whl
@@ -77,7 +77,7 @@ jobs:
       matrix:
         target: [aarch64, x86_64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -95,7 +95,7 @@ jobs:
           # No eBPF on macOS: the backend is Linux-only.
           args: --release --features python,gpu
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-macos-${{ matrix.target }}
           path: target/wheels/*.whl
@@ -104,7 +104,7 @@ jobs:
     name: Build sdist
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -122,7 +122,7 @@ jobs:
           # ([tool.maturin] features = ["python", "gpu"]) at build time.
           args: --out dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -134,7 +134,7 @@ jobs:
     permissions:
       id-token: write # IMPORTANT: this permission is mandatory for trusted publishing
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
