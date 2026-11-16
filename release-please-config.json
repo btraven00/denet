@@ -24,6 +24,10 @@
         {
           "type": "generic",
           "path": "flake.nix"
+        },
+        {
+          "type": "generic",
+          "path": "README.md"
         }
       ]
     }
