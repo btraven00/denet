@@ -14,28 +14,32 @@ Denet is a lightweight streaming process monitor. It tracks CPU, memory, I/O, an
 
 ## Installation
 
-`denet` can be used from the command line:
+`denet` is primarily used as a CLI tool.
+
+### With Cargo
+
+You can compile it yourself with cargo:
 
 ```bash
 cargo install denet
 ```
 
-Or as a python package:
+And enable some optional features:
 
 ```bash
-pip install denet
+cargo install denet --features gpu   # GPU monitoring: NVIDIA (requires drivers) or Apple Silicon (experimental); enable per run with --gpu
+cargo install denet --features ebpf  # eBPF profiling (Linux only, requires clang)
 ```
 
-You can find denet in [conda-forge](https://anaconda.org/channels/conda-forge/packages/denet/overview):
-
-```bash
-pixi add denet                        # pixi
-conda install -c conda-forge denet    # conda
-```
+### Debian-based
 
 On Debian 12+ and Ubuntu 22.04+, download the `.deb` from the [latest release](https://github.com/btraven00/denet/releases/latest) and `sudo apt install ./denet_*_amd64.deb`. It includes GPU and eBPF support.
 
-On RHEL, Rocky and AlmaLinux 8+ and Fedora, download the `.rpm` from the same page and `sudo dnf install ./denet-*.x86_64.rpm`. It also includes GPU and eBPF support.
+### RHEL-based
+
+On RHEL, Rocky and AlmaLinux 8+ and Fedora, download the `.rpm` from the [latest release](https://github.com/btraven00/denet/releases/latest) and `sudo dnf install ./denet-*.x86_64.rpm`. It also includes GPU and eBPF support.
+
+### Static binary
 
 On any other Linux (x86_64 or aarch64), there is a static binary with eBPF support but no GPU support:
 
@@ -46,12 +50,24 @@ chmod +x denet
 
 With Nix, run a release straight from the flake: `nix run github:btraven00/denet/v0.11.1 -- --help`. <!-- x-release-please-version -->
 
-Optional features for the Rust binary:
+### Conda
+
+Conda users can use [conda-forge](https://anaconda.org/channels/conda-forge/packages/denet/overview):
 
 ```bash
-cargo install denet --features gpu   # GPU monitoring: NVIDIA (requires drivers) or Apple Silicon (experimental); enable per run with --gpu
-cargo install denet --features ebpf  # eBPF profiling (Linux only, requires clang)
+pixi add denet                        # pixi
+conda install -c conda-forge denet    # conda
 ```
+
+### As a python package
+
+You can install the python package from pypi to write your custom scripts:
+
+```bash
+pip install denet
+```
+
+The `report` extra brings extra niceties to display analysis of your traces.
 
 ## Usage
 
