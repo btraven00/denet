@@ -6,6 +6,7 @@ Denet is a lightweight streaming process monitor. It tracks CPU, memory, I/O, an
 
 [![PyPI version](https://badge.fury.io/py/denet.svg)](https://badge.fury.io/py/denet)
 [![Crates.io](https://img.shields.io/crates/v/denet.svg)](https://crates.io/crates/denet)
+[![conda-forge](https://img.shields.io/conda/vn/conda-forge/denet.svg)](https://anaconda.org/channels/conda-forge/packages/denet/overview)
 [![codecov](https://codecov.io/gh/btraven00/denet/branch/main/graph/badge.svg)](https://codecov.io/gh/btraven00/denet)
 [![Ruff](https://img.shields.io/badge/code%20style-ruff-black)](https://github.com/astral-sh/ruff)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
@@ -13,20 +14,26 @@ Denet is a lightweight streaming process monitor. It tracks CPU, memory, I/O, an
 
 ## Installation
 
-```bash
-pip install denet    # Python package
-cargo install denet  # Rust binary
-```
-
-Or install the conda package from the [almost-conductor](https://prefix.dev/almost-conductor) channel:
+`denet` can be used from the command line:
 
 ```bash
-# pixi
-pixi workspace channel add https://prefix.dev/almost-conductor
-pixi add denet
-# conda
-conda install -c https://prefix.dev/almost-conductor denet
+cargo install denet
 ```
+
+Or as a python package:
+
+```bash
+pip install denet
+```
+
+You can find denet in [conda-forge](https://anaconda.org/channels/conda-forge/packages/denet/overview):
+
+```bash
+pixi add denet                        # pixi
+conda install -c conda-forge denet    # conda
+```
+
+With Nix, run it straight from the flake: `nix run github:btraven00/denet -- --help`.
 
 Optional features for the Rust binary:
 
