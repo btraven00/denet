@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: If you use this software, please cite it using the metadata below.
 title: denet
-version: 0.10.3
-date-released: "2026-05-26"
+version: 0.11.0
+date-released: '2026-05-26'
 authors:
   - family-names: Traven
     given-names: B
@@ -18,7 +18,9 @@ keywords:
 license: GPL-3.0-or-later
 preferred-citation:
   type: article
-  title: "denet, A lightweight command-line tool for process monitoring in benchmarking and beyond"
+  title: >-
+    denet, A lightweight command-line tool for process monitoring in
+    benchmarking and beyond
   authors:
     - family-names: Carrillo
       given-names: Ben
