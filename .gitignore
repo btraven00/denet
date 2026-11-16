@@ -4,6 +4,7 @@ result_*
 .direnv
 target/
 scratch/
+scratchpad/
 python/denet/*.so
 htmlcov/
 coverage.xml
