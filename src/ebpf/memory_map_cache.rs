@@ -42,12 +42,6 @@ impl MemoryMapCache {
         cache
     }
 
-    /// Set the maximum age for cached memory maps
-    pub fn with_max_age(mut self, seconds: u64) -> Self {
-        self.max_age = seconds;
-        self
-    }
-
     /// Enable or disable debug mode
     pub fn set_debug_mode(&mut self, enable: bool) {
         self.debug_mode = enable;
@@ -191,47 +185,10 @@ impl MemoryMapCache {
         success
     }
 
-    /// Get a list of all PIDs in the cache
-    pub fn cached_pids(&self) -> Vec<u32> {
-        let maps = self.maps.lock().unwrap();
-        maps.keys().cloned().collect()
-    }
-
-    /// Remove a PID from the cache
-    pub fn remove_pid(&mut self, pid: u32) -> bool {
-        let mut maps = self.maps.lock().unwrap();
-        maps.remove(&pid).is_some()
-    }
-
     /// Get cache size (number of PIDs)
     pub fn cache_size(&self) -> usize {
         let maps = self.maps.lock().unwrap();
         maps.len()
-    }
-
-    /// Clear all cached maps
-    pub fn clear(&mut self) {
-        let mut maps = self.maps.lock().unwrap();
-        maps.clear();
-    }
-
-    /// Print statistics about the cache
-    pub fn print_stats(&self) {
-        let maps = self.maps.lock().unwrap();
-        crate::ebpf::debug::debug_println(&format!(
-            "Memory map cache contains {} PIDs",
-            maps.len()
-        ));
-
-        for (pid, (regions, timestamp)) in maps.iter() {
-            let age = timestamp.elapsed().as_secs();
-            crate::ebpf::debug::debug_println(&format!(
-                "  PID {}: {} regions, cached {} seconds ago",
-                pid,
-                regions.len(),
-                age
-            ));
-        }
     }
 }
 
@@ -239,63 +196,4 @@ impl Default for MemoryMapCache {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Find a memory region containing a specific address in cached maps
-pub fn find_region_for_address_in_cache(
-    cache: &mut MemoryMapCache,
-    addr: u64,
-    pid: u32,
-) -> Option<MemoryRegion> {
-    let maps = cache.get_memory_maps(pid);
-
-    // Early return if no maps found
-    if maps.is_empty() {
-        if cache.debug_mode {
-            crate::ebpf::debug::debug_println(&format!(
-                "No memory maps found for PID {} when searching for address 0x{:x}",
-                pid, addr
-            ));
-        }
-        return None;
-    }
-
-    // Find the region containing this address
-    for region in &maps {
-        if addr >= region.start_addr && addr < region.end_addr {
-            if cache.debug_mode {
-                crate::ebpf::debug::debug_println(&format!(
-                    "Found region for address 0x{:x} in PID {}: {:?}",
-                    addr, pid, region.pathname
-                ));
-            }
-            return Some(region.clone());
-        }
-    }
-
-    if cache.debug_mode {
-        crate::ebpf::debug::debug_println(&format!(
-            "Address 0x{:x} not found in any memory region for PID {}",
-            addr, pid
-        ));
-
-        // Log address ranges for debugging
-        let min_addr = maps.iter().map(|r| r.start_addr).min().unwrap_or(0);
-        let max_addr = maps.iter().map(|r| r.end_addr).max().unwrap_or(0);
-        crate::ebpf::debug::debug_println(&format!(
-            "Available address range: 0x{:x}-0x{:x}",
-            min_addr, max_addr
-        ));
-    }
-
-    None
-}
-
-/// Get executable memory regions from the cache for a specific PID
-pub fn get_executable_regions(cache: &mut MemoryMapCache, pid: u32) -> Vec<MemoryRegion> {
-    cache
-        .get_memory_maps(pid)
-        .into_iter()
-        .filter(|region| region.permissions.contains('x'))
-        .collect()
 }

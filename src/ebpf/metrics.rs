@@ -83,28 +83,6 @@ impl EbpfMetrics {
             ..Default::default()
         }
     }
-
-    /// Create metrics with off-CPU profiling data
-    pub fn with_offcpu(offcpu: OffCpuMetrics) -> Self {
-        Self {
-            offcpu: Some(offcpu),
-            ..Default::default()
-        }
-    }
-
-    /// Create metrics with both syscalls and off-CPU data
-    pub fn with_all(syscalls: SyscallMetrics, offcpu: OffCpuMetrics) -> Self {
-        Self {
-            syscalls: Some(syscalls),
-            offcpu: Some(offcpu),
-            ..Default::default()
-        }
-    }
-
-    /// Check if there's an error
-    pub fn has_error(&self) -> bool {
-        self.error.is_some()
-    }
 }
 
 /// System call frequency metrics with enhanced analysis
@@ -316,20 +294,6 @@ pub fn categorize_syscall(syscall_nr: u64) -> String {
     }
 }
 
-use super::offcpu_profiler::{ProcessedOffCpuEvent, StackFrame};
-
-/// Aggregated stack trace information for display
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AggregatedStacks {
-    /// Aggregated user-space stack traces
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub user_stack: Vec<StackFrame>,
-
-    /// Aggregated kernel-space stack traces
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub kernel_stack: Vec<StackFrame>,
-}
-
 /// Off-CPU profiling metrics
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OffCpuMetrics {
@@ -366,14 +330,6 @@ pub struct OffCpuMetrics {
     /// Analysis of off-CPU bottlenecks
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub bottlenecks: Vec<String>,
-
-    /// Symbolicated stack traces (very verbose, for debugging/export)
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub stack_traces: Vec<ProcessedOffCpuEvent>,
-
-    /// Aggregated stack information (for display)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stacks: Option<AggregatedStacks>,
 
     /// Off-CPU time credited since the previous sample, per process and
     /// kernel stack it waited in. A wait is credited when the thread wakes up.
@@ -452,45 +408,6 @@ where
 {
     let rounded = (value * 100.0).round() / 100.0;
     serializer.serialize_f64(rounded)
-}
-
-/// Analysis of off-CPU patterns
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OffCpuAnalysis {
-    /// Classification of what's causing the most off-CPU time
-    pub bottleneck_type: OffCpuBottleneckType,
-
-    /// Percentage of time spent in I/O-related waits
-    pub io_wait_percentage: f64,
-
-    /// Percentage of time spent in lock contention
-    pub lock_contention_percentage: f64,
-
-    /// Percentage of time spent in sleep/idle
-    pub sleep_percentage: f64,
-
-    /// Optimization suggestions
-    pub optimization_hints: Vec<String>,
-}
-
-/// Classification of off-CPU bottlenecks
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum OffCpuBottleneckType {
-    /// Blocking I/O operations
-    IoBlocked,
-
-    /// Lock contention
-    LockContention,
-
-    /// Voluntary sleep/yield
-    Sleep,
-
-    /// Various mixed causes
-    Mixed,
-
-    /// Unknown cause
-    Unknown,
 }
 
 /// Compute raw syscall intensity ratios and rate from observed metrics.
