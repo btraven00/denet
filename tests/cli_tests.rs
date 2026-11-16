@@ -33,7 +33,14 @@ fn test_cli_version_output() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Should contain version information
-    assert!(stdout.contains("denet") || stdout.contains("0.3.3"));
+    // "denet <version> (features: ...)": the version is the second word
+    let words: Vec<&str> = stdout.split_whitespace().collect();
+    assert_eq!(words[0], "denet");
+    assert_eq!(words[1], env!("CARGO_PKG_VERSION"));
+    assert!(
+        stdout.contains("(features: "),
+        "no feature list in {stdout:?}"
+    );
 }
 
 #[test]
