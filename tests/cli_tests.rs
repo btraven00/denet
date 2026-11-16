@@ -16,7 +16,8 @@ fn test_cli_help_output() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Check that help contains expected sections
-    assert!(stdout.contains("a simple process monitor"));
+    // the description from Cargo.toml, whatever its current wording
+    assert!(stdout.contains(env!("CARGO_PKG_DESCRIPTION")));
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("Options:"));
     assert!(stdout.contains("Commands:"));
