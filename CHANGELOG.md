@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/btraven00/denet/compare/v0.11.0...v0.11.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **nix:** build the flake with a rustc new enough for ratatui ([407d9cb](https://github.com/btraven00/denet/commit/407d9cb20d8b2343ba3095a4a45752f1489cfcb9))
+
 ## [0.11.0](https://github.com/btraven00/denet/compare/v0.10.3...v0.11.0) (2026-11-16)
 
 
