@@ -27,8 +27,9 @@ cargo install denet
 And enable some optional features:
 
 ```bash
-cargo install denet --features gpu   # GPU monitoring: NVIDIA (requires drivers) or Apple Silicon (experimental); enable per run with --gpu
-cargo install denet --features ebpf  # eBPF profiling (Linux only, requires clang)
+cargo install denet --features gpu       # GPU monitoring: NVIDIA (requires drivers) or Apple Silicon (experimental); enable per run with --gpu
+cargo install denet --features ebpf      # eBPF profiling (Linux only, requires clang)
+cargo install denet --features gpu,ebpf  # both: each install replaces the previous one
 ```
 
 ### Debian-based
@@ -44,9 +45,12 @@ On RHEL, Rocky and AlmaLinux 8+ and Fedora, download the `.rpm` from the [latest
 On any other Linux (x86_64 or aarch64), there is a static binary with eBPF support but no GPU support:
 
 ```bash
-curl -L -o denet https://github.com/btraven00/denet/releases/latest/download/denet-$(uname -m)-linux-musl
+VERSION=0.11.1 # x-release-please-version
+curl -L -o denet "https://github.com/btraven00/denet/releases/download/v$VERSION/denet-$VERSION-$(uname -m)-linux-musl"
 chmod +x denet
 ```
+
+### Nix
 
 With Nix, run a release straight from the flake: `nix run github:btraven00/denet/v0.11.1 -- --help`. <!-- x-release-please-version -->
 
@@ -61,13 +65,17 @@ conda install -c conda-forge denet    # conda
 
 ### As a python package
 
-You can install the python package from pypi to write your custom scripts:
+You can install the python package from pypi to write your custom scripts. It is a library: it does not install the `denet` command.
 
 ```bash
 pip install denet
 ```
 
-The `report` extra brings extra niceties to display analysis of your traces.
+The `report` extra adds the `denet-report` command, which turns a saved run into an HTML report with timelines:
+
+```bash
+pip install 'denet[report]'
+```
 
 ## Usage
 
