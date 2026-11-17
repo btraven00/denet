@@ -14,6 +14,9 @@ denet \- a streaming process monitor
 .br
 .B denet stats
 \fIFILE\fR
+.br
+.B denet stacks
+\fIFILE\fR
 .SH DESCRIPTION
 .B denet
 tracks the CPU, memory, disk I/O, threads and network bytes of a process and
@@ -37,6 +40,13 @@ Monitor a process that is already running.
 .BI stats " FILE"
 Print summary statistics from a metrics file written with
 .BR \-\-out .
+.TP
+.BI stacks " FILE"
+Print the off-CPU waits of a metrics file recorded with
+.B \-\-enable\-ebpf
+as folded stacks, one line per command and kernel stack with the milliseconds
+waited there: the input of flamegraph tools such as
+.BR inferno\-flamegraph .
 .SH OPTIONS
 Options go before the command.
 .TP

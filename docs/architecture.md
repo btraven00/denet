@@ -44,7 +44,7 @@ flowchart LR
     end
 
     subgraph IFACE["Interfaces"]
-        CLI["CLI: denet run / attach / stats"]
+        CLI["CLI: denet run / attach / stats / stacks"]
         PYO3["PyO3 bindings"]
         PYAPI["Python: ProcessMonitor,<br/>execute_with_monitoring"]
         REPORT["denet-report<br/>HTML / PNG / SVG"]

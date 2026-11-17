@@ -550,3 +550,38 @@ fn test_tui_refuses_without_terminal() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("--tui needs stdout to be a terminal"));
     assert!(!String::from_utf8_lossy(&output.stdout).contains("should-not-run"));
 }
+
+#[test]
+fn test_cli_stacks_exports_folded_offcpu_stacks() {
+    use std::fs;
+    use tempfile::NamedTempFile;
+
+    let run = NamedTempFile::new().expect("Failed to create temp file");
+    fs::write(
+        &run,
+        r#"{"kind":"metadata","pid":10,"cmd":["sleep","1"]}
+{"kind":"tree","aggregated":{"ebpf":{"offcpu":{"waits":[{"pid":10,"stack":7,"time_ns":1000000000,"count":1}],"kernel_stacks":{"7":["schedule","do_nanosleep"]}}}}}
+"#,
+    )
+    .expect("Failed to write sample data");
+    let output = Command::new("cargo")
+        .args(["run", "--bin", "denet", "--", "stacks"])
+        .arg(run.path())
+        .output()
+        .expect("Failed to execute command");
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "sleep;do_nanosleep;schedule 1000\n"
+    );
+
+    // A run without off-CPU stacks is an error, not an empty file
+    fs::write(&run, "{\"kind\":\"tree\"}\n").expect("Failed to write sample data");
+    let output = Command::new("cargo")
+        .args(["run", "--bin", "denet", "--", "stacks"])
+        .arg(run.path())
+        .output()
+        .expect("Failed to execute command");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--enable-ebpf"));
+}

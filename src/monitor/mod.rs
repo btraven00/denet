@@ -4,6 +4,7 @@
 //! split into focused submodules for better organization.
 
 pub mod env;
+pub mod folded;
 pub mod metrics;
 pub mod record;
 pub mod summary;

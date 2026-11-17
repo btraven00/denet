@@ -132,6 +132,17 @@ enum Commands {
         #[clap(required = true)]
         file: PathBuf,
     },
+
+    /// Export a saved run's off-CPU stacks, for flamegraph tools
+    ///
+    /// Prints one folded stack a line (command, kernel frames, milliseconds
+    /// waited), the input of inferno, flamegraph.pl and speedscope. Needs a
+    /// run recorded with --enable-ebpf. See docs/flamegraphs.md
+    Stacks {
+        /// Path to the metrics file
+        #[clap(required = true)]
+        file: PathBuf,
+    },
 }
 
 fn main() -> Result<ExitCode> {
@@ -141,6 +152,9 @@ fn main() -> Result<ExitCode> {
         handle_stats_command(file, &args)?;
         return Ok(ExitCode::SUCCESS);
     }
+    if let Commands::Stacks { file } = &args.command {
+        return handle_stacks_command(file, &args);
+    }
 
     // Propagate the monitored command's status so `denet run false` fails.
     let code = handle_monitoring_commands(&args)?;
@@ -149,6 +163,27 @@ fn main() -> Result<ExitCode> {
 
 fn handle_stats_command(file: &PathBuf, args: &Args) -> Result<()> {
     generate_summary_from_file(file, args.json, args.out.as_ref())
+}
+
+/// Milliseconds off-CPU per command and kernel stack, one folded stack a line
+fn handle_stacks_command(file: &PathBuf, args: &Args) -> Result<ExitCode> {
+    let lines = denet::monitor::folded::folded_offcpu(io::BufReader::new(File::open(file)?))?;
+    if lines.is_empty() {
+        // An empty file would make a flamegraph tool fail with no hint why
+        eprintln!(
+            "Error: no off-CPU stacks in {}: record the run with --enable-ebpf",
+            file.display()
+        );
+        return Ok(ExitCode::FAILURE);
+    }
+    let mut out: Box<dyn Write> = match &args.out {
+        Some(path) => Box::new(File::create(path)?),
+        None => Box::new(io::stdout().lock()),
+    };
+    for line in lines {
+        writeln!(out, "{line}")?;
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Handle monitoring commands (run and attach); returns the process exit code
@@ -187,7 +222,7 @@ fn create_monitor_from_args(args: &Args) -> Result<ProcessMonitor> {
     match &args.command {
         Commands::Run { command } => create_monitor_for_command(command, args),
         Commands::Attach { pid } => create_monitor_for_pid(*pid, args),
-        Commands::Stats { .. } => unreachable!(),
+        Commands::Stats { .. } | Commands::Stacks { .. } => unreachable!(),
     }
 }
 

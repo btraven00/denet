@@ -113,6 +113,7 @@ denet -i 50 -m 500 run python train.py
 | HTML/PNG/SVG reports (`denet-report`) | [docs/python-api.md#reports](docs/python-api.md#reports) |
 | GPU monitoring | [docs/gpu.md](docs/gpu.md) |
 | eBPF profiling (off-CPU, syscall tracking) | [docs/ebpf.md](docs/ebpf.md) |
+| Off-CPU flamegraphs (`denet stacks`, inferno) | [docs/flamegraphs.md](docs/flamegraphs.md) |
 | Disk I/O metrics and how to interpret them | [docs/disk-io.md](docs/disk-io.md) |
 | Output data format | [docs/data-format.md](docs/data-format.md) |
 | Development setup | [docs/dev.md](docs/dev.md) |
