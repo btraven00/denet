@@ -16,7 +16,7 @@
 #include <bpf/bpf_tracing.h>
 #include <linux/ptrace.h>
 #include <linux/types.h>
-#include "pidns.h"
+#include "proctree.h"
 
 typedef __u32 u32;
 typedef __u64 u64;
@@ -26,15 +26,6 @@ struct net_bytes_val {
     u64 rx;
     u64 tx;
 };
-
-// tgid → monitored flag. Seeded before attach and synced from userspace
-// each sample, so only the monitored process tree is accounted.
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, u32);
-    __type(value, u8);
-    __uint(max_entries, 1024);
-} pid_filter SEC(".maps");
 
 // tgid → cumulative bytes. Bounded by monitored-tree size, not host load.
 struct {
@@ -47,9 +38,7 @@ struct {
 static __always_inline void add_bytes(u64 rx, u64 tx)
 {
     u32 tgid, tid;
-    if (!current_tgid_pid(&tgid, &tid))
-        return;
-    if (!bpf_map_lookup_elem(&pid_filter, &tgid))
+    if (!current_tgid_pid(&tgid, &tid) || !is_tracked(tgid))
         return;
 
     struct net_bytes_val *val = bpf_map_lookup_elem(&net_bytes, &tgid);

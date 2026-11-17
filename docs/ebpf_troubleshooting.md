@@ -90,7 +90,7 @@ cargo build --release --features ebpf
 #### Verify bytecode content
 The diagnostic output will show information about the embedded bytecode. Make sure it contains:
 - Proper ELF header
-- Maps named "syscall_counts" and "pid_syscall_map"
+- Maps named "syscall_counts" and "pid_filter"
 - Tracepoint programs for syscalls
 
 ### 3. Kernel Support Issues

@@ -14,63 +14,25 @@
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
-#include "pidns.h"
+#include "proctree.h"
 
-// tgid → monitored flag. Seeded before attach and synced from userspace each
-// sample, so only the monitored process tree is counted. Without it every
-// process on the host was counted, and on a busy host the maps below filled
-// up and silently dropped the monitored processes.
-// ponytail: a child is added at denet's next sample, so syscalls it makes
-// before then are missed (~0.5% for a job that starts working at once);
-// following sched_process_fork in-kernel would close that gap
+// Calls made by the monitored tree, indexed by syscall number. Not keyed by
+// pid: nothing reports per-process counts, and a per-pid map fills up (and
+// then silently drops counts) on a job that starts thousands of processes.
+#define MAX_SYSCALL_NR 512
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_ARRAY);
     __type(key, __u32);
-    __type(value, __u8);
-    __uint(max_entries, 4096);
-} pid_filter SEC(".maps");
-
-// BPF map to store syscall counts per PID
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, __u32);   // PID
-    __type(value, __u64); // syscall count
-    __uint(max_entries, 10240);
+    __type(value, __u64);
+    __uint(max_entries, MAX_SYSCALL_NR);
 } syscall_counts SEC(".maps");
 
-// BPF map to store per-syscall counts for each PID
-// Key is (pid << 32 | syscall_nr); a u32 key (pid << 16) lost the high bits
-// of every PID above 65535, merging unrelated processes
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, __u64);   // PID << 32 | syscall_nr
-    __type(value, __u32); // count for this syscall
-    __uint(max_entries, 65536);
-} pid_syscall_map SEC(".maps");
-
-// Helper function to update both syscall maps
-static inline void update_syscall_maps(__u32 pid, __u32 syscall_nr) {
-    if (!bpf_map_lookup_elem(&pid_filter, &pid))
+static __always_inline void count_syscall(__u32 tgid, __u32 syscall_nr) {
+    if (!is_tracked(tgid))
         return;
-
-    // Update total syscall count for PID
-    __u64 *count = bpf_map_lookup_elem(&syscall_counts, &pid);
-    if (count) {
+    __u64 *count = bpf_map_lookup_elem(&syscall_counts, &syscall_nr);
+    if (count)
         __sync_fetch_and_add(count, 1);
-    } else {
-        __u64 initial_count = 1;
-        bpf_map_update_elem(&syscall_counts, &pid, &initial_count, BPF_ANY);
-    }
-
-    // Update per-syscall count for this PID
-    __u64 key = ((__u64)pid << 32) | syscall_nr;
-    __u32 *syscall_count = bpf_map_lookup_elem(&pid_syscall_map, &key);
-    if (syscall_count) {
-        __sync_fetch_and_add(syscall_count, 1);
-    } else {
-        __u32 initial_count = 1;
-        bpf_map_update_elem(&pid_syscall_map, &key, &initial_count, BPF_ANY);
-    }
 }
 
 // Generate a tracepoint program for a single syscall. The `name` must match
@@ -81,7 +43,7 @@ static inline void update_syscall_maps(__u32 pid, __u32 syscall_nr) {
     int trace_##name##_enter(void *ctx) {                                      \
         __u32 tgid, tid;                                                       \
         if (current_tgid_pid(&tgid, &tid))                                     \
-            update_syscall_maps(tgid, (nr));                                   \
+            count_syscall(tgid, (nr));                                   \
         return 0;                                                              \
     }
 

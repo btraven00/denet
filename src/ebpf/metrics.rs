@@ -141,28 +141,42 @@ pub const SYSCALL_CATEGORIES: &[(u64, &str)] = &[
     (8, "lseek"),    // SYS_lseek
     (257, "openat"), // SYS_openat
     // Memory management
-    (9, "mmap"),          // SYS_mmap
-    (11, "munmap"),       // SYS_munmap
-    (12, "brk"),          // SYS_brk
-    (13, "rt_sigaction"), // SYS_rt_sigaction
+    (9, "mmap"),    // SYS_mmap
+    (11, "munmap"), // SYS_munmap
+    (12, "brk"),    // SYS_brk
     // Process/thread management
-    (56, "clone"),  // SYS_clone
-    (57, "fork"),   // SYS_fork
-    (58, "vfork"),  // SYS_vfork
-    (59, "execve"), // SYS_execve
-    (60, "exit"),   // SYS_exit
-    (61, "wait4"),  // SYS_wait4
+    (56, "clone"),       // SYS_clone
+    (57, "fork"),        // SYS_fork
+    (58, "vfork"),       // SYS_vfork
+    (59, "execve"),      // SYS_execve
+    (60, "exit"),        // SYS_exit
+    (61, "wait4"),       // SYS_wait4
+    (62, "kill"),        // SYS_kill
+    (231, "exit_group"), // SYS_exit_group
     // Network
     (41, "socket"),   // SYS_socket
     (42, "connect"),  // SYS_connect
     (43, "accept"),   // SYS_accept
     (44, "sendto"),   // SYS_sendto
     (45, "recvfrom"), // SYS_recvfrom
+    (46, "sendmsg"),  // SYS_sendmsg
+    (47, "recvmsg"),  // SYS_recvmsg
+    (49, "bind"),     // SYS_bind
+    (288, "accept4"), // SYS_accept4
+    // IPC
+    (22, "pipe"),   // SYS_pipe
+    (202, "futex"), // SYS_futex
+    (293, "pipe2"), // SYS_pipe2
+    // Signals
+    (13, "rt_sigaction"),   // SYS_rt_sigaction
+    (14, "rt_sigprocmask"), // SYS_rt_sigprocmask
+    (234, "tgkill"),        // SYS_tgkill
     // Time/scheduling
-    (35, "nanosleep"),      // SYS_nanosleep
-    (96, "gettimeofday"),   // SYS_gettimeofday
-    (201, "time"),          // SYS_time
-    (228, "clock_gettime"), // SYS_clock_gettime
+    (35, "nanosleep"),        // SYS_nanosleep
+    (96, "gettimeofday"),     // SYS_gettimeofday
+    (201, "time"),            // SYS_time
+    (228, "clock_gettime"),   // SYS_clock_gettime
+    (230, "clock_nanosleep"), // SYS_clock_nanosleep
 ];
 
 /// Get syscall name by number
