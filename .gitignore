@@ -26,3 +26,6 @@ python/examples/data/
 
 # Local Claude Code settings
 .claude/
+
+# Zensical build output
+site/

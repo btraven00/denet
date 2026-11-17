@@ -117,6 +117,7 @@ The project uses GitHub Actions for CI/CD. The workflows are defined in `.github
 - **deb-release.yml:** Builds the `.deb` (`scripts/build_deb.sh`, gpu + ebpf, inside Ubuntu 22.04 so it installs on Ubuntu 22.04+ and Debian 12+) and attaches it to the release
 - **rpm-release.yml:** Builds the `.rpm` (`scripts/build_rpm.sh`, gpu + ebpf, inside AlmaLinux 8 so it installs on RHEL/Rocky/Alma 8+ and Fedora) and attaches it to the release
 - **static-release.yml:** Builds static musl binaries with eBPF (no GPU) for x86_64 and aarch64 and attaches them to the release
+- **docs.yml:** Builds the documentation site and, on `main`, deploys it to GitHub Pages (see [Documentation site](#documentation-site))
 
 ### Testing GitHub Actions Locally
 
@@ -222,3 +223,21 @@ See `docs/offcpu.md` for the full off-CPU architecture and known limitations.
 - Document functions and classes with docstrings
 - Use `ruff` for linting and formatting (configured in `pyproject.toml`)
 - Run `pixi run lint` to check for issues and `pixi run lint-fix` to automatically fix issues
+
+## Documentation site
+
+A small site is built with [Zensical](https://zensical.org) and published at
+<https://btraven00.github.io/denet/>. It does not replace this folder: its
+pages are in `website/`, and its guides are one-line includes of files here
+(`--8<-- "docs/gpu.md"`), so each guide has one source and still renders on
+GitHub.
+
+```bash
+uvx zensical serve            # preview at http://localhost:8000
+uvx zensical build --strict   # what CI runs; output in site/
+```
+
+To publish another file from `docs/`, add a one-line page under `website/`
+and list it in `nav` in `zensical.toml`. A relative link from one included
+guide to another only works if both are on the site: `--strict` fails the
+build otherwise.
