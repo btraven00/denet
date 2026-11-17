@@ -250,9 +250,9 @@ fn try_load_ebpf() -> bool {
                 let syscall_counts = bpf.take_map("syscall_counts");
                 println!("syscall_counts map exists: {}", syscall_counts.is_some());
 
-                // Check for pid_syscall_map
-                let pid_syscall_map = bpf.take_map("pid_syscall_map");
-                println!("pid_syscall_map exists: {}", pid_syscall_map.is_some());
+                // Check for pid_filter
+                let pid_filter = bpf.take_map("pid_filter");
+                println!("pid_filter exists: {}", pid_filter.is_some());
 
                 // Try to find a tracepoint program
                 let mut has_tracepoint = false;

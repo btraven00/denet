@@ -87,16 +87,17 @@ if errs:
 EOF
 }
 
-# The work is done by children that exit before the job ends: dd makes
-# ~2M read/write syscalls over ~0.7 s (long enough that denet's first samples
-# find it), then ten short-lived sleeps go off-CPU for 0.1 s each. The parent
-# shell does next to nothing itself.
-TREE='dd if=/dev/zero of=/dev/null bs=1 count=1000000 status=none; for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.1; done'
+# The work is done by children that exit before the job ends, most of them
+# before denet samples at all: 200 dd runs of a few milliseconds each make
+# 1000 one-byte reads and 1000 writes, then ten short-lived sleeps go off-CPU
+# for 0.1 s each. The parent shell does next to nothing itself.
+TREE='for i in $(seq 200); do dd if=/dev/zero of=/dev/null bs=1 count=1000 status=none; done; for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.1; done'
 
 # check_tree JSONL — assert on the last tree sample that eBPF followed the
 # children (regressions fixed for 0.10.3: syscalls read only for live PIDs,
 # off-CPU filtered against the start-time PID list, eBPF PIDs not in denet's
-# namespace).
+# namespace; after 0.11.2: children counted only from denet's next sample, so
+# short-lived ones were missed, by a different amount each run).
 check_tree() {
     python3 - "$@" <<'EOF'
 import json, sys
@@ -106,11 +107,12 @@ samples = [r["aggregated"] for r in recs if "aggregated" in r]
 if not samples:
     sys.exit("no samples recorded")
 ebpf, errs = samples[-1].get("ebpf") or {}, []
-calls = (ebpf.get("syscalls") or {}).get("total", 0)
-# half of dd's ~2M: a child is added to the kernel filter at denet's next
-# sample, so up to one interval of its syscalls can be missed
-if calls < 1000000:
-    errs.append(f"syscalls {calls} < 1000000: children's counts lost")
+counts = {s["name"]: s["count"] for s in (ebpf.get("syscalls") or {}).get("top_syscalls", [])}
+# no slack: forks are followed in the kernel, so every call of every child
+# is counted, however short-lived
+for name in ("read", "write"):
+    if counts.get(name, 0) < 200000:
+        errs.append(f"{name} {counts.get(name, 0)} < 200000: short-lived children's syscalls lost")
 threads = (ebpf.get("offcpu") or {}).get("thread_stats") or {}
 child_ns = sum(s["total_time_ns"] for k, s in threads.items() if int(k.split(":")[0]) != parent)
 if child_ns < 5e8:

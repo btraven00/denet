@@ -137,10 +137,12 @@ fn compile_ebpf_programs() {
     // List of eBPF programs to compile
     let ebpf_programs = vec!["syscall_tracer.c", "offcpu_profiler.c", "net_monitor.c"];
 
-    println!(
-        "cargo:rerun-if-changed={}",
-        PathBuf::from(ebpf_src_dir).join("pidns.h").display()
-    );
+    for header in ["pidns.h", "proctree.h"] {
+        println!(
+            "cargo:rerun-if-changed={}",
+            PathBuf::from(ebpf_src_dir).join(header).display()
+        );
+    }
 
     for program in ebpf_programs {
         let src_path = PathBuf::from(ebpf_src_dir).join(program);

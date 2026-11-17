@@ -30,8 +30,8 @@ pub fn get_memory_maps(pid: u32) -> Vec<MemoryRegion> {
     let file = match File::open(&path) {
         Ok(f) => f,
         Err(e) => {
-            // Log the error to help with debugging
-            eprintln!("Failed to open maps file for PID {pid}: {e}");
+            // Usually a process that has exited: not worth a line on stderr
+            log::debug!("Failed to open maps file for PID {pid}: {e}");
             return vec![];
         }
     };

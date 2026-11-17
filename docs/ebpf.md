@@ -281,8 +281,9 @@ fallback when eBPF is unavailable.
 **How it works:** kprobes on the socket-layer send/receive paths
 (`tcp_sendmsg`/`tcp_recvmsg`, `udp_sendmsg`/`udp_recvmsg`) run in process
 context, so every byte is attributed by the kernel to the calling process. A
-BPF-side PID filter, synced with the process tree each sample, restricts
-accounting to the monitored tree.
+BPF-side PID filter restricts accounting to the monitored tree; children it
+forks are added to the filter in the kernel (`sched_process_fork`), so a
+child is counted from its first byte.
 
 **Semantics:**
 
@@ -293,8 +294,6 @@ accounting to the monitored tree.
 - Socket-layer application bytes: no TCP/IP headers, no retransmissions.
 - Covers TCP over IPv4 and IPv6, and UDP over IPv4. UDP over IPv6 uses
   separate kernel entry points (`udpv6_sendmsg`) and is not yet counted.
-- Children that transfer bytes between fork and the next sample are picked
-  up at the next PID-filter sync (same window as syscall tracking).
 
 **JSON output** (inside the aggregated metrics' `ebpf` object):
 
@@ -384,7 +383,7 @@ is counted from its first wait, before denet's next sample sees it.
 The eBPF implementation works by:
 
 1. **Tracepoint Attachment**: Attaching to syscall tracepoints (sys_enter_read, sys_enter_write, etc.)
-2. **Per-syscall Tracking**: Maintaining a map of (PID, syscall_nr) → count
+2. **Per-syscall Tracking**: Counting calls per syscall number for the monitored tree, whose forks are followed in the kernel
 3. **Category Mapping**: Categorizing each syscall into functional groups
 4. **Runtime Analysis**: Analyzing syscall patterns to detect performance bottlenecks
 
@@ -404,9 +403,10 @@ stuck. A missing command still fails immediately, as without eBPF.
 Not covered:
 
 - **`attach` / `from_pid`**: activity before denet attaches is not recorded.
-- **Short-lived children**: a child is added to the probe filter at the next
-  sample, so a child that starts and exits between samples (e.g. a quick
-  `curl` launched by a script) can be missed.
+
+Children are followed in the kernel from the moment they are forked, so a
+child that starts and exits between two samples (e.g. a quick `curl` launched
+by a script) is counted in full.
 
 ## Current Limitations
 
@@ -414,9 +414,7 @@ The current eBPF implementation has some limitations:
 
 1. **Limited Syscall Coverage**: Only tracks a subset of common syscalls (read, write, openat, close, mmap, socket, connect, recvfrom, sendto).
 
-2. **Short-lived children**: For syscalls and network bytes, child processes are picked up at the next sample, so work done by a child that exits between samples may be missed (see [Attach Timing](#attach-timing)). Off-CPU waits follow forks in the kernel and are not affected.
-
-3. **Linux-only**: The eBPF functionality is only available on Linux systems with kernel version 4.18+ for full functionality.
+2. **Linux-only**: The eBPF functionality is only available on Linux systems with kernel version 4.18+ for full functionality.
 
 ## Future Enhancements
 

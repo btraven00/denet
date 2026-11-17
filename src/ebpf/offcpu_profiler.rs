@@ -144,33 +144,6 @@ pub struct OffCpuProfiler {
 static DEBUG_MODE: AtomicBool = AtomicBool::new(false);
 
 // Helper to create off-CPU stats entries for a thread
-/// Offset of `child_pid` in a sched_process_fork record, from the tracepoint's
-/// format file (`field:pid_t child_pid;\toffset:20;...`)
-fn parse_fork_child_pid_offset(format: &str) -> Option<u32> {
-    format
-        .lines()
-        .find(|l| l.contains(" child_pid;"))?
-        .split(';')
-        .find_map(|f| f.trim().strip_prefix("offset:"))?
-        .parse()
-        .ok()
-}
-
-/// The running kernel's offset, or the pre-6.10 layout's if unreadable
-#[cfg(feature = "ebpf")]
-fn fork_child_pid_offset() -> &'static u32 {
-    static OFF: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    OFF.get_or_init(|| {
-        ["/sys/kernel/tracing", "/sys/kernel/debug/tracing"]
-            .iter()
-            .find_map(|d| {
-                std::fs::read_to_string(format!("{d}/events/sched/sched_process_fork/format")).ok()
-            })
-            .and_then(|f| parse_fork_child_pid_offset(&f))
-            .unwrap_or(44)
-    })
-}
-
 /// Cumulative off-CPU (time, count) per (pid, kernel stack id)
 type WaitTotals = HashMap<(u32, u32), (u64, u64)>;
 
@@ -352,10 +325,7 @@ impl OffCpuProfiler {
         debug::debug_println(&format!("eBPF bytecode preview: {}", hex_bytes.join(" ")));
 
         // Load the eBPF program
-        let bpf = match crate::ebpf::pidns_loader()
-            .set_global("fork_child_pid_off", fork_child_pid_offset(), true)
-            .load(OFFCPU_PROFILER_BYTECODE)
-        {
+        let bpf = match crate::ebpf::pidns_loader().load(OFFCPU_PROFILER_BYTECODE) {
             Ok(bpf) => {
                 debug::debug_println("Successfully loaded off-CPU profiler eBPF program");
                 bpf
@@ -388,20 +358,7 @@ impl OffCpuProfiler {
 
         // Fork and exit first, so no child of the tree forks unseen once
         // sched_switch starts recording
-        for (prog_name, event) in [
-            ("trace_process_fork", "sched_process_fork"),
-            ("trace_process_exit", "sched_process_exit"),
-        ] {
-            let tp: &mut TracePoint = bpf
-                .program_mut(prog_name)
-                .ok_or_else(|| std::io::Error::other(format!("{prog_name} not in eBPF object")))?
-                .try_into()
-                .map_err(|e| std::io::Error::other(format!("{prog_name}: {e}")))?;
-            tp.load()
-                .map_err(|e| std::io::Error::other(format!("load {prog_name}: {e}")))?;
-            tp.attach("sched", event)
-                .map_err(|e| std::io::Error::other(format!("attach {prog_name}: {e}")))?;
-        }
+        crate::ebpf::attach_proctree(bpf)?;
 
         // Get the sched_switch program
         let program = match bpf.program_mut("trace_sched_switch") {
@@ -1447,23 +1404,6 @@ mod tests {
         assert_eq!(got, vec![(11, 7, 900, 3), (10, 7, 250, 3), (10, 8, 40, 1)]);
         // nothing new: nothing reported
         assert!(super::wait_deltas(&cur, &cur).is_empty());
-    }
-
-    #[test]
-    fn test_fork_child_pid_offset_both_layouts() {
-        // kernel >= 6.10: comm fields are __data_loc strings
-        let new = "\tfield:__data_loc char[] parent_comm;\toffset:8;\tsize:4;\tsigned:0;\n\
-                   \tfield:pid_t parent_pid;\toffset:12;\tsize:4;\tsigned:1;\n\
-                   \tfield:__data_loc char[] child_comm;\toffset:16;\tsize:4;\tsigned:0;\n\
-                   \tfield:pid_t child_pid;\toffset:20;\tsize:4;\tsigned:1;\n";
-        assert_eq!(super::parse_fork_child_pid_offset(new), Some(20));
-        // before: char[16] arrays
-        let old = "\tfield:char parent_comm[16];\toffset:8;\tsize:16;\tsigned:0;\n\
-                   \tfield:pid_t parent_pid;\toffset:24;\tsize:4;\tsigned:1;\n\
-                   \tfield:char child_comm[16];\toffset:28;\tsize:16;\tsigned:0;\n\
-                   \tfield:pid_t child_pid;\toffset:44;\tsize:4;\tsigned:1;\n";
-        assert_eq!(super::parse_fork_child_pid_offset(old), Some(44));
-        assert_eq!(super::parse_fork_child_pid_offset("no such field"), None);
     }
 
     #[test]

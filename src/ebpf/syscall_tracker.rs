@@ -9,14 +9,15 @@ use std::collections::HashMap;
 
 // Real eBPF implementation using aya
 #[cfg(feature = "ebpf")]
-use aya::{maps::HashMap as BpfHashMap, Ebpf};
+use aya::{
+    maps::{Array as BpfArray, HashMap as BpfHashMap},
+    Ebpf,
+};
 
 #[cfg(feature = "ebpf")]
-#[allow(dead_code)]
 type EbpfMaps = (
     Ebpf,
-    BpfHashMap<aya::maps::MapData, u64, u32>,
-    BpfHashMap<aya::maps::MapData, u32, u64>,
+    BpfArray<aya::maps::MapData, u64>,
     BpfHashMap<aya::maps::MapData, u32, u8>,
 );
 
@@ -43,23 +44,17 @@ pub struct SyscallTracker {
     #[cfg(feature = "ebpf")]
     bpf: Option<Ebpf>,
 
+    /// Calls made by the tree, indexed by syscall number
     #[cfg(feature = "ebpf")]
-    syscall_counts: Option<BpfHashMap<aya::maps::MapData, u32, u64>>,
+    syscall_counts: Option<BpfArray<aya::maps::MapData, u64>>,
 
-    #[cfg(feature = "ebpf")]
-    _pid_syscall_map: Option<BpfHashMap<aya::maps::MapData, u64, u32>>,
-
-    /// Kernel-side filter: only these tgids are counted
+    /// Kernel-side filter: only these tgids are counted. The kernel adds the
+    /// children they fork itself (programs/proctree.h).
     #[cfg(feature = "ebpf")]
     pid_filter: Option<BpfHashMap<aya::maps::MapData, u32, u8>>,
 
     /// PIDs to monitor (process tree)
     monitored_pids: Vec<u32>,
-
-    /// Every PID ever in the tree. Counts are read for all of them, so a
-    /// child's syscalls stay in the totals after it exits.
-    #[cfg(feature = "ebpf")]
-    seen_pids: Vec<u32>,
 
     /// Last collected metrics for delta calculation
     _last_metrics: HashMap<u32, u64>,
@@ -125,7 +120,7 @@ impl SyscallTracker {
             }
 
             match Self::init_ebpf(&pids) {
-                Ok((bpf, pid_syscall_map, syscall_counts, pid_filter)) => {
+                Ok((bpf, syscall_counts, pid_filter)) => {
                     log::info!("✓ eBPF syscall tracker successfully initialized");
                     crate::ebpf::debug::debug_println(
                         "eBPF syscall tracker successfully initialized",
@@ -133,10 +128,8 @@ impl SyscallTracker {
                     Ok(Self {
                         bpf: Some(bpf),
                         syscall_counts: Some(syscall_counts),
-                        _pid_syscall_map: Some(pid_syscall_map),
                         pid_filter: Some(pid_filter),
                         monitored_pids: pids.clone(),
-                        seen_pids: pids.clone(),
                         _last_metrics: HashMap::new(),
                         _attached_programs: true,
                         init_error: None,
@@ -197,10 +190,8 @@ impl SyscallTracker {
                     Ok(Self {
                         bpf: None,
                         syscall_counts: None,
-                        _pid_syscall_map: None,
                         pid_filter: None,
                         monitored_pids: pids.clone(),
-                        seen_pids: pids.clone(),
                         _last_metrics: HashMap::new(),
                         _attached_programs: false,
                         init_error: Some(init_error_msg),
@@ -221,15 +212,7 @@ impl SyscallTracker {
     /// Initialize eBPF program and maps
     /// For this implementation, we'll use a hybrid approach with real Linux interfaces
     #[cfg(feature = "ebpf")]
-    #[allow(clippy::type_complexity)]
-    fn init_ebpf(
-        pids: &[u32],
-    ) -> Result<(
-        Ebpf,
-        BpfHashMap<aya::maps::MapData, u64, u32>,
-        BpfHashMap<aya::maps::MapData, u32, u64>,
-        BpfHashMap<aya::maps::MapData, u32, u8>,
-    )> {
+    fn init_ebpf(pids: &[u32]) -> Result<EbpfMaps> {
         // Load real eBPF bytecode!
         log::info!("Loading real eBPF program for syscall tracking...");
         crate::ebpf::debug::debug_println("Starting eBPF initialization");
@@ -700,75 +683,19 @@ impl SyscallTracker {
             crate::ebpf::debug::debug_println(&format!("- Map '{}' found", name));
         }
 
-        // Get the syscall_counts map
-        crate::ebpf::debug::debug_println("Getting syscall_counts map");
-        let syscall_counts_map = bpf.take_map("syscall_counts");
-        crate::ebpf::debug::debug_println(&format!(
-            "syscall_counts map exists: {}",
-            syscall_counts_map.is_some()
-        ));
-
-        if syscall_counts_map.is_none() {
-            crate::ebpf::debug::debug_println(
-                "WARNING - syscall_counts map not found in BPF program!",
-            );
-
-            // Try to dump the map names using bpftool if available
-            if let Ok(output) = std::process::Command::new("sh")
-                .arg("-c")
-                .arg("bpftool map list 2>/dev/null || echo 'bpftool not available'")
-                .output()
-            {
-                let map_list = String::from_utf8_lossy(&output.stdout);
-                if !map_list.contains("not available") {
-                    crate::ebpf::debug::debug_println(&format!("System BPF maps:\n{}", map_list));
-                }
-            }
-        }
-
-        let syscall_counts: BpfHashMap<_, u32, u64> =
-            BpfHashMap::try_from(syscall_counts_map.ok_or_else(|| {
-                crate::error::DenetError::EbpfInitError(
-                    "syscall_counts map not found in eBPF program".to_string(),
-                )
-            })?)
-            .map_err(|e| {
-                crate::ebpf::debug::debug_println(&format!(
-                    "Failed to create syscall_counts map: {}",
-                    e
-                ));
-                crate::error::DenetError::EbpfInitError(format!(
-                    "Failed to create syscall_counts map: {}",
-                    e
-                ))
+        let syscall_counts: BpfArray<_, u64> = bpf
+            .take_map("syscall_counts")
+            .ok_or_else(|| {
+                crate::error::DenetError::EbpfInitError("syscall_counts map not found".to_string())
+            })
+            .and_then(|m| {
+                BpfArray::try_from(m).map_err(|e| {
+                    crate::error::DenetError::EbpfInitError(format!(
+                        "syscall_counts map has unexpected shape: {}",
+                        e
+                    ))
+                })
             })?;
-        crate::ebpf::debug::debug_println("syscall_counts map created successfully");
-
-        // Get the pid_syscall_map map
-        crate::ebpf::debug::debug_println("Getting pid_syscall_map map");
-        let pid_syscall_map_obj = bpf.take_map("pid_syscall_map");
-        crate::ebpf::debug::debug_println(&format!(
-            "pid_syscall_map exists: {}",
-            pid_syscall_map_obj.is_some()
-        ));
-
-        let pid_syscall_map: BpfHashMap<_, u64, u32> =
-            BpfHashMap::try_from(pid_syscall_map_obj.ok_or_else(|| {
-                crate::error::DenetError::EbpfInitError(
-                    "pid_syscall_map map not found in eBPF program".to_string(),
-                )
-            })?)
-            .map_err(|e| {
-                crate::ebpf::debug::debug_println(&format!(
-                    "Failed to create pid_syscall_map: {}",
-                    e
-                ));
-                crate::error::DenetError::EbpfInitError(format!(
-                    "Failed to create pid_syscall_map: {}",
-                    e
-                ))
-            })?;
-        crate::ebpf::debug::debug_println("pid_syscall_map created successfully");
 
         // Seed the PID filter before attaching, so the tree is counted from
         // the first tracepoint hit
@@ -790,6 +717,9 @@ impl SyscallTracker {
                 crate::error::DenetError::EbpfInitError(format!("failed to seed pid_filter: {}", e))
             })?;
         }
+
+        // Before the syscall tracepoints, so no child forks unseen
+        crate::ebpf::attach_proctree(&mut bpf)?;
 
         // Syscalls we trace. Must stay in sync with TRACE_SYSCALL() entries
         // in src/ebpf/programs/syscall_tracer.c. Some entries (e.g. `fork`,
@@ -1017,7 +947,7 @@ impl SyscallTracker {
         }
 
         log::info!("✓ Real eBPF program loaded and attached to syscall tracepoints!");
-        Ok((bpf, pid_syscall_map, syscall_counts, pid_filter))
+        Ok((bpf, syscall_counts, pid_filter))
     }
 
     /// Update the list of PIDs to monitor
@@ -1027,16 +957,12 @@ impl SyscallTracker {
             let (added, removed) = diff_pids(&self.monitored_pids, &pids);
             if let Some(filter) = self.pid_filter.as_mut() {
                 // Removing gone PIDs keeps a reused PID from being counted
+                // (the kernel also drops a process when it exits)
                 for pid in &removed {
                     let _ = filter.remove(pid);
                 }
                 for &pid in &added {
                     let _ = filter.insert(pid, 1, 0);
-                }
-            }
-            for pid in added {
-                if !self.seen_pids.contains(&pid) {
-                    self.seen_pids.push(pid);
                 }
             }
         }
@@ -1116,52 +1042,20 @@ impl SyscallTracker {
     #[cfg(feature = "ebpf")]
     fn collect_syscall_metrics(&self) -> Result<SyscallMetrics> {
         if let Some(ref syscall_map) = self.syscall_counts {
-            let mut total_syscalls = 0u64;
-            let mut pid_syscall_counts = HashMap::new();
-            let mut syscall_counts = HashMap::new();
-
-            log::debug!("Attempting to read syscall counts from eBPF map");
-            log::debug!(
-                "Monitoring {} PIDs: {:?}",
-                self.monitored_pids.len(),
-                self.monitored_pids
-            );
-
-            // Read syscall counts from eBPF map for every PID the tree has had
-            for &pid in &self.seen_pids {
-                match syscall_map.get(&pid, 0) {
-                    Ok(count) => {
-                        log::debug!("PID {}: {} syscalls", pid, count);
-                        if count > 0 {
-                            pid_syscall_counts.insert(pid, count);
-                            total_syscalls += count;
-                        }
-                    }
-                    Err(e) => {
-                        log::debug!("Failed to get syscall count for PID {}: {:?}", pid, e);
-                    }
-                }
-            }
-
-            // Per-syscall counts: every map entry belongs to the tree (the
-            // kernel filter keeps others out), and reading them all covers
-            // every traced syscall, not a hand-kept subset
-            if let Some(ref pid_syscall_map) = self._pid_syscall_map {
-                for (key, count) in pid_syscall_map.iter().flatten() {
-                    let (pid, syscall_nr) = split_syscall_key(key);
-                    if self.seen_pids.contains(&pid) {
-                        *syscall_counts.entry(syscall_nr as u64).or_insert(0) += count as u64;
-                    }
-                }
-            }
+            // Every count belongs to the tree: the kernel filter keeps other
+            // processes out, and follows the tree's forks itself, so children
+            // that came and went between two samples are in here too
+            let syscall_counts: HashMap<u64, u64> = syscall_map
+                .iter()
+                .flatten()
+                .enumerate()
+                .filter(|&(_, count)| count > 0)
+                .map(|(nr, count)| (nr as u64, count))
+                .collect();
+            let total_syscalls: u64 = syscall_counts.values().sum();
 
             if total_syscalls > 0 {
                 // We have real eBPF data!
-                log::debug!(
-                    "Collected {} syscalls from eBPF for {} PIDs",
-                    total_syscalls,
-                    self.monitored_pids.len()
-                );
 
                 // Group by categories based on real syscall data
                 let mut by_category = HashMap::new();
@@ -1234,11 +1128,6 @@ impl Drop for SyscallTracker {
     }
 }
 
-/// Split a `pid_syscall_map` key, `pid << 32 | syscall_nr` (see syscall_tracer.c)
-fn split_syscall_key(key: u64) -> (u32, u32) {
-    ((key >> 32) as u32, key as u32)
-}
-
 /// PIDs added to and removed from the tree between two samples
 fn diff_pids(old: &[u32], new: &[u32]) -> (Vec<u32>, Vec<u32>) {
     let added = new.iter().filter(|p| !old.contains(p)).copied().collect();
@@ -1251,33 +1140,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_syscall_key_keeps_high_pids_apart() {
-        // Regression: the key was (pid << 16 | nr) in 32 bits, so PIDs above
-        // 65535 lost their high bits and unrelated processes shared counts
-        let (a, b) = (70_000u32, 70_000u32 + 65_536);
-        let key = |pid: u32, nr: u32| ((pid as u64) << 32) | nr as u64;
-        assert_ne!(key(a, 1), key(b, 1));
-        assert_eq!(split_syscall_key(key(2_070_381, 257)), (2_070_381, 257));
-    }
-
-    #[test]
     fn test_diff_pids() {
         let (added, removed) = diff_pids(&[1, 2, 3], &[2, 3, 4, 5]);
         assert_eq!(added, vec![4, 5]);
         assert_eq!(removed, vec![1]);
-    }
-
-    #[cfg(feature = "ebpf")]
-    #[test]
-    fn test_exited_children_stay_in_read_set() {
-        // Regression: counts were read only for PIDs alive at each sample,
-        // so a child's syscalls vanished from the totals when it exited and
-        // the last record showed the parent shell alone
-        let mut tracker = SyscallTracker::new(vec![1]).unwrap();
-        tracker.update_pids(vec![1, 2]).unwrap(); // child 2 appears
-        tracker.update_pids(vec![1]).unwrap(); // and exits
-        assert_eq!(tracker.monitored_pids, vec![1]);
-        assert!(tracker.seen_pids.contains(&2));
     }
 
     #[test]

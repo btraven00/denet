@@ -115,6 +115,8 @@ impl NetMonitor {
             })?;
         }
 
+        crate::ebpf::attach_proctree(&mut bpf)?;
+
         for (prog_name, fn_name) in [
             ("trace_tcp_sendmsg", "tcp_sendmsg"),
             ("trace_tcp_recvmsg_ret", "tcp_recvmsg"),
@@ -168,12 +170,25 @@ impl NetMonitor {
         };
 
         let new: HashSet<u32> = pids.iter().copied().collect();
-        for gone in self.monitored_pids.difference(&new) {
+        // Every exited process's entry is folded into the retired totals, not
+        // only those this sampler saw: the kernel follows forks, so a child
+        // can come and go between two samples. One still alive but not yet
+        // sampled keeps its entry.
+        let exited: Vec<u32> = net_bytes
+            .keys()
+            .flatten()
+            .filter(|pid| {
+                !new.contains(pid) && !std::path::Path::new(&format!("/proc/{pid}")).exists()
+            })
+            .collect();
+        for gone in &exited {
             if let Ok([rx, tx]) = net_bytes.get(gone, 0) {
                 self.retired_rx += rx;
                 self.retired_tx += tx;
             }
             let _ = net_bytes.remove(gone);
+        }
+        for gone in self.monitored_pids.difference(&new) {
             let _ = pid_filter.remove(gone);
         }
         for added in new.difference(&self.monitored_pids) {
