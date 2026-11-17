@@ -286,10 +286,11 @@ fn execute_monitoring_with_output(
 
     if args.gpu && !args.quiet {
         match (monitor.enable_gpu(), cfg!(target_os = "macos")) {
+            _ if !cfg!(feature = "gpu") => eprintln!("Warning: --gpu ignored: this denet was built without the `gpu` feature. Reinstall with `cargo install denet --features gpu`"),
             (true, true) => eprintln!("Note: Apple Silicon GPU monitoring is experimental"),
             (true, false) => {}
-            (false, true) => eprintln!("Warning: --gpu given, but no Apple Silicon GPU could be monitored (no AGXAccelerator, or built without the `gpu` feature)"),
-            (false, false) => eprintln!("Warning: --gpu given, but no NVIDIA GPU could be monitored (driver library missing, no device, or built without the `gpu` feature)"),
+            (false, true) => eprintln!("Warning: --gpu given, but no Apple Silicon GPU could be monitored (no AGXAccelerator)"),
+            (false, false) => eprintln!("Warning: --gpu given, but no NVIDIA GPU could be monitored (driver library missing or no device)"),
         }
     } else if args.gpu {
         monitor.enable_gpu();
