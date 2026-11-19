@@ -15,31 +15,22 @@ libbpf headers are vendored in the repo (`src/ebpf/include/bpf/`), so
 for details on other distros and what the `.o` bytecode needs at
 runtime.
 
-### Critical Kernel Settings
+### Kernel Settings
 
-For eBPF to work with capabilities (non-root), you **MUST** configure these kernel settings:
+With the capabilities below (or as root), no sysctl needs changing. These
+settings restrict processes *without* the matching capability, so denet with
+`CAP_BPF` and `CAP_PERFMON` works under the hardened defaults:
 
-```bash
-# Check current values
-cat /proc/sys/kernel/unprivileged_bpf_disabled
-cat /proc/sys/kernel/kptr_restrict
-cat /proc/sys/kernel/perf_event_paranoid
+- `kernel.unprivileged_bpf_disabled` = 1 or 2: only blocks processes without
+  `CAP_BPF`.
+- `kernel.perf_event_paranoid` = 2, or Ubuntu's 3 and 4: only blocks
+  processes without `CAP_PERFMON`.
+- `kernel.kptr_restrict`: does not affect loading or attaching. It only
+  decides whether off-CPU kernel stacks get function names or hex addresses
+  (see [Off-CPU Waits and Kernel Stacks](#off-cpu-waits-and-kernel-stacks)).
 
-# Required settings for non-root eBPF access:
-sudo sysctl kernel.unprivileged_bpf_disabled=0  # Allow unprivileged BPF
-sudo sysctl kernel.kptr_restrict=0               # CRITICAL: Allow kernel pointer access
-
-# Make settings persistent across reboots
-echo "kernel.unprivileged_bpf_disabled=0" | sudo tee -a /etc/sysctl.conf
-echo "kernel.kptr_restrict=0" | sudo tee -a /etc/sysctl.conf
-
-# Optional: Check perf_event_paranoid (may affect some eBPF operations)
-cat /proc/sys/kernel/perf_event_paranoid
-# If value is > 1, you may need to lower it for full functionality:
-# sudo sysctl kernel.perf_event_paranoid=1
-```
-
-**Important**: The `kptr_restrict=0` setting is essential. Without it, eBPF will fail with obscure errors even with proper capabilities.
+Checked on Ubuntu 26.04 (kernel 7.0) with `unprivileged_bpf_disabled=2`,
+`perf_event_paranoid=4` and `kptr_restrict=1`.
 
 ## Building with eBPF Support
 
@@ -62,7 +53,6 @@ sudo target/release/denet --enable-ebpf run -- your_command_here
 eBPF tracepoints require:
 1. The `CAP_BPF`, `CAP_PERFMON`, and `CAP_DAC_READ_SEARCH` capabilities
 2. Access to the tracefs filesystem in `/sys/kernel/debug/tracing`
-3. Proper kernel settings (see Prerequisites above)
 
 #### 1. Add Required Capabilities to the Binary
 
@@ -146,32 +136,24 @@ If you encounter issues with eBPF:
    ```
    Should show `CONFIG_BPF=y` and related options.
 
-2. **Check ALL critical kernel settings**:
-   ```bash
-   # All of these must be correct for non-root eBPF to work
-   cat /proc/sys/kernel/unprivileged_bpf_disabled  # Must be 0
-   cat /proc/sys/kernel/kptr_restrict              # Must be 0 (CRITICAL!)
-   cat /proc/sys/kernel/perf_event_paranoid        # Check value (2 may cause issues)
-   ```
-
-3. **Test tracefs access**:
+2. **Test tracefs access**:
    ```bash
    ls -la /sys/kernel/debug/tracing/events/syscalls
    ```
    You should be able to read this directory.
 
-4. **Verify capabilities**:
+3. **Verify capabilities**:
    ```bash
    getcap /path/to/denet/target/release/denet
    ```
    Should show `cap_dac_read_search,cap_perfmon,cap_bpf=ep`.
 
-5. **Check if you're in the tracing group**:
+4. **Check if you're in the tracing group**:
    ```bash
    groups $USER | grep tracing
    ```
 
-6. **Run the eBPF diagnostic tool**:
+5. **Run the eBPF diagnostic tool**:
    ```bash
    # Build the diagnostic tool
    cargo build --release --bin ebpf_diag --features ebpf
@@ -186,7 +168,6 @@ If you encounter issues with eBPF:
 ### Common Issues and Solutions
 
 1. **"Invalid ELF header size or alignment" error**:
-   - Check `kernel.kptr_restrict` is set to 0
    - Verify both CAP_BPF and CAP_PERFMON are set
 
 2. **"No eBPF data available from monitored PIDs"**:
@@ -194,8 +175,9 @@ If you encounter issues with eBPF:
    - Commands like `sleep` make very few syscalls - try `wget` or file operations instead
 
 3. **Works with sudo but not with capabilities**:
-   - Almost always due to `kernel.kptr_restrict` not being 0
-   - Check all kernel settings listed above
+   - Check `getcap` shows all three capabilities; copying the binary or
+     `chown` on it clears them
+   - A binary on a `nosuid` mount ignores its file capabilities
 
 ## Using eBPF Features
 
