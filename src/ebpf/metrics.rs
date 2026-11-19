@@ -506,6 +506,20 @@ mod tests {
 
     const UNAME: u64 = 63;
 
+    #[test]
+    fn every_traced_syscall_has_a_name() {
+        // regression: rt_sigprocmask was traced but reported as syscall_14
+        let src = include_str!("programs/syscall_tracer.c");
+        let mut n = 0;
+        for line in src.lines().filter(|l| l.starts_with("TRACE_SYSCALL(")) {
+            let args = line["TRACE_SYSCALL(".len()..].trim_end_matches(')');
+            let (name, nr) = args.split_once(',').unwrap();
+            assert_eq!(syscall_name(nr.trim().parse().unwrap()), name.trim(), "{line}");
+            n += 1;
+        }
+        assert!(n > 20, "parsed only {n} TRACE_SYSCALL lines");
+    }
+
     fn cat(nr: u64) -> String {
         categorize_syscall(nr)
     }
