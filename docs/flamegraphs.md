@@ -11,6 +11,17 @@ stacks only. It shows *what kind of wait* a process was in (`pipe_write`,
 `futex_wait`, `do_nanosleep`), not which line of your program caused it, and
 it says nothing about time spent running on the CPU.
 
+## What is a flamegraph?
+
+A [flamegraph](https://www.brendangregg.com/flamegraphs.html) draws many
+sampled stacks at once: each box is a function, its width is the share of time
+spent in it, and each box sits on top of its caller. The widest towers are
+where the time went, so it is a fast way to find the one path that matters
+among thousands. An
+[off-CPU flamegraph](https://www.brendangregg.com/FlameGraphs/offcpuflamegraphs.html)
+does the same for time spent waiting, which a CPU profiler never sees. It is
+the usual answer when a job is slow but its CPU usage is low.
+
 ## Quick start
 
 ```bash

@@ -19,6 +19,9 @@ nav = [
     { "eBPF profiling" = "guides/ebpf.md" },
     { "Portability" = "guides/portability.md" },
   ] },
+  { "Advanced topics" = [
+    { "Flamegraphs" = "advanced/flamegraphs.md" },
+  ] },
   { "License" = "license.md" },
 ]
 
