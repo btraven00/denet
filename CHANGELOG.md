@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.11.3](https://github.com/btraven00/denet/compare/v0.11.2...v0.11.3) (2026-11-19)
+
+
+### Bug Fixes
+
+* **cli:** say when --gpu is ignored because the gpu feature is missing ([5839bdc](https://github.com/btraven00/denet/commit/5839bdcc7a7b120461f64e5e7dedf7ecc49eddf6))
+* **ebpf:** count short-lived children from their first syscall ([62f956f](https://github.com/btraven00/denet/commit/62f956f133b76d23ef8931f6c14ee4d69d2da44c))
+* **ebpf:** retry sched tracepoint attach on 6.6.0 eventfs ENOENT ([9414a24](https://github.com/btraven00/denet/commit/9414a246702fd2e0f91b59664dba04cf43fda3a0))
+* **report:** count each phase's syscalls from cumulative counts ([62129d1](https://github.com/btraven00/denet/commit/62129d12ca70f3e0666af4dbf0764f9026c6ed5c))
+
 ## [0.11.2](https://github.com/btraven00/denet/compare/v0.11.1...v0.11.2) (2026-11-16)
 
 
