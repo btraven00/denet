@@ -206,10 +206,10 @@ system-wide approximation. Long runs are downsampled to at most 512 time slots
 | `disk` | yes | Block-layer read/write bytes/s |
 | `net` | no | Network bytes/s, plus a per-PID breakdown with eBPF |
 | `psi` | no | Memory stall (PSI `some`/`full`) |
-| `syscalls` | no | Syscall mix per regime (eBPF) |
+| `syscalls` | with eBPF data | Syscall mix per regime (eBPF) |
 
 ```bash
-denet-report run.jsonl                      # cpu, mem, disk
+denet-report run.jsonl                      # cpu, mem, disk (+ syscalls with eBPF)
 denet-report run.jsonl --panels cpu,mem,net # exactly these
 denet-report run.jsonl --panels all
 ```
@@ -231,7 +231,7 @@ alternating bands across the timelines and summarised in a table (span, mean
 CPU, mean RSS, dominant activity). Short runs (fewer than ~8 slots) are left
 unsegmented.
 
-The opt-in panels need data the run may not have:
+The `psi` and `syscalls` panels need data the run may not have:
 
 - **Memory pressure (PSI)**: a `some`/`full` memory-stall timeline, drawn when
   requested and PSI was recorded. A flat-zero trace is kept: "no memory
@@ -239,7 +239,7 @@ The opt-in panels need data the run may not have:
 - **Syscalls by category, per regime (eBPF)**: a normalized stacked bar of the
   syscall mix (file_io / memory / network / …) for each regime, so you can see
   how the syscall profile shifts between phases. Every regime stays on the axis
-  (an empty row means that phase made no tracked syscalls). If you request it
-  and there is no eBPF syscall data, the header says so. The per-sample counts are
-  alive-PID snapshots rather than clean per-window deltas, so the bar shows the
-  phase's typical *mix* (proportions), not absolute call totals.
+  (an empty row means that phase made no tracked syscalls). Drawn by default
+  when the run has eBPF syscall data; if you request it and there is none, the
+  header says so. Each bar counts the calls made during that phase, including
+  those of children that exited between samples.

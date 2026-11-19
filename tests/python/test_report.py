@@ -228,33 +228,43 @@ def _tree_record_syscalls(ts_ms, cpu, by_category):
     return r
 
 
-def test_syscalls_per_regime(tmp_path):
-    # per-sample snapshots (not cumulative): phase 1 is file_io-heavy, phase 2 memory-heavy
+def _phased_syscall_run(tmp_path):
+    # cumulative counts, as denet writes them: phase 1 adds file_io calls, phase 2 memory calls
     records = [{"kind": "metadata", "pid": 1, "cmd": ["x"], "executable": "x", "t0_ms": 0}]
-    ts = 0
-    for _ in range(15):  # phase 1: file_io heavy
-        records.append(_tree_record_syscalls(ts, cpu=90.0, by_category={"file_io": 100, "memory": 5}))
-        ts += 100
-    for _ in range(15):  # phase 2: memory heavy
-        records.append(_tree_record_syscalls(ts, cpu=5.0, by_category={"file_io": 2, "memory": 100}))
-        ts += 100
+    ts, file_io, memory = 0, 0, 0
+    for phase in range(2):
+        for _ in range(15):
+            file_io += 100 if phase == 0 else 0
+            memory += 100 if phase == 1 else 0
+            cpu = 90.0 if phase == 0 else 5.0
+            records.append(_tree_record_syscalls(ts, cpu=cpu, by_category={"file_io": file_io, "memory": memory}))
+            ts += 100
     src = tmp_path / "sc.jsonl"
     _write_jsonl(src, records)
+    return src
 
+
+def test_syscalls_per_regime(tmp_path):
+    src = _phased_syscall_run(tmp_path)
     _, rows = _load_records(str(src))
     df, _ = _to_frame(rows)
     regimes = _detect_regimes(_slotted(df))
+    assert len(regimes) > 1
     breakdown = _syscalls_per_regime(_syscall_frame(rows), regimes)
 
     by_regime = {}
     for b in breakdown:
         by_regime.setdefault(b["regime"], {})[b["category"]] = b["count"]
-    # first regime should be dominated by file_io, a later one by memory
-    assert by_regime["R1"]["file_io"] > by_regime["R1"].get("memory", 0)
-    last = by_regime[max(by_regime)]
-    assert last.get("memory", 0) > last.get("file_io", 0)
+    # regression: the mean of cumulative counts left phase 1's file_io dominating every later regime
+    assert by_regime["R1"] == {"file_io": 1500}
+    assert by_regime[f"R{len(regimes)}"] == {"memory": 1500}
+    # every call lands in exactly one regime
+    assert sum(b["count"] for b in breakdown) == 3000
 
-    generate_report(str(src), str(tmp_path / "r.html"), panels="cpu,syscalls")
+
+def test_syscalls_shown_by_default_with_ebpf_data(tmp_path):
+    src = _phased_syscall_run(tmp_path)
+    generate_report(str(src), str(tmp_path / "r.html"))
     assert "Syscalls by category" in (tmp_path / "r.html").read_text()
 
 
@@ -468,8 +478,14 @@ def test_parse_panels():
 def test_select_defaults_hide_empty_and_list_opt_ins():
     status = {**OK, "disk": "empty", "net": "machine-wide", "psi": "missing"}
     shown, notes = _select_panels(None, status)
-    assert shown == ["cpu", "mem"]
-    assert notes == ["disk (empty)", "net", "syscalls"]  # psi has no data: not offered
+    assert shown == ["cpu", "mem", "syscalls"]
+    assert notes == ["disk (empty)", "net"]  # psi has no data: not offered
+
+
+def test_select_defaults_skip_syscalls_without_ebpf_quietly():
+    shown, notes = _select_panels(None, {**OK, "syscalls": "missing"})
+    assert "syscalls" not in shown
+    assert not any("syscalls" in n for n in notes)
 
 
 def test_select_requested_panels_shown_even_if_flat_or_machine_wide():
@@ -482,7 +498,7 @@ def test_select_requested_panels_shown_even_if_flat_or_machine_wide():
 def test_select_never_renders_nothing():
     status = {**OK, "cpu": "empty", "mem": "empty", "disk": "empty"}
     shown, notes = _select_panels(None, status)
-    assert shown == ["cpu"]
+    assert shown == ["cpu", "syscalls"]  # a timeline, not the syscall bar alone
     assert not any(n.startswith("cpu") for n in notes)
 
 
