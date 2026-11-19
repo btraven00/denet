@@ -18,7 +18,7 @@ from typing import Any
 MAX_SLOTS = 512  # ponytail: fixed slot budget; make it a CLI flag if someone needs finer resolution
 
 PANELS = ("cpu", "mem", "disk", "net", "psi", "syscalls")
-DEFAULT_PANELS = ("cpu", "mem", "disk")
+DEFAULT_PANELS = ("cpu", "mem", "disk", "syscalls")  # syscalls: only when the run has eBPF data
 # Timeline columns each panel contributes to regime detection (psi/syscalls: none).
 REGIME_COLS = {"cpu": ["cpu"], "mem": ["mem_mib"], "disk": ["read_rate", "write_rate"], "net": ["rx_rate", "tx_rate"]}
 
@@ -72,10 +72,10 @@ def _select_panels(requested: tuple[str, ...] | None, status: dict[str, str]) ->
         notes = [f"{p} (no data)" for p in requested if status[p] == "missing"]
     else:
         shown = [p for p in DEFAULT_PANELS if status[p] == "ok"]
-        notes = [f"{p} ({status[p]})" for p in DEFAULT_PANELS if status[p] != "ok"]
+        notes = [f"{p} ({status[p]})" for p in DEFAULT_PANELS if status[p] not in ("ok", "missing")]
         notes += [p for p in PANELS if p not in DEFAULT_PANELS and status[p] != "missing"]
-    if not shown:  # never render an empty report
-        shown = ["cpu"]
+    if not set(shown) - {"syscalls"}:  # always draw at least one timeline
+        shown = ["cpu", *shown]
         notes = [n for n in notes if not n.startswith("cpu")]
     return shown, notes
 
@@ -342,9 +342,9 @@ def _detect_regimes(df, max_regimes: int = 6, cols: list[str] | None = None) -> 
 def _syscall_frame(rows: list[dict[str, Any]]):
     """Frame of eBPF syscall counts per category over time, or None.
 
-    Time base matches `_to_frame` (first row). Each sample's counts are the sum
-    over the currently-alive monitored PIDs, so the totals rise and fall as
-    short-lived children come and go (not a clean cumulative counter).
+    Time base matches `_to_frame` (first row). Counts are cumulative since the
+    start of the run: the kernel counts every call of the tree, including
+    children that exited between samples.
     """
     import pandas as pd
 
@@ -364,22 +364,28 @@ def _syscall_frame(rows: list[dict[str, Any]]):
 
 
 def _syscalls_per_regime(sc_df, regimes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Mean per-sample syscall counts per category within each regime → [{regime, category, count}].
+    """Syscalls made per category within each regime → [{regime, category, count}].
 
-    The underlying counts are alive-PID snapshots (see `_syscall_frame`), not
-    clean per-window deltas, so the mean of the snapshots in a regime is used as
-    a proxy for that phase's typical syscall mix. Because the chart normalizes
-    each regime's bar, mean vs sum yields identical proportions.
+    A regime's calls are the increase of the cumulative counts over it. Each
+    sample's increase goes to the regime that started last at or before it, so
+    samples between two regimes' slots are not lost, and the regimes add up to
+    the run's total. Regimes with no calls are left out.
     """
-    spans = regimes or [{"t0": float(sc_df["t"].min()), "t1": float(sc_df["t"].max())}]
+    import numpy as np
+
     cats = [c for c in sc_df.columns if c != "t"]
+    # ponytail: clip(0) because denet <= 0.11.2 wrote alive-PID snapshots, which fall when a child exits
+    calls = sc_df[cats].diff().fillna(sc_df[cats]).clip(lower=0)
+    spans = regimes or [{"t0": float(sc_df["t"].min())}]
+    order = sorted(range(len(spans)), key=lambda i: spans[i]["t0"])
+    starts = [spans[i]["t0"] for i in order]
+    pos = np.searchsorted(starts, sc_df["t"].to_numpy(), side="right") - 1
+    owner = [order[max(k, 0)] for k in pos]  # samples before the first regime belong to it
+    sums = calls.groupby(owner).sum()
     out = []
-    for i, r in enumerate(spans):
-        span = sc_df[(sc_df["t"] >= r["t0"]) & (sc_df["t"] <= r["t1"])]
-        if span.empty:
-            continue
+    for i in sums.index:
         for c in cats:
-            val = float(span[c].mean())
+            val = float(sums.loc[i, c])
             if val > 0:
                 out.append({"regime": f"R{i + 1}", "category": c, "count": val})
     return out
@@ -487,7 +493,8 @@ def generate_report(input_path: str, output_path: str | None = None, fmt: str | 
 
     panels selects the timelines: a list or comma string of cpu, mem, disk,
     net, psi, syscalls, or "all". Default (None): cpu, mem and disk, each
-    dropped when all zero; see ``_select_panels``.
+    dropped when all zero, and syscalls when the run has eBPF data; see
+    ``_select_panels``.
     """
     requested = _parse_panels(panels)
     try:
@@ -613,7 +620,8 @@ def main() -> None:
             "  svg   static vector image; no JavaScript.\n\n"
             "panels:\n"
             "  cpu, mem, disk      shown by default; each dropped when all zero\n"
-            "  net, psi, syscalls  opt-in. Without eBPF, net is machine-wide (every\n"
+            "  syscalls            shown by default when the run has eBPF data\n"
+            "  net, psi            opt-in. Without eBPF, net is machine-wide (every\n"
             "                      process on the host), as is psi without per-process PSI\n"
             "  Phases are detected only from shown, per-process panels.\n\n"
             "examples:\n"
