@@ -14,6 +14,9 @@ denet \- a streaming process monitor
 .br
 .B denet stats
 \fIFILE\fR
+.br
+.B denet report
+\fIFILE\fR [\fIREPORT-OPTIONS\fR]
 .SH DESCRIPTION
 .B denet
 tracks the CPU, memory, disk I/O, threads and network bytes of a process and
@@ -37,6 +40,17 @@ Monitor a process that is already running.
 .BI stats " FILE"
 Print summary statistics from a metrics file written with
 .BR \-\-out .
+.TP
+.BI report " FILE" " " \fR...
+Draw a report (HTML, PNG or SVG) from a metrics file. Runs
+.B denet\-report
+from the Python package (\fBpip install 'denet[report]'\fR) if it is on
+.BR PATH ,
+otherwise the same version through
+.BR uvx .
+Every argument is passed on;
+.B denet report \-\-help
+lists the report's options.
 .SH OPTIONS
 Options go before the command.
 .TP

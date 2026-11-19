@@ -171,6 +171,11 @@ denet-report metrics.jsonl -f svg -o r.svg # static SVG
 denet.report ...` is equivalent. Run `denet-report --help` for the full option
 list.
 
+The `denet` binary runs the same report as `denet report metrics.jsonl ...`:
+it uses `denet-report` if it is on PATH, otherwise it runs the same version
+as the binary through [uv](https://docs.astral.sh/uv/) (`uvx`), which fetches
+it on first use. Either way the report itself is the Python package.
+
 Or from Python:
 
 ```python

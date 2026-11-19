@@ -92,9 +92,9 @@ denet --tui run python train.py
 # Save metrics as JSONL
 denet --json --out metrics.jsonl run python train.py
 
-# Turn a saved run into a report (timelines, regime detection, eBPF syscalls)
-pip install 'denet[report]'
-denet-report metrics.jsonl -o report.html
+# Turn a saved run into a report (timelines, regime detection, eBPF syscalls).
+# Needs `pip install 'denet[report]'`, or uv, which fetches it on first use
+denet report metrics.jsonl -o report.html
 ```
 
 CPU usage follows the `top` convention: 100% = one fully utilized core, so a 4-core workload shows 400%.

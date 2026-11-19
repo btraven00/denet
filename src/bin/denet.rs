@@ -132,10 +132,26 @@ enum Commands {
         #[clap(required = true)]
         file: PathBuf,
     },
+
+    /// Draw a report (HTML, PNG or SVG) from a saved metrics file
+    ///
+    /// Runs the Python `denet-report` from `pip install 'denet[report]'` if it
+    /// is on PATH, otherwise the same version as this binary through `uvx`.
+    /// Every argument is passed on: `denet report --help` shows its options.
+    #[command(disable_help_flag = true)]
+    Report {
+        /// Metrics file, then the report's own options
+        #[clap(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 fn main() -> Result<ExitCode> {
     let args = Args::parse();
+
+    if let Commands::Report { args } = &args.command {
+        return Ok(run_report(args));
+    }
 
     if let Commands::Stats { file } = &args.command {
         handle_stats_command(file, &args)?;
@@ -145,6 +161,34 @@ fn main() -> Result<ExitCode> {
     // Propagate the monitored command's status so `denet run false` fails.
     let code = handle_monitoring_commands(&args)?;
     Ok(ExitCode::from(code.clamp(0, 255) as u8))
+}
+
+/// Hand off to the Python report: `denet-report` on PATH, else this version
+/// of it through `uvx`. The report lives in Python only (pandas + Altair).
+fn run_report(args: &[String]) -> ExitCode {
+    use std::os::unix::process::CommandExt;
+
+    // exec only returns on failure; NotFound means try the next way
+    let err = std::process::Command::new("denet-report").args(args).exec();
+    if err.kind() != io::ErrorKind::NotFound {
+        eprintln!("Error: could not run denet-report: {err}");
+        return ExitCode::FAILURE;
+    }
+    let package = format!("denet[report]=={}", env!("CARGO_PKG_VERSION"));
+    let err = std::process::Command::new("uvx")
+        .args(["--from", &package, "denet-report"])
+        .args(args)
+        .exec();
+    if err.kind() == io::ErrorKind::NotFound {
+        eprintln!(
+            "Error: denet report needs the Python package. Either:\n  \
+             pip install '{package}'   (puts denet-report on PATH)\n  \
+             or install uv (https://docs.astral.sh/uv/) and denet runs it for you"
+        );
+    } else {
+        eprintln!("Error: could not run uvx: {err}");
+    }
+    ExitCode::FAILURE
 }
 
 fn handle_stats_command(file: &PathBuf, args: &Args) -> Result<()> {
@@ -187,7 +231,7 @@ fn create_monitor_from_args(args: &Args) -> Result<ProcessMonitor> {
     match &args.command {
         Commands::Run { command } => create_monitor_for_command(command, args),
         Commands::Attach { pid } => create_monitor_for_pid(*pid, args),
-        Commands::Stats { .. } => unreachable!(),
+        Commands::Stats { .. } | Commands::Report { .. } => unreachable!(),
     }
 }
 
