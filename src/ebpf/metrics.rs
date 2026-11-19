@@ -514,7 +514,11 @@ mod tests {
         for line in src.lines().filter(|l| l.starts_with("TRACE_SYSCALL(")) {
             let args = line["TRACE_SYSCALL(".len()..].trim_end_matches(')');
             let (name, nr) = args.split_once(',').unwrap();
-            assert_eq!(syscall_name(nr.trim().parse().unwrap()), name.trim(), "{line}");
+            assert_eq!(
+                syscall_name(nr.trim().parse().unwrap()),
+                name.trim(),
+                "{line}"
+            );
             n += 1;
         }
         assert!(n > 20, "parsed only {n} TRACE_SYSCALL lines");
