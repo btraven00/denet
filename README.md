@@ -4,6 +4,7 @@
 
 Denet is a lightweight streaming process monitor. It tracks CPU, memory, I/O, and threads for a running process (and its children), with adaptive sampling and optional GPU / eBPF support.
 
+[![docs](https://img.shields.io/badge/docs-btraven00.github.io%2Fdenet-blue)](https://btraven00.github.io/denet/)
 [![PyPI version](https://badge.fury.io/py/denet.svg)](https://badge.fury.io/py/denet)
 [![Crates.io](https://img.shields.io/crates/v/denet.svg)](https://crates.io/crates/denet)
 [![conda-forge](https://img.shields.io/conda/vn/conda-forge/denet.svg)](https://anaconda.org/channels/conda-forge/packages/denet/overview)
@@ -107,12 +108,14 @@ denet -i 50 -m 500 run python train.py
 
 ## Further reading
 
+Full documentation: <https://btraven00.github.io/denet/>
+
 | Topic | Doc |
 |---|---|
 | Python API (`ProcessMonitor`, `execute_with_monitoring`, analysis) | [docs/python-api.md](docs/python-api.md) |
 | HTML/PNG/SVG reports (`denet-report`) | [docs/python-api.md#reports](docs/python-api.md#reports) |
-| GPU monitoring | [docs/gpu.md](docs/gpu.md) |
-| eBPF profiling (off-CPU, syscall tracking) | [docs/ebpf.md](docs/ebpf.md) |
+| GPU monitoring | [GPU guide](https://btraven00.github.io/denet/guides/gpu/) |
+| eBPF profiling (off-CPU, syscall tracking) | [eBPF guide](https://btraven00.github.io/denet/guides/ebpf/) |
 | Disk I/O metrics and how to interpret them | [docs/disk-io.md](docs/disk-io.md) |
 | Output data format | [docs/data-format.md](docs/data-format.md) |
 | Development setup | [docs/dev.md](docs/dev.md) |
