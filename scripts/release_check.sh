@@ -18,6 +18,7 @@
 #      processes that exit before the end. Syscalls and off-CPU time must be
 #      attributed to the children and survive their exit; run on the host
 #      and again inside a new PID namespace (as in a container, kernel >= 5.7)
+#  3f. 3c again as the invoking user with setcap instead of root
 #  3e. GPU PCIe throughput: a CUDA host<->device copy loop must show up in
 #      pcie_tx_kbps/pcie_rx_kbps (skipped without a GPU or nvcc)
 #   4. eBPF net tests + end-to-end eBPF checks under each KERNEL in a
@@ -280,6 +281,15 @@ GPU=0; nvidia-smi -L >/dev/null 2>&1 && GPU=1
 RAPL=0; [[ -e /sys/class/powercap/intel-rapl:0/energy_uj ]] && RAPL=1
 step "3. end to end ($(uname -r))" "\`denet run --enable-ebpf\` as root on a job that moves 2 MB over loopback from its first instant. Must record eBPF net bytes$( ((GPU)) && echo ", a GPU")$( ((RAPL)) && echo ", RAPL energy"). Then (3c) a job whose work is done by short-lived children: their syscalls and off-CPU time must be attributed and kept after they exit, on the host and in a new PID namespace."
 sudo ./scripts/release_check.sh --as-root host "$GPU" "$RAPL" || FAILED=1
+
+step "3f. process tree with capabilities only" "3c as the invoking user, with cap_bpf,cap_perfmon,cap_dac_read_search on the binary instead of root (0.11.2 counted almost none of the children's syscalls this way)."
+# ponytail: setcap in place like test_ebpf_caps.sh; a nosuid mount would void the caps
+if sudo setcap cap_bpf,cap_perfmon,cap_dac_read_search=ep "$DENET"; then
+    e2e_tree "process tree (setcap, no root)"
+    sudo setcap -r "$DENET"
+else
+    fail "setcap $DENET"
+fi
 
 step "3b. end to end, static musl binary" "Same as 3 with a fully static build. eBPF and RAPL must work; GPU is not expected (NVML is a glibc library a static binary can't load)."
 if ! rustup target list --installed 2>/dev/null | grep -qx "$MUSL"; then
