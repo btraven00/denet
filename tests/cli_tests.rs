@@ -550,3 +550,43 @@ fn test_tui_refuses_without_terminal() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("--tui needs stdout to be a terminal"));
     assert!(!String::from_utf8_lossy(&output.stdout).contains("should-not-run"));
 }
+
+/// `denet report` hands every argument, --help included, to the Python
+/// `denet-report` on PATH, and passes its exit code back.
+#[test]
+fn test_report_runs_denet_report_from_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let fake = dir.path().join("denet-report");
+    std::fs::write(&fake, "#!/bin/sh\necho \"args: $*\"\nexit 3\n").unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_denet"))
+        .args(["report", "run.jsonl", "--panels", "all", "--help"])
+        .env("PATH", format!("{}:/usr/bin:/bin", dir.path().display()))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "args: run.jsonl --panels all --help\n"
+    );
+}
+
+/// Without denet-report or uvx, it says how to get either, and fails.
+#[test]
+fn test_report_without_python_says_how_to_install() {
+    let dir = tempfile::tempdir().unwrap(); // a PATH with nothing on it
+    let output = Command::new(env!("CARGO_BIN_EXE_denet"))
+        .args(["report", "run.jsonl"])
+        .env("PATH", dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(&format!(
+        "pip install 'denet[report]=={}'",
+        env!("CARGO_PKG_VERSION")
+    )));
+    assert!(stderr.contains("install uv"));
+}
