@@ -91,8 +91,24 @@ pub(crate) fn attach_proctree(bpf: &mut aya::Ebpf) -> crate::error::Result<()> {
             .map_err(|e| err(prog_name, &e))?;
         tp.load()
             .map_err(|e| err(&format!("load {prog_name}"), &e))?;
-        tp.attach("sched", event)
-            .map_err(|e| err(&format!("attach {prog_name}"), &e))?;
+        // ponytail: 6.6.0's eventfs can fail a concurrent first lookup of an
+        // events/ dir after boot with ENOENT; a short retry gets past it
+        let mut res = tp.attach("sched", event);
+        for _ in 0..3 {
+            if res.is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            res = tp.attach("sched", event);
+        }
+        res.map_err(|e| {
+            // aya's Display shows only the file; the io error is the source
+            let src = std::error::Error::source(&e).map(|s| format!(" ({s})"));
+            err(
+                &format!("attach {prog_name}"),
+                &format!("{e}{}", src.unwrap_or_default()),
+            )
+        })?;
     }
     Ok(())
 }
