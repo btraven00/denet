@@ -74,8 +74,9 @@ conditions:
 - **Verifier variance across versions.** A program that verifies on 6.x
   *usually* verifies on 4.19, but not guaranteed. If you support old
   kernels, test-load on the oldest one you care about.
-- **`kptr_restrict`, `unprivileged_bpf_disabled`, `perf_event_paranoid`**
-  affect non-root runs. See `docs/ebpf.md` for the settings.
+- **`unprivileged_bpf_disabled`, `perf_event_paranoid`** don't matter
+  once the binary has `CAP_BPF` and `CAP_PERFMON`; **`kptr_restrict`** only
+  affects symbol names in off-CPU stacks. See `docs/ebpf.md`.
 
 ## Cross-compilation
 

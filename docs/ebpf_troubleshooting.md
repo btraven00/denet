@@ -129,19 +129,7 @@ Values `1` and `2` both mean BPF requires `CAP_BPF` or root — they do **not** 
 ```bash
 cat /proc/sys/kernel/perf_event_paranoid
 ```
-Standard Linux values are `0`–`2`. Ubuntu and some hardened kernels add levels `3` and `4` which **block `perf_event_open` for all non-root users, including those with `CAP_PERFMON`**. Tracepoint attachment fails silently with `EPERM` when this is set to `3` or `4`.
-
-Fix:
-```bash
-# Temporary (until reboot)
-sudo sysctl -w kernel.perf_event_paranoid=1
-
-# Permanent
-echo 'kernel.perf_event_paranoid=1' | sudo tee /etc/sysctl.d/99-perf.conf
-sudo sysctl -p /etc/sysctl.d/99-perf.conf
-```
-
-Level `1` allows processes with `CAP_PERFMON` to use `perf_event_open` while blocking fully unprivileged users.
+Ubuntu and some hardened kernels add levels `3` and `4`. Like `2`, they only restrict processes without `CAP_PERFMON`; with `setcap` applied, denet attaches at any level (checked at `4` on Ubuntu 26.04). If attaching fails with `EPERM` here, the capabilities are missing, not the sysctl.
 
 ### 4. Tracepoint Attachment Issues
 
