@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         println!("Threads with off-CPU events: {}", stats.len());
         let mut entries: Vec<_> = stats.iter().collect();
-        entries.sort_by(|a, b| b.1.total_time_ns.cmp(&a.1.total_time_ns));
+        entries.sort_by_key(|e| std::cmp::Reverse(e.1.total_time_ns));
         for ((pid, tid), s) in entries {
             println!(
                 "  pid={pid} tid={tid}: events={} total={:.1}ms avg={:.1}ms max={:.1}ms",

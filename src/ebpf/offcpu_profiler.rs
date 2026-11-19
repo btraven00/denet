@@ -533,10 +533,10 @@ impl OffCpuProfiler {
                                                 .total_time_ns
                                                 .saturating_add(event.offcpu_time_ns);
 
-                                            // Calculate average safely
-                                            if entry.count > 0 {
-                                                entry.avg_time_ns =
-                                                    entry.total_time_ns / entry.count;
+                                            if let Some(avg) =
+                                                entry.total_time_ns.checked_div(entry.count)
+                                            {
+                                                entry.avg_time_ns = avg;
                                             }
 
                                             entry.max_time_ns = std::cmp::max(

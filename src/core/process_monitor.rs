@@ -1787,11 +1787,7 @@ fn build_offcpu_metrics(
         );
     }
 
-    let avg_time_ns = if total_events > 0 {
-        total_time_ns / total_events
-    } else {
-        0
-    };
+    let avg_time_ns = total_time_ns.checked_div(total_events).unwrap_or(0);
     let min_time_ns = if min_time_ns == u64::MAX {
         0
     } else {
