@@ -137,6 +137,19 @@ enum Commands {
 fn main() -> Result<ExitCode> {
     let args = Args::parse();
 
+    // Fail before starting anything: a run recorded without the eBPF data it
+    // was asked for is only found out afterwards. -q must not hide this.
+    if args.enable_ebpf
+        && !cfg!(feature = "ebpf")
+        && !matches!(args.command, Commands::Stats { .. })
+    {
+        eprintln!(
+            "Error: --enable-ebpf, but this denet was built without the `ebpf` feature (Linux only). \
+             Reinstall with `cargo install denet --features ebpf`, or use a release binary"
+        );
+        exit(1);
+    }
+
     if let Commands::Stats { file } = &args.command {
         handle_stats_command(file, &args)?;
         return Ok(ExitCode::SUCCESS);

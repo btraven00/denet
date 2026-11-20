@@ -550,3 +550,20 @@ fn test_tui_refuses_without_terminal() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("--tui needs stdout to be a terminal"));
     assert!(!String::from_utf8_lossy(&output.stdout).contains("should-not-run"));
 }
+
+/// --enable-ebpf on a build without the feature fails before the command
+/// runs, even with -q, instead of recording a run with no eBPF data.
+#[cfg(not(feature = "ebpf"))]
+#[test]
+fn test_enable_ebpf_without_feature_fails_before_running() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("ran");
+    let output = Command::new(env!("CARGO_BIN_EXE_denet"))
+        .args(["-q", "--enable-ebpf", "run", "touch"])
+        .arg(&marker)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("built without the `ebpf` feature"));
+    assert!(!marker.exists(), "the command must not run");
+}
