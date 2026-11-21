@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.4](https://github.com/btraven00/denet/compare/v0.11.3...v0.11.4) (2026-11-21)
+
+
+### Bug Fixes
+
+* **cli:** fail early when --enable-ebpf is given to a build without eBPF ([141d304](https://github.com/btraven00/denet/commit/141d30421a5284164eed3d4407fa58c4d8dbf070))
+
 ## [0.11.3](https://github.com/btraven00/denet/compare/v0.11.2...v0.11.3) (2026-11-19)
 
 
